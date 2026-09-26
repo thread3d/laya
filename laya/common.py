@@ -16,11 +16,11 @@ QTYPE_NAMES = {v: k for k, v in QTYPES.items()}
 _DEFAULT_NOUL_LABELS = {"false": "false", "true": "true"}
 
 # A fast tokenizer is not read-only: `truncation=True` / `padding=True` make it call
-# `enable_truncation` / `enable_padding`, which mutates the shared Rust object. Upstream caches
-# one tokenizer per checkpoint directory and shares it across Agents, so concurrent `predict()`
-# calls -- on one Agent or on two that share the cache -- raced and raised
+# `enable_truncation` / `enable_padding`, which mutates the shared Rust object. One tokenizer is
+# parsed per checkpoint directory and shared by every Agent that wants it, so concurrent
+# `predict()` calls -- on one Agent or on two sharing the cache -- raced and raised
 # `RuntimeError: Already borrowed`. Serialise encoding instead: it is a small fraction of a call
-# next to the forward pass, and this keeps the tokenizer cache's single parse.
+# next to the forward pass, and this keeps the cache's single parse.
 _TOKENIZE_LOCK = threading.RLock()
 
 
@@ -68,8 +68,16 @@ def render_options(q: Dict) -> List[str]:
     if t != "noul" and "labels" in q:
         raise ValueError("labels is only supported for noul questions")
     if t == "choice":
-        # only None/"" mean "no description"; 0 and False are legitimate criterion values
-        return [k if v is None or v == "" else "%s: %s" % (k, render_criterion(v)) for k, v in crit.items()]
+        # only None/"" mean "no description"; 0 and False are legitimate criterion values.
+        # `str(k)` unconditionally: a label with no description is rendered as itself, so an int
+        # label used to come back as an int from a function annotated `-> List[str]` and then
+        # reached `build_sequence`, which calls `.replace` on it and raised an AttributeError
+        # naming neither the question nor the label. With a description the same label already
+        # went through `"%s: %s" %` and was a str, which is why only the undescribed form broke.
+        # `structured._enum_field` stringifies labels the same way; the returned answer still
+        # carries the caller's original label, which is unchanged.
+        return [str(k) if v is None or v == "" else "%s: %s" % (k, render_criterion(v))
+                for k, v in crit.items()]
     if t == "score":
         return ["level %d: %s" % (i, render_criterion(c)) for i, c in enumerate(crit)]
     crit = crit or {}
@@ -241,7 +249,8 @@ def _no_init_weights():
     return no_init_weights()
 
 
-def build_model(cfg: Dict, encoder_dir: Optional[str] = None, pretrained: bool = True) -> DecisionModel:
+def build_model(cfg: Dict, encoder_dir: Optional[str] = None, pretrained: bool = True,
+                revision: Optional[str] = None) -> DecisionModel:
     """Build the decision model described by `cfg`.
 
     With `pretrained=False`, or when `encoder_dir` holds a saved encoder config, nothing is
@@ -258,7 +267,11 @@ def build_model(cfg: Dict, encoder_dir: Optional[str] = None, pretrained: bool =
         with _no_init_weights():
             enc = AutoModel.from_config(ecfg, attn_implementation="sdpa")
         return DecisionModel(enc, head_layers, n_act, no_init=True)
-    enc = AutoModel.from_pretrained(cfg["encoder"], attn_implementation="sdpa")
+    # Training-time Hub load of the base encoder; allow pinning it like the checkpoints.
+    kw = {"attn_implementation": "sdpa"}
+    if revision:
+        kw["revision"] = revision
+    enc = AutoModel.from_pretrained(cfg["encoder"], **kw)
     return DecisionModel(enc, head_layers, n_act)
 
 
