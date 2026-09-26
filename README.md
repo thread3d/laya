@@ -1244,7 +1244,7 @@ every device.
 
 ```bash
 # same loop from the command line, no notebook
-python -m laya.finetune --model-dir models/laya --items train_items.pt \
+python -m laya.finetune --model-dir models/laya --items train_items.json \
     --output-dir finetuned --device mps --epochs 4
 # multi-GPU (CUDA/ROCm)
 torchrun --standalone --nproc_per_node=2 -m laya.finetune --model-dir ... --items ... --output-dir ...

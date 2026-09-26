@@ -27,6 +27,8 @@ from laya.finetune import (  # noqa: E402
     collate_train_batch,
     device_report,
     fit_temperature,
+    load_items,
+    main as finetune_main,
     pick_device,
     train_rlcd,
 )
@@ -175,6 +177,22 @@ try:
                     log_every=0, log=lambda s: None)
     check("train/limit caps the items", m2["items"], 4)
     check_true("train/two epochs ran", m2["updates"] >= 2, "updates=%s" % m2["updates"])
+
+    # the CLI reads its items from JSON (the shipped package must not deserialize framework
+    # objects), and writes the same checkpoint the library call does
+    items_json = os.path.join(work, "items.json")
+    with open(items_json, "w") as f:
+        json.dump(items, f)
+    check("cli/load_items round-trips the list", load_items(items_json), items)
+    cli_out = os.path.join(work, "cli")
+    rc = finetune_main([
+        "--model-dir", ckpt, "--items", items_json, "--output-dir", cli_out,
+        "--device", "cpu", "--epochs", "1", "--micro-batch", "2", "--grad-accum", "1",
+        "--group-size", "2", "--no-grad-checkpointing", "--log-every", "0",
+    ])
+    check("cli/exit code", rc, 0)
+    check_true("cli/wrote weights", os.path.exists(os.path.join(cli_out, "model.safetensors")))
+    check_true("cli/wrote config", os.path.exists(os.path.join(cli_out, "rl_agent_config.json")))
 except Exception as e:  # noqa: BLE001
     import traceback
     traceback.print_exc()

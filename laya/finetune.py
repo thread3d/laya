@@ -13,7 +13,7 @@ Mixed precision is CUDA-only here. MPS and CPU run fp32 with no gradient scaler,
 per step but numerically safe: `torch.autocast("mps", ...)` is not supported by torch 2.2 (the
 version macOS Intel tops out at) and loss scaling has nothing to scale in fp32.
 
-    python -m laya.finetune --model-dir models/laya --items train_items.pt \
+    python -m laya.finetune --model-dir models/laya --items train_items.json \
         --output-dir finetuned --device mps --epochs 4
 
 Multi-GPU is still DDP: launch with `torchrun --nproc_per_node=N` and the world size is detected.
@@ -492,10 +492,24 @@ def train_rlcd(
     }
 
 
+def load_items(path: str) -> List[Dict]:
+    """Read pre-tokenized items from a JSON file.
+
+    JSON rather than a serialized framework object: this module ships inside the package, and the
+    project's security gate forbids unsafe deserialization under `laya/`. The notebook writes the
+    same list with `json.dump`.
+    """
+    with open(path) as f:
+        items = json.load(f)
+    if not isinstance(items, list):
+        raise ValueError("expected a JSON list of pre-tokenized items in %s" % path)
+    return items
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="RLCD fine-tuning, on CUDA/ROCm, MPS or CPU")
     ap.add_argument("--model-dir", required=True, help="checkpoint holding rl_agent_config.json, encoder/, model.safetensors")
-    ap.add_argument("--items", required=True, help="torch.save'd list of pre-tokenized items")
+    ap.add_argument("--items", required=True, help="JSON list of pre-tokenized items (see load_items)")
     ap.add_argument("--output-dir", required=True)
     ap.add_argument("--device", default=None, help="cuda | mps | cpu (default: best available)")
     ap.add_argument("--epochs", type=int, default=4)
@@ -518,7 +532,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     print(device_report(), flush=True)
     device = pick_device(a.device)
-    items = torch.load(a.items, weights_only=False)
+    items = load_items(a.items)
     print("Loaded %d pre-tokenized items from %s" % (len(items), a.items), flush=True)
     metrics = train_rlcd(
         items, a.model_dir, a.output_dir,
