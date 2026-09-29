@@ -12,9 +12,9 @@ from .presets import (
     triage_questions,
 )
 from .router import DEFAULT_MODELS, RouteDecision, Router
-from .structured import DecisionResult, decide
+from .structured import DecisionResult, decide, decide_batch
 
-__version__ = "0.3.20"
+__version__ = "0.3.21"
 
 # Routing, language detection and email cleaning are pure Python. The torch-backed names are
 # resolved lazily so that `import laya` -- and therefore `from laya import Router` or
@@ -28,6 +28,8 @@ _LAZY_ATTRS = {
     "ece_score": (".common", "ece_score"),
     "answer_confidence": (".common", "answer_confidence"),
     "confidence_from_probs": (".common", "confidence_from_probs"),
+    "check_min_confidence": (".confidence", "check_min_confidence"),
+    "flag_low_confidence": (".confidence", "flag_low_confidence"),
     "render_options": (".common", "render_options"),
     "QTYPES": (".common", "QTYPES"),
     "QTYPE_NAMES": (".common", "QTYPE_NAMES"),
@@ -40,6 +42,7 @@ _LAZY_ATTRS = {
     "LayaGuardrailError": (".integrations", "LayaGuardrailError"),
     "LayaTriage": (".integrations", "LayaTriage"),
     "LayaEvaluator": (".integrations", "LayaEvaluator"),
+    "LayaDecision": (".integrations", "LayaDecision"),
 }
 
 
@@ -85,6 +88,8 @@ __all__ = [
     "ece_score",
     "answer_confidence",
     "confidence_from_probs",
+    "check_min_confidence",
+    "flag_low_confidence",
     "render_options",
     "QTYPES",
     "QTYPE_NAMES",
@@ -93,12 +98,14 @@ __all__ = [
     "LayaGuardrailError",
     "LayaTriage",
     "LayaEvaluator",
+    "LayaDecision",
     "PredictContext",
     "PredictHook",
     "Hook",
     "BaseHook",
     "AsyncHook",
     "decide",
+    "decide_batch",
     "DecisionResult",
     "__version__",
 ]

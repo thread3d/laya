@@ -16,8 +16,11 @@ rejected with an error that names the path.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence as SequenceABC
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+from .confidence import check_min_confidence, flag_low_confidence
 
 MAX_PROPERTIES = 32
 MAX_OPTIONS = 32
@@ -198,6 +201,9 @@ def _project(answers: Dict[str, Any], fields: Sequence[_Field]) -> Dict[str, Any
         answer = answers.get(f.name)
         if answer is None:
             continue
+        if answer.get("low_confidence"):
+            values[f.name] = None
+            continue
         if f.kind == "noul":
             values[f.name] = bool(float(answer.get("noul", 0.0)) >= 0.5)
         elif f.kind == "score":
@@ -245,7 +251,7 @@ def _details(values: Dict[str, Any], answers: Dict[str, Any], result: Dict[str, 
 
 
 def decide(runner, state: Any, schema: Any = None, *, questions: Optional[Dict[str, Any]] = None,
-           return_details: bool = False, **predict_kwargs) -> Any:
+           return_details: bool = False, min_confidence: Optional[float] = None, **predict_kwargs) -> Any:
     """Answer `state` against a schema (or explicit questions) and return the decided values.
 
     Pass exactly one of `schema` or `questions`. With `schema`, the values follow the schema
@@ -256,17 +262,99 @@ def decide(runner, state: Any, schema: Any = None, *, questions: Optional[Dict[s
     if (schema is None) == (questions is None):
         raise ValueError("pass exactly one of schema= or questions=")
 
+    mc = check_min_confidence(min_confidence) if min_confidence is not None else None
+    if mc is not None:
+        predict_kwargs["min_confidence"] = mc
+
     fields: Optional[List[_Field]] = None
     if schema is not None:
         fields = plan_from_json_schema(_schema_of(schema))
         questions = {f.name: f.question for f in fields}
 
-    result = runner.predict(state, questions, **predict_kwargs)
+    try:
+        result = runner.predict(state, questions, **predict_kwargs)
+    except TypeError as e:
+        if mc is not None and "unexpected keyword argument 'min_confidence'" in str(e):
+            predict_kwargs.pop("min_confidence", None)
+            result = runner.predict(state, questions, **predict_kwargs)
+        else:
+            raise
+
+    if mc is not None and isinstance(result, dict):
+        flag_low_confidence([result], mc)
+
     answers = result.get("answers", {}) or {}
     values = _project(answers, fields) if fields is not None else dict(answers)
     if return_details:
         return _details(values, answers, result)
     return values
+
+
+def decide_batch(runner, states: Sequence[Any], schema: Any = None, *,
+                 questions: Optional[Dict[str, Any]] = None,
+                 return_details: bool = False, min_confidence: Optional[float] = None,
+                 **predict_kwargs) -> List[Any]:
+    """Answer many states against one schema in one batched call, in input order.
+
+    The throughput form of :meth:`decide`: the schema is planned once and its questions
+    are evaluated over every state through ``runner.predict_batch`` (the same
+    shared-forward-pass path as :meth:`Agent.predict_batch` /
+    :meth:`Router.predict_batch`), then each state's answers are projected exactly as
+    ``decide`` does. Pass exactly one of ``schema`` or ``questions``; extra keyword
+    arguments (``batch_size=``, ``model=``, ``hooks=``, ...) are forwarded to
+    ``runner.predict_batch``. With ``return_details=True`` each item is a
+    ``DecisionResult``. ``min_confidence`` works as in ``decide``: a field whose answer falls
+    below it comes back as ``None``, with the answer kept in the details.
+
+    Both batch calling conventions are handled: an ``Agent``-like runner receives
+    ``(states, questions)``, while a ``Router``-like runner (one exposing
+    ``route_batch``) receives one ``{"state": ..., "questions": ...}`` request per
+    state, so states may route to different checkpoints.
+
+    ``Agent``, ``ONNXAgent`` and ``Router`` all batch. A runner with no ``predict_batch``
+    raises ``TypeError`` here rather than silently degrading to N sequential ``decide``
+    calls -- loop ``decide`` yourself when the runner cannot batch.
+    """
+    if (schema is None) == (questions is None):
+        raise ValueError("pass exactly one of schema= or questions=")
+    if isinstance(states, (str, bytes)) or not isinstance(states, SequenceABC):
+        raise TypeError("states must be a sequence of states, not %s" % type(states).__name__)
+
+    mc = check_min_confidence(min_confidence) if min_confidence is not None else None
+
+    fields: Optional[List[_Field]] = None
+    if schema is not None:
+        fields = plan_from_json_schema(_schema_of(schema))
+        questions = {f.name: f.question for f in fields}
+
+    predict_batch = getattr(runner, "predict_batch", None)
+    if predict_batch is None:
+        raise TypeError(
+            "%s has no predict_batch; loop decide() over the states instead"
+            % type(runner).__name__)
+
+    if hasattr(runner, "route_batch"):
+        # Router convention: one request dict per state, each carrying the shared
+        # questions, so it routes, groups by checkpoint and restores input order.
+        results = predict_batch([{"state": s, "questions": questions} for s in states],
+                                **predict_kwargs)
+    else:
+        # Agent convention: a list of states evaluated against one question set.
+        results = predict_batch(list(states), questions, **predict_kwargs)
+
+    if mc is not None:
+        # Flagged here rather than passed down, so a runner whose predict_batch predates the
+        # keyword still gets the same projection.
+        flag_low_confidence([r for r in results if isinstance(r, dict)], mc)
+
+    def _one(r: Dict[str, Any]) -> Any:
+        answers = r.get("answers", {}) or {}
+        values = _project(answers, fields) if fields is not None else dict(answers)
+        if return_details:
+            return _details(values, answers, r)
+        return values
+
+    return [_one(r) for r in results]
 
 
 __all__ = [
@@ -275,6 +363,7 @@ __all__ = [
     "answers_to_json",
     "answer_to_pydantic",
     "decide",
+    "decide_batch",
     "plan_from_json_schema",
     "questions_from_json_schema",
     "questions_from_pydantic",

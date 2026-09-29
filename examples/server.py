@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import logging
 import os
 import re
 import time
@@ -59,6 +60,17 @@ import laya.serve as _laya_serve
 
 MAX_QUESTIONS = getattr(_laya_serve, "MAX_QUESTIONS", 64)
 MAX_STATE_CHARS = getattr(_laya_serve, "MAX_STATE_CHARS", 50_000)
+# The option budgets are bounds for the same reason the two above are: a choice or score
+# question encodes one sequence per option, and they share the head budget. Read with the
+# same getattr so this demo cannot drift from the server it demonstrates.
+MAX_CHOICE_OPTIONS = getattr(_laya_serve, "MAX_CHOICE_OPTIONS", 100)
+MAX_SCORE_LEVELS = getattr(_laya_serve, "MAX_SCORE_LEVELS", 32)
+MAX_TOTAL_OPTIONS = getattr(_laya_serve, "MAX_TOTAL_OPTIONS", 512)
+
+# The demo answers failures the way laya.serve does: a fixed message to the caller, the
+# traceback to this logger. Without it a 500 arrived as a bare status line in the server
+# output and the cause had to be reproduced in-process to be found at all.
+_log = logging.getLogger("laya.example-server")
 
 # --------------------------------------------------------------------------- #
 # Request / response models
@@ -155,19 +167,27 @@ _CFG: Dict[str, Any] = {
     "preload": os.getenv("LAYA_PRELOAD", "1") not in ("0", "false", "False"),
     "device": os.getenv("LAYA_DEVICE") or None,
     "default": os.getenv("LAYA_DEFAULT_MODEL", "english"),
-    "max_loaded": int(os.getenv("LAYA_MAX_LOADED", "1")),
+    # None means "not asked for", so Router keeps its own default instead of this file
+    # carrying a copy of it. The copy here said 1, the number #172 measured at one
+    # checkpoint rebuild per alternating-language request, and #180 retired it in the
+    # library without this line following.
+    "max_loaded": (int(os.environ["LAYA_MAX_LOADED"])
+                   if os.getenv("LAYA_MAX_LOADED", "").strip() else None),
 }
+
+
+def _router_kwargs(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Constructor arguments for the app's Router, with the resident cap only when asked for."""
+    kwargs = {"preload": cfg["preload"], "device": cfg["device"], "default": cfg["default"]}
+    if cfg["max_loaded"] is not None:
+        kwargs["max_loaded"] = cfg["max_loaded"]
+    return kwargs
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global ROUTER
-    ROUTER = Router(
-        preload=_CFG["preload"],
-        device=_CFG["device"],
-        default=_CFG["default"],
-        max_loaded=_CFG["max_loaded"],
-    )
+    ROUTER = Router(**_router_kwargs(_CFG))
     yield
     ROUTER = None
 
@@ -193,7 +213,10 @@ def _router() -> Router:
 
 
 def _predict(state: Any, questions: Dict[str, Any], **kw: Any) -> Dict[str, Any]:
-    """The one place that calls Router.predict.
+    """The one place that calls Router.predict for a single state.
+
+    `/predict/batch` goes straight to `Router.predict_batch` instead, so a batch shares forward
+    passes; it reaches `_predict` only as the per-state fallback when the batch call fails.
 
     No lock needed here: Router's own model lifecycle (load/evict/LRU) is thread-safe as of
     laya 0.3.5 (fixes #95), and inference is deliberately left outside Router's internal lock
@@ -209,7 +232,13 @@ def _questions(model_map: Dict[str, Question]) -> Dict[str, Any]:
 
 @app.get("/health")
 def health(request: Request):
-    payload = {"status": "ok" if ROUTER is not None else "loading", "config": _CFG}
+    cfg = dict(_CFG)
+    if ROUTER is not None:
+        # The cap the running Router really holds, not the requested one: an unset
+        # LAYA_MAX_LOADED means "whatever the library defaults to", and this page has to
+        # say which of the two the process is living with.
+        cfg["max_loaded"] = ROUTER.max_loaded
+    payload = {"status": "ok" if ROUTER is not None else "loading", "config": cfg}
     return _health_page(payload) if _wants_html(request) else payload
 
 
@@ -238,8 +267,11 @@ def _check_request_limits(state: Any, questions: Dict[str, Any]) -> None:
     """Refuse an oversized request, as `laya.serve._check_request_limits` does.
 
     Laya encodes the state once per question, so cost is questions x state size,
-    collated into one tensor. The state length is measured exactly as laya.serve
-    measures it -- `len(v)` for a string, `len(str(v))` for a dict or list.
+    collated into one tensor, and a choice or score question adds one sequence per
+    option against a shared head budget. The state length is measured exactly as
+    laya.serve measures it -- `len(v)` for a string, `len(str(v))` for a dict or list
+    -- and the option counts exactly as it counts them, over `choice` and `score`
+    criteria only.
 
     Checked here rather than declared as pydantic constraints on the request models,
     for two reasons: a `Field(max_length=...)` violation is reported as 422 where
@@ -258,6 +290,43 @@ def _check_request_limits(state: Any, questions: Dict[str, Any]) -> None:
             status_code=413,
             detail="state too large (%d > %d chars)" % (size, MAX_STATE_CHARS),
         )
+    # Counted exactly as laya.serve counts them, and refused for the same reason. The
+    # increment belongs inside the two branches, as it does there: a `noul` question carries
+    # false/true criteria, which are option *texts* rather than answer options, so a total
+    # that added them would refuse a request laya.serve accepts. The state above is still
+    # encoded once per question, which is what the question-count bound is for.
+    total_options = 0
+    for qid, qdef in questions.items():
+        # This demo's request model hands these over as `Question` instances where
+        # `laya.serve` sees plain dicts, so read either shape. Mirroring serve's
+        # `if not isinstance(question, dict): continue` verbatim would skip every question
+        # here and leave the check dead.
+        if isinstance(qdef, dict):
+            qtype, crit = qdef.get("type"), qdef.get("criteria")
+        else:
+            qtype, crit = getattr(qdef, "type", None), getattr(qdef, "criteria", None)
+        if qtype == "choice" and isinstance(crit, (dict, list)):
+            count = len(crit)
+            total_options += count
+            if count > MAX_CHOICE_OPTIONS:
+                raise HTTPException(
+                    status_code=413,
+                    detail="too many choice options for %r (%d > %d)" % (qid, count, MAX_CHOICE_OPTIONS),
+                )
+        elif qtype == "score" and isinstance(crit, list):
+            count = len(crit)
+            total_options += count
+            if count > MAX_SCORE_LEVELS:
+                raise HTTPException(
+                    status_code=413,
+                    detail="too many score levels for %r (%d > %d)" % (qid, count, MAX_SCORE_LEVELS),
+                )
+    if total_options > MAX_TOTAL_OPTIONS:
+        raise HTTPException(
+            status_code=413,
+            detail="too many answer options across questions (%d > %d)"
+            % (total_options, MAX_TOTAL_OPTIONS),
+        )
 
 
 @app.post("/predict")
@@ -275,8 +344,11 @@ def predict(req: PredictRequest) -> Dict[str, Any]:
         raise
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:  # inference failure
-        raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}") from exc
+    except Exception:  # inference failure -- the policy laya.serve follows: the caller
+        # gets a fixed message, never the exception text, which describes the deployment
+        # (paths, libraries, memory) rather than the request.
+        _log.exception("prediction failed")
+        raise HTTPException(status_code=500, detail="prediction failed")
 
 
 @app.post("/predict/batch")
@@ -284,14 +356,30 @@ def predict_batch(req: BatchRequest) -> Dict[str, Any]:
     for state in req.states:
         _check_request_limits(state, req.questions)
     questions = _questions(req.questions)
-    results: List[Dict[str, Any]] = []
-    for i, state in enumerate(req.states):
-        try:
-            results.append(
-                _predict(state, questions, model=req.model, task=req.task, lang=req.lang)
-            )
-        except Exception as exc:
-            results.append({"index": i, "error": f"{type(exc).__name__}: {exc}"})
+    # Only the controls that were actually set: `route_batch` reads them with `.get`, so an
+    # omitted key and an explicit null mean the same thing, and the request dicts stay minimal.
+    controls = {key: value for key, value in (("model", req.model), ("task", req.task),
+                                              ("lang", req.lang)) if value is not None}
+    requests = [{"state": state, "questions": questions, **controls} for state in req.states]
+    try:
+        # One call, not one per state: `Router.predict_batch` routes the whole batch, groups it by
+        # checkpoint and shares a forward pass across states that carry the same question schema --
+        # which is exactly this endpoint, since `BatchRequest` holds one `questions` map.
+        results: List[Dict[str, Any]] = list(_router().predict_batch(requests))
+    except Exception:
+        # The batch fails as a unit, so a single bad state would otherwise cost every other state
+        # its answer. Fall back to the per-state path to keep the documented envelope: N results,
+        # with `{"index": i, "error": ...}` only where a state genuinely failed.
+        results = []
+        for i, state in enumerate(req.states):
+            try:
+                results.append(_predict(state, questions, **controls))
+            except HTTPException as item_exc:  # a caller-facing status (413, 422, 503) is safe
+                results.append({"index": i, "error": "HTTPException: %d: %s"
+                                % (item_exc.status_code, item_exc.detail)})
+            except Exception:  # the index names the item; the cause stays in the log
+                _log.exception("prediction failed for batch item %d", i)
+                results.append({"index": i, "error": "prediction failed"})
     return {"count": len(results), "results": results}
 
 
@@ -3233,6 +3321,10 @@ _ENDPOINTS = (
 def _health_page(payload: Dict[str, Any]) -> HTMLResponse:
     cfg = payload.get("config", {})
     ok = payload.get("status") == "ok"
+    # Until the lifespan has built a Router there is no resident count to state, and
+    # guessing one here is how a default this file no longer owns ends up printed as fact.
+    resident = ("" if not cfg.get("max_loaded")
+                else "; up to %s kept in memory" % escape(str(cfg["max_loaded"])))
     rows = "".join(
         f"<dt>{escape(k)}</dt><dd>{escape(str(v if v is not None else 'auto'))}</dd>"
         for k, v in cfg.items()
@@ -3251,8 +3343,7 @@ def _health_page(payload: Dict[str, Any]) -> HTMLResponse:
         f"<section class='panel'><div class='pb'><div class='status{'' if ok else ' wait'}'>"
         f"{'Ready' if ok else 'Loading'}</div>"
         f"<p class='muted' style='margin:4px 0 0'>Checkpoints are "
-        f"{'preloaded' if cfg.get('preload') else 'loaded on demand'}; up to "
-        f"{escape(str(cfg.get('max_loaded', 1)))} kept in memory.</p></div></section>"
+        f"{'preloaded' if cfg.get('preload') else 'loaded on demand'}{resident}.</p></div></section>"
         f"<section class='panel'><div class='ph'><h2 class='t'>Configuration</h2></div><dl class='kvt'>{rows}</dl>"
         "<div class='pb muted' style='border-top:1px solid var(--line)'>Override with flags "
         "(<code>--device</code>, <code>--no-preload</code>, <code>--max-loaded</code>) or env vars "
@@ -3358,8 +3449,9 @@ async def gui_predict(request: Request) -> HTMLResponse:
             model=req.model, task=req.task, lang=req.lang,
         )
         res["_elapsed"] = time.perf_counter() - started
-    except Exception as exc:
-        return _gui_error("Prediction failed", [f"{type(exc).__name__}: {exc}"],
+    except Exception:
+        _log.exception("prediction failed (gui)")
+        return _gui_error("Prediction failed", ["The server could not complete this prediction."],
                           "Nothing was answered. The server log has the full trace.")
 
     answers = res.get("answers") or {}
@@ -3404,7 +3496,8 @@ def main() -> None:
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--device", default=_CFG["device"], help="cuda, cpu, mps ...")
     p.add_argument("--default-model", default=_CFG["default"])
-    p.add_argument("--max-loaded", type=int, default=_CFG["max_loaded"])
+    p.add_argument("--max-loaded", type=int, default=_CFG["max_loaded"],
+                   help="checkpoints kept resident (default: LAYA_MAX_LOADED, else laya's own)")
     p.add_argument("--no-preload", action="store_true", help="load checkpoints lazily")
     p.add_argument("--reload", action="store_true")
     args = p.parse_args()
@@ -3423,7 +3516,12 @@ def main() -> None:
         # reimport picks up what was actually asked for on the command line.
         os.environ["LAYA_PRELOAD"] = "1" if _CFG["preload"] else "0"
         os.environ["LAYA_DEFAULT_MODEL"] = _CFG["default"]
-        os.environ["LAYA_MAX_LOADED"] = str(_CFG["max_loaded"])
+        if _CFG["max_loaded"] is None:
+            # "not asked for" has to stay unpushed: writing str(None) here would land on the
+            # int() above in the reimported process and stop the server at import.
+            os.environ.pop("LAYA_MAX_LOADED", None)
+        else:
+            os.environ["LAYA_MAX_LOADED"] = str(_CFG["max_loaded"])
         if _CFG["device"]:
             os.environ["LAYA_DEVICE"] = _CFG["device"]
 

@@ -7,6 +7,8 @@ import {
   aggregateUsage,
   composeHooks,
   dispatch,
+  markDefaultsRan,
+  dispatchAsync,
   normaliseHooks,
   type HookArg,
   type PredictHook,
@@ -244,14 +246,14 @@ export class Router extends HookRegistry {
       const evicted = this._evict();
       // Lifecycle hooks fire after the maps settle, so a hook can safely call the Router.
       for (const victim of evicted) {
-        dispatch(
+        await dispatchAsync(
           composeHooks(this.hooks),
           "onEvict",
           new PredictContext({ states: [], questions: {}, model: victim, router: this }),
           { raiseErrors: this.hooksRaise },
         );
       }
-      dispatch(
+      await dispatchAsync(
         composeHooks(this.hooks),
         "onLoad",
         new PredictContext({ states: [], questions: {}, model: key, agent, router: this }),
@@ -444,7 +446,11 @@ export class Router extends HookRegistry {
         "the English checkpoint cannot read it";
     } else if (!det.isEnglish) {
       key = "multilingual";
-      if (det.language) {
+      if (det.mixedSegment) {
+        reason =
+          `Latin script, mostly English, but a line or field reads as ${JSON.stringify(det.language)} ` +
+          `(${JSON.stringify(det.mixedSegment.slice(0, 60))}); the English checkpoint cannot read it`;
+      } else if (det.language) {
         reason = `Latin script but language looks like ${JSON.stringify(det.language)}, not English`;
       } else {
         reason =
@@ -494,7 +500,7 @@ export class Router extends HookRegistry {
       router: this,
     });
     try {
-      dispatch(active, "onPredictStart", ctx, { raiseErrors });
+      await dispatchAsync(active, "onPredictStart", ctx, { raiseErrors });
       if (ctx.results === null) {
         // Python parity (router.py predict): the request's language also shapes the answer
         // distribution through the agent's lang_temperatures. An explicit lang wins;
@@ -504,10 +510,12 @@ export class Router extends HookRegistry {
         // explicit lang="en" can select an "en" override.
         const detected = decision.detection?.language;
         const effectiveLang = opts.lang ?? (detected && detected !== "en" ? detected : null);
+        const agentOpts = { lang: effectiveLang };
+        markDefaultsRan(agentOpts);
         const result = (await agent.systemOne(
           ctx.states[0],
           ctx.questions as Record<string, QuestionDef>,
-          { lang: effectiveLang },
+          agentOpts,
         )) as RoutedResult;
         result["routing"] = { ...decision };
         ctx.results = [result as unknown as Record<string, unknown>];
@@ -523,7 +531,7 @@ export class Router extends HookRegistry {
     } catch (err) {
       ctx.error = err;
       try {
-        dispatch(active, "onError", ctx, { raiseErrors });
+        await dispatchAsync(active, "onError", ctx, { raiseErrors });
       } catch {
         // A failing onError hook must not hide the failure that triggered it.
       }
@@ -532,7 +540,7 @@ export class Router extends HookRegistry {
       ctx.markElapsed();
       if (ctx.results !== null) ctx.usage = aggregateUsage(ctx.results);
       try {
-        dispatch(active, "onPredictEnd", ctx, { raiseErrors });
+        await dispatchAsync(active, "onPredictEnd", ctx, { raiseErrors });
       } catch (hookErr) {
         // End hooks run on the failure path too; do not let one mask the real error.
         if (ctx.error === null) throw hookErr;

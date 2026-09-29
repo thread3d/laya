@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 import torch
 
+from ._compile import compile_model, independent_dims
 from .common import (
     QTYPES,
     TEMP_MAX,
@@ -18,19 +19,23 @@ from .common import (
     amp_dtype,
     build_model,
     build_sequence,
+    collapsed_options,
     clamp_temperature,
     collate_items,
     answer_confidence,
     confidence_from_probs,
     _resolve_noul_labels,
+    _reuse_question_tokens,
+    _disable_question_token_reuse,
     encode_text,
     render_options,
     serialize_state,
     temp_bucket,
 )
+from .confidence import check_min_confidence, flag_low_confidence
 from .hooks import (
-    HookRegistry, PredictContext, aggregate_usage, compose_hooks, dispatch, normalise_hooks,
-    validate_timeout,
+    HookRegistry, PredictContext, _as_sequence, aggregate_usage, compose_hooks, dispatch,
+    normalise_hooks, validate_timeout,
 )
 from .revisions import resolve_revision, snapshot_revision, verify_digests
 
@@ -216,6 +221,40 @@ def _cuda_amp_dtype(checkpoint_default: Optional[str]) -> torch.dtype:
     return amp_dtype(checkpoint_default)
 
 
+def _start_evidence():
+    """A recorder for `predict_long`: what the start-hook chain left for inference to run on.
+
+    Why a recorder at all: `ctx.skip()` only assigns `ctx.results` (see `laya.hooks.PredictContext`),
+    so outside `predict_batch` the only account of what the hooks did is the context they were
+    handed. The result count cannot tell a hook that answered the document from one that replaced
+    the window list -- both return fewer results than there were windows, and the two need opposite
+    readings: the first scored no window, the second scored the ones it left behind and booked
+    tokens for them.
+
+    The probe belongs last in the chain because `compose_hooks` orders defaults, then installed,
+    then per-call hooks, and `dispatch` calls them in order, so a probe appended after the caller's
+    own start hooks observes exactly what `predict_batch` is about to act on.
+
+    Returns the probe and the dict it fills: `answered` is whether a hook replaced the call before
+    inference, `states` is a snapshot of the states that reached it (`None` if the probe never ran,
+    which means `predict_batch` was replaced and no hook chain was dispatched).
+    """
+    evidence = {"answered": False, "states": None}
+
+    def probe(ctx):
+        evidence["answered"] = ctx.results is not None
+        evidence["states"] = list(ctx.states)
+
+    return probe, evidence
+
+
+def _with_start_probe(hook_kwargs, probe):
+    """`hook_kwargs` with `probe` appended after the caller's own start hooks."""
+    kwargs = dict(hook_kwargs)
+    kwargs["on_predict_start"] = list(_as_sequence(hook_kwargs.get("on_predict_start"))) + [probe]
+    return kwargs
+
+
 class Agent(HookRegistry):
     """System 1 decision model runtime: fast, non-autoregressive, calibrated decisions."""
 
@@ -232,6 +271,13 @@ class Agent(HookRegistry):
     mps_amp_min_rows = MPS_AMP_MIN_ROWS_DEFAULT
     # The stock forward is also used by lightweight runtimes built with __new__ in tests.
     _fast = None
+    # Scoped CPU-fallback observability: how often _infer's per-request OOM fallback fired
+    # and what the last failure was, so an operator sees a slow lane in /health instead of
+    # discovering it by accident. Class defaults cover instances built without __init__.
+    cpu_fallback_count = 0
+    last_fallback_reason = None
+    # Set when `compile=True` wrapped the model in torch.compile.
+    _compiled = False
 
     def __init__(
         self,
@@ -262,6 +308,12 @@ class Agent(HookRegistry):
 
         `fast=True` swaps the encoder/head forward for the TileLang fast path (CUDA only, needs
         `pip install laya[fast]`); see `Agent.accelerate`.
+
+        `compile=True` runs the model under `torch.compile` and turns ModernBERT's encoder
+        `reference_compile` on. `torch.compile` specializes per input shape and Laya sees a
+        new one on almost every request, so those graphs usually cost more than they return;
+        use it when the traffic is repetitive. `fast=True` takes precedence, because the
+        TileLang path replaces the forward that would be compiled.
 
         `subfolder` selects one checkpoint from a repo that bundles several, e.g.
         `Agent("convaiinnovations/laya", subfolder="multilingual")`. Only that subfolder is
@@ -384,12 +436,22 @@ class Agent(HookRegistry):
             pass
             
         # The TileLang fast path replaces the forward itself, so it takes precedence over compile.
+        # dynamic=True plus independent dimensions (laya/_compile.py) so a new request shape
+        # does not recompile.
         if compile and not fast:
-            self.model = torch.compile(self.model)
+            self.model = compile_model(self.model)
+            self._compiled = True
 
         # Keep what the checkpoint shipped for inspection, but only ever apply clamped values:
         # some buckets are fitted to sharpen rather than soften (see clamp_temperature).
         self.temperature_raw = self.cfg.get("temperature", [1.0, 1.0, 1.0])
+        # `_decode_answers` indexes this by question type, so a list of the wrong length would
+        # load cleanly and then raise a bare `IndexError` on the first `score`/`noul` question;
+        # refuse the shape here, the way the language-override check below does.
+        if not isinstance(self.temperature_raw, (list, tuple)) or len(self.temperature_raw) != 3:
+            raise ValueError(
+                "Incompatible model: %r temperature must be a list of 3 floats, got %r"
+                % (model_id_or_path, self.temperature_raw))
         self.temperature_by_options_raw = self.cfg.get("temperature_by_options", {})
         self.temperature = [clamp_temperature(t) for t in self.temperature_raw]
         self.temperature_by_options = {k: clamp_temperature(v)
@@ -587,7 +649,49 @@ class Agent(HookRegistry):
                     raise ValueError(
                         "question %r: choice label %d is a %s; a label is rendered as option text "
                         "and used as the answer key, so it must be a scalar (a string, number or "
-                        "None), got %r" % (qid, i, type(label).__name__, label))
+                        "bool), got %r" % (qid, i, type(label).__name__, label))
+                if label is None:
+                    # The score path rejects a null level with the same argument one question type
+                    # over: a label is option text AND the answer key, and a null one can be
+                    # neither. `_to_internal` normalises a list of labels to `{label: None}`, so a
+                    # null label became the option text "None" (`str(None)`) while the answer key
+                    # and the `probabilities` key for that same option were the JSON string "null",
+                    # because a dict key has to be a str. A client then cannot tell whether that
+                    # option was the *string* `"null"` or JSON `null`, and the answer key is
+                    # unreachable: `criteria[answer["choice"]]` yields `None`, and
+                    # `answer["choice"] == "null"` is False for it. `""` stays accepted, because
+                    # unlike a null it does round-trip.
+                    raise ValueError(
+                        "question %r: choice label %d is null; a label is rendered as option text "
+                        "and used as the answer key, so it must be a string, number or bool -- a "
+                        "null label renders as the text \"None\" while its answer key is \"null\""
+                        % (qid, i))
+            # `_to_internal` normalises the list form to `{label: None}`, so those labels become
+            # the answer keys. Two entries that land on one key made the model score fewer options
+            # than the caller wrote, and the response carry fewer probabilities than their list,
+            # without a word -- the same silent-shape class as the two checks above. Python
+            # treats values as one key whenever they compare equal, so `[1, 1.0]` and `[True, 1]`
+            # collapse as well as an exact repeat. An unhashable label raised
+            # `TypeError: cannot use 'tuple' as a dict key` from `_to_internal`, three frames down,
+            # which names neither the question nor the label -- and which `serve` cannot classify
+            # as a caller error, so over HTTP it became a 500 "inference failed" instead of a 422.
+            if isinstance(crit, list):
+                keys: Dict[Any, int] = {}
+                for i, label in enumerate(crit):
+                    try:
+                        first = keys[label]
+                    except TypeError as exc:
+                        raise ValueError(
+                            "question %r: choice label %d (%r) cannot be an answer key because it is "
+                            "unhashable; a label is rendered as option text and used as the answer "
+                            "key" % (qid, i, label)) from exc
+                    except KeyError:
+                        keys[label] = i
+                    else:
+                        raise ValueError(
+                            "question %r: choice label %d (%r) repeats label %d; the labels are the "
+                            "answer keys, so every option needs its own (1, 1.0 and True are one "
+                            "key)" % (qid, i, label, first))
         elif t == "score":
             if not isinstance(crit, list):
                 raise ValueError("question %r: a score question takes 'criteria' as a list of level "
@@ -670,11 +774,12 @@ class Agent(HookRegistry):
         items = []
         for qid in ids:
             q = internal[qid]
-            seq, markers = build_sequence(self.tok, state, q, max_len, head_max_len,
-                                          truncate_left=truncate_left, state_ids=state_ids)
+            seq, markers, stats = build_sequence(self.tok, state, q, max_len, head_max_len,
+                                                 truncate_left=truncate_left, state_ids=state_ids,
+                                                 return_stats=True)
             if len(markers) != len(render_options(q)):
                 raise ValueError("question %r options exceed head_max_len=%d" % (qid, head_max_len))
-            items.append({"ids": seq, "markers": markers, "qtype": QTYPES[q["t"]]})
+            items.append({"ids": seq, "markers": markers, "qtype": QTYPES[q["t"]], "options": stats})
         return items
 
     def _amp_enabled_for(self, rows: int) -> bool:
@@ -704,7 +809,8 @@ class Agent(HookRegistry):
             # Recomputed inside run() so a fallback that disables amp (or moves to CPU) takes
             # effect on the retry. A disabled gate never enters torch.autocast at all.
             enabled = self._amp_enabled_for(b["input_ids"].shape[0])
-            with _amp_context(self.device, self.dtype, enabled):
+            dims = independent_dims() if self._compiled else nullcontext()
+            with _amp_context(self.device, self.dtype, enabled), dims:
                 return self.model(
                     b["input_ids"].to(self.device),
                     b["attention_mask"].to(self.device),
@@ -727,6 +833,10 @@ class Agent(HookRegistry):
                 # later call ~10-15x slower on CPU. Demote under the lock, answer this request
                 # on CPU, then put the runtime back the way it was.
                 with _OOM_FALLBACK_LOCK:
+                    # Recorded on entry, under the same lock as the demotion: the count and
+                    # reason must be readable by /health without racing a concurrent fallback.
+                    self.cpu_fallback_count += 1
+                    self.last_fallback_reason = str(e)
                     held_device, held_dtype, held_amp = self.device, self.dtype, self.amp_enabled
                     had_fast = self._fast is not None
                     # FastLaya keeps copied CUDA weights and replaces model.forward.  Move
@@ -814,6 +924,7 @@ class Agent(HookRegistry):
         return answers
 
     @torch.no_grad()
+    @_reuse_question_tokens
     def predict_batch(self, states: List[Union[str, dict, list]], questions: Dict[str, Dict[str, Any]],
                       batch_size: Optional[int] = None, lang: Optional[str] = None,
                       hooks=None,
@@ -822,7 +933,8 @@ class Agent(HookRegistry):
                       hooks_timeout: Optional[float] = None,
                       max_len: Optional[int] = None,
                       head_max_len: Optional[int] = None,
-                      sort_by_length: bool = False) -> List[Dict[str, Any]]:
+                      sort_by_length: bool = False,
+                      min_confidence: Optional[float] = None) -> List[Dict[str, Any]]:
         """Evaluate the same questions over many states, packing them into shared forward passes.
 
         This is the throughput path. `system_one`/`predict` handle one state per forward pass; on a
@@ -857,6 +969,7 @@ class Agent(HookRegistry):
             A list of per-state result dicts, each identical in shape to `system_one`'s output and
             aligned with `states` by index.
         """
+        mc = check_min_confidence(min_confidence) if min_confidence is not None else None
         active = compose_hooks(self.hooks, hooks, on_predict_start, on_predict_end)
         raise_errors = self.hooks_raise if hooks_raise is None else bool(hooks_raise)
         timeout = self.hooks_timeout if hooks_timeout is None else validate_timeout(hooks_timeout)
@@ -872,7 +985,18 @@ class Agent(HookRegistry):
                     raise TypeError(
                         "predict_batch expects a list of states; pass a single state to predict()/system_one()."
                     )
+                if not isinstance(questions, dict):
+                    raise TypeError(
+                        "questions must be a dict of question id -> definition, got %s"
+                        % type(questions).__name__
+                    )
                 states = list(states)
+                if any(state is None for state in states):
+                    raise TypeError(
+                        "state must not be None; pass a string, dict, or list"
+                    )
+                if len(states) == 1:
+                    _disable_question_token_reuse()
                 if not states:
                     ctx.results = []
                 else:
@@ -923,10 +1047,19 @@ class Agent(HookRegistry):
                                     n_tokens = int(att[row:row + nrows].sum())
                                     answers = self._decode_answers(logits, act, items, ids, internal, row,
                                                                   **({"lang": lang} if lang else {}))
+                                    usage = {"input_tokens": n_tokens, "output_tokens": 0}
+                                    # Only when a question actually lost options to the head
+                                    # budget: an answer chosen from 42 distinguishable spans of
+                                    # 58 has a ceiling the caller cannot otherwise see, and a
+                                    # key that is always present would be noise on the
+                                    # overwhelming majority of requests that never collapse.
+                                    collapsed = collapsed_options(ids, items)
+                                    if collapsed:
+                                        usage["options"] = collapsed
                                     window_results[index] = {
                                         "model": "laya-rl-agent",
                                         "answers": answers,
-                                        "usage": {"input_tokens": n_tokens, "output_tokens": 0},
+                                        "usage": usage,
                                     }
                                     row += nrows
                             results.extend(window_results)
@@ -943,6 +1076,8 @@ class Agent(HookRegistry):
             ctx.elapsed_ms = (time.perf_counter() - ctx.started_at) * 1000.0
             if ctx.results is not None:
                 ctx.usage = aggregate_usage(ctx.results)
+                if mc is not None:
+                    flag_low_confidence(ctx.results, mc)
             try:
                 dispatch(active, "on_predict_end", ctx, raise_errors=raise_errors, lock=self._hooks_lock, timeout=timeout)
             except BaseException as hook_exc:
@@ -956,7 +1091,10 @@ class Agent(HookRegistry):
     def predict_long(self, state: Union[str, dict, list], questions: Dict[str, Dict[str, Any]],
                      window: Optional[int] = None, stride: Optional[int] = None,
                      aggregate: str = "auto", batch_size: Optional[int] = None,
-                     lang: Optional[str] = None) -> Dict[str, Any]:
+                     lang: Optional[str] = None,
+                     hooks=None, on_predict_start=None, on_predict_end=None,
+                     hooks_raise: Optional[bool] = None,
+                     hooks_timeout: Optional[float] = None) -> Dict[str, Any]:
         """Evaluate questions over a state longer than the context window, scanning it in
         overlapping windows and aggregating per question.
 
@@ -980,6 +1118,19 @@ class Agent(HookRegistry):
 
         A state that already fits one window is passed straight to `system_one` (identical output).
 
+        The hooks wrap the inference that answers the state, which for a document needing several
+        windows is the one shared `predict_batch` over them: `on_predict_start` fires once, and
+        `ctx.states` holds the decoded window texts in scan order -- not the caller's `state`, which
+        was tokenized to produce them. Three outcomes follow from what the chain leaves behind:
+
+          * `ctx.skip([result])` answers the document: the payload comes back with no window
+            attribution and `usage["windows"]` at 0, because nothing was scored
+          * a scan left as this method built it: every window is scored, each answer carries
+            `answer["window"]`, and `usage["windows"]` is the window count
+          * a rewritten scan (`ctx.states` replaced, in any way): the answers are aggregated over
+            the states that were scored, but no answer carries `answer["window"]` -- the offsets
+            above describe this method's windows, not the text the model read
+
         Args:
             window: state tokens per window. Defaults to the per-question state budget
                     (`max_len - head_max_len - 8`) -- the most a window can hold for every question.
@@ -993,20 +1144,45 @@ class Agent(HookRegistry):
             aggregate: "auto" (the per-type rules above) is the only mode for now.
             batch_size: cap on windows per forward pass, to bound memory on very long states.
             lang: per-language temperature selection, as in `system_one`.
+            hooks (HookArg): Per-call hooks, appended after any installed on the Agent.
+                    See `laya.hooks`.
+            on_predict_start (PredictHookArg): A per-call start hook, as in `system_one`.
+            on_predict_end (PredictHookArg): A per-call end hook, as in `system_one`.
+            hooks_raise: Override the Agent's `hooks_raise` for this call.
+            hooks_timeout: Override the Agent's `hooks_timeout` for this call.
 
         Returns a single result dict, the same shape as `system_one`, with `usage["windows"]` added.
+        The key is always present and counts the windows the model scored to produce the answer: `1`
+        for a state that fit one window, `N` for a document scanned in `N` overlapping windows (or
+        the `N` a start hook rewrote them to), and `0` when a start hook answered the document, or
+        left no states to score, before any window was read -- on either path, so a cached answer
+        never reads as a window the model read.
         """
         if aggregate != "auto":
             raise ValueError("predict_long: only aggregate='auto' is supported")
+        hook_kwargs = {"hooks": hooks, "on_predict_start": on_predict_start,
+                       "on_predict_end": on_predict_end, "hooks_raise": hooks_raise,
+                       "hooks_timeout": hooks_timeout}
         max_len = self.cfg.get("max_len", 512)
         head_max_len = self.cfg.get("head_max_len", 192)
         budget = window if (window and window > 0) else max(64, max_len - head_max_len - 8)
 
         state_ids = self.tok(serialize_state(state).replace(self.tok.mask_token, " "),
                              add_special_tokens=False)["input_ids"]
-        # Fits in one window: identical to a plain call, no windowing overhead.
+        # Fits in one window: identical to a plain call, no windowing overhead. `windows` is still
+        # written, so the key is total over the three paths this method can take and a caller can
+        # ask "how much of the document did the model read?" without handling a KeyError on the
+        # shortest, most common inputs. The result is copied first: a start hook that answers with
+        # `ctx.skip(...)` hands back its own payload dict, and it may be a cached object.
         if len(state_ids) <= budget:
-            return self.system_one(state, questions, lang=lang)
+            probe, evidence = _start_evidence()
+            single = dict(self.system_one(state, questions, lang=lang,
+                                          **_with_start_probe(hook_kwargs, probe)))
+            # Why 0 for a hook answer here: the state did fit one window, but no window was scored,
+            # which is the same fact the multi-window path reports as 0. Reading 1 would make a
+            # cached answer and a served answer agree on how much of the input the model saw.
+            single["usage"] = {**(single.get("usage") or {}), "windows": 0 if evidence["answered"] else 1}
+            return single
 
         step = stride if (stride and stride > 0) else max(1, budget // 2)
         windows, starts = [], []
@@ -1021,7 +1197,54 @@ class Agent(HookRegistry):
                 break
             i += step
 
-        results = self.predict_batch(windows, questions, batch_size=batch_size, lang=lang)
+        probe, evidence = _start_evidence()
+        # `list(windows)`, not `windows`: `ctx.states` is the list the hook receives, so a hook that
+        # mutates it in place (`append`, `sort`) would otherwise also grow the split this call
+        # attributes answers to, and the counts would agree while `starts` no longer lined up.
+        results = self.predict_batch(list(windows), questions, batch_size=batch_size, lang=lang,
+                                     **_with_start_probe(hook_kwargs, probe))
+
+        if evidence["answered"]:
+            # The hook replaced the call before any window was scored. Aggregating over its payload
+            # would pick between answers that were never scored and name a deciding window that
+            # decided nothing, so pass the document answer through unattributed and report the
+            # count as what it is: none of them.
+            if len(results) != 1:
+                raise ValueError(
+                    "predict_long: a start hook answered this state with %d results; ctx.skip()"
+                    " takes one result for the document, not one per window" % len(results))
+            warnings.warn("laya: predict_long: a hook answered the state before it was scanned, so "
+                          "no window decided the result and none is reported", RuntimeWarning,
+                          stacklevel=2)
+            document = dict(results[0])
+            document["usage"] = dict(document.get("usage") or {})
+            document["usage"]["windows"] = 0
+            return document
+
+        # The contract on `ctx.states` is that a start hook may replace it (see `docs/hooks/api.md`),
+        # so a scan that comes back different from the split above is a supported outcome, not a
+        # failure to report: the states that were scored are the hook's, while `starts` describes
+        # this method's windows. Aggregate what came back and name nothing.
+        rewritten = evidence["states"] is not None and evidence["states"] != windows
+
+        if len(results) != len(windows) and not rewritten:
+            # The observer saw the scan leave the hook chain and it is the one computed above, so
+            # nothing here explains a count that is not the split. That is `predict_batch`
+            # disagreeing with its own input -- a bug, or a replacement that never dispatched hooks.
+            seen = ("the scan that reached inference was the split made here"
+                    if evidence["states"] is not None
+                    else "no start hook chain ran, so nothing rewrote the scan")
+            raise ValueError(
+                "predict_long: the state was split into %d windows and the call returned %d"
+                " results, and %s" % (len(windows), len(results), seen))
+
+        if not results:
+            # A hook that left no states scored nothing, which is what 0 already means here; the
+            # questions go unanswered rather than being aggregated over an empty list.
+            warnings.warn("laya: predict_long: a start hook left no states to score, so the call"
+                          " aggregated nothing and returns no answers", RuntimeWarning, stacklevel=2)
+            return {"model": "laya-rl-agent", "answers": {},
+                    "usage": {**aggregate_usage(results), "windows": 0}}
 
         ids = list(questions.keys())
         internal = {qid: self._to_internal(questions[qid]) for qid in ids}
@@ -1040,9 +1263,10 @@ class Agent(HookRegistry):
             ans = per[best]
             # Name the window that decided, so a caller can check the deciding span itself. The
             # probability here is that window's, NOT a document-level calibrated number.
-            ans["window"] = {"index": best, "token_start": starts[best],
-                             "token_end": min(starts[best] + budget, len(state_ids)),
-                             "count": len(windows)}
+            if not rewritten:
+                ans["window"] = {"index": best, "token_start": starts[best],
+                                 "token_end": min(starts[best] + budget, len(state_ids)),
+                                 "count": len(results)}
             answers[qid] = ans
         # Aggregate usage generically so fields predict_batch may grow later (e.g. the fallback
         # counters from #351) are propagated, not silently dropped: sum numeric fields across
@@ -1052,7 +1276,7 @@ class Agent(HookRegistry):
             for key, val in r["usage"].items():
                 usage[key] = (usage.get(key, 0) + val) if isinstance(val, (int, float)) else val
         usage["output_tokens"] = 0
-        usage["windows"] = len(windows)
+        usage["windows"] = len(results)
         return {"model": "laya-rl-agent", "answers": answers, "usage": usage}
 
     @torch.no_grad()
@@ -1061,7 +1285,8 @@ class Agent(HookRegistry):
                    hooks_raise: Optional[bool] = None,
                    hooks_timeout: Optional[float] = None,
                    max_len: Optional[int] = None,
-                   head_max_len: Optional[int] = None) -> Dict[str, Any]:
+                   head_max_len: Optional[int] = None,
+                   min_confidence: Optional[float] = None) -> Dict[str, Any]:
         """Evaluate typed questions across state in a single, parallel forward pass.
 
         Args:
@@ -1082,13 +1307,20 @@ class Agent(HookRegistry):
             Empty questions return empty answers and zero token usage without tokenization
             or a model forward pass.
 
+            When the head budget leaves two options with the same token span, `usage` carries
+            an `options` entry for each question it happened to -- `total`, `distinct` and
+            `tokens_per_option` -- because an answer chosen among 42 distinguishable spans of
+            58 has a ceiling that is the budget's and not the model's. Questions whose options
+            all survive are absent, so a request that collapses nothing is unchanged.
+
         To score many states at once, see `predict_batch`, which shares forward passes across them.
         """
         return self.predict_batch([state], questions, lang=lang, hooks=hooks,
                                   on_predict_start=on_predict_start,
                                   on_predict_end=on_predict_end, hooks_raise=hooks_raise,
                                   hooks_timeout=hooks_timeout,
-                                  max_len=max_len, head_max_len=head_max_len)[0]
+                                  max_len=max_len, head_max_len=head_max_len,
+                                  min_confidence=min_confidence)[0]
 
     def __enter__(self):
         return self
@@ -1111,6 +1343,7 @@ class Agent(HookRegistry):
 
     def decide(self, state: Union[str, dict, list], schema: Any = None, *,
                questions: Optional[Dict[str, Any]] = None, return_details: bool = False,
+               min_confidence: Optional[float] = None,
                **predict_kwargs) -> Any:
         """Answer `state` against a schema (JSON schema or pydantic model) and return typed values.
 
@@ -1119,7 +1352,24 @@ class Agent(HookRegistry):
         """
         from .structured import decide as _decide
         return _decide(self, state, schema, questions=questions,
-                       return_details=return_details, **predict_kwargs)
+                       return_details=return_details, min_confidence=min_confidence, **predict_kwargs)
+
+    def decide_batch(self, states: List[Union[str, dict, list]], schema: Any = None, *,
+                     questions: Optional[Dict[str, Any]] = None,
+                     return_details: bool = False, min_confidence: Optional[float] = None,
+                     **predict_kwargs) -> List[Any]:
+        """Answer many states against one schema (JSON schema or pydantic model) in one batched call.
+
+        The throughput form of :meth:`decide`: the schema is planned once and its questions
+        run over every state through :meth:`predict_batch` (shared forward passes, results
+        in input order), then each state's answers are projected as ``decide`` does. Extra
+        keyword arguments (``batch_size=``, ``lang=``, ``hooks=``, ...) are forwarded to
+        ``predict_batch``. See `laya.structured`.
+        """
+        from .structured import decide_batch as _decide_batch
+        return _decide_batch(self, states, schema, questions=questions,
+                             return_details=return_details, min_confidence=min_confidence,
+                             **predict_kwargs)
 
     def __repr__(self) -> str:
         return "Agent(model_id=%r, device=%s)" % (self.model_id, getattr(self, "device", None))
@@ -1132,6 +1382,7 @@ RLAgent = Agent
 
 def load(model_id_or_path: str = "convaiinnovations/laya", device: Optional[str] = None,
          token: Optional[str] = None, subfolder: Optional[str] = None, fast: bool = False,
+         compile: bool = False,
          revision: Optional[str] = None, expected_sha256: Optional[Dict[str, str]] = None,
          lang_temperatures: Optional[Dict[str, Dict[str, Any]]] = None,
          hooks=None, on_predict_start=None, on_predict_end=None,
@@ -1144,12 +1395,14 @@ def load(model_id_or_path: str = "convaiinnovations/laya", device: Optional[str]
         laya.load("convaiinnovations/laya")                           # English (repo root)
         laya.load("convaiinnovations/laya", subfolder="multilingual")
         laya.load("convaiinnovations/laya", fast=True)                # TileLang GPU fast path
+        laya.load("convaiinnovations/laya", compile=True)              # torch.compile the model
 
     `revision`/`expected_sha256` pin and verify the downloaded artifacts; see `Agent`.
     `hooks` / `on_predict_start` / `on_predict_end` observe or shape every prediction; see
     `laya.hooks`.
     """
     return Agent(model_id_or_path, device=device, token=token, subfolder=subfolder, fast=fast,
+                 compile=compile,
                  revision=revision, expected_sha256=expected_sha256,
                  lang_temperatures=lang_temperatures,
                  hooks=hooks, on_predict_start=on_predict_start, on_predict_end=on_predict_end,
