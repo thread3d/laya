@@ -390,6 +390,31 @@ a discrepancy.
 
 Both harnesses were re-run a second time and reproduced **identically — every accuracy, F1 and
 ECE digit**. Only the ms/case figures move with machine load.
+
+### ONNX Runtime on this CPU
+
+The ONNX Runtime path is checked here as well, because the exporter used to fail on this stack:
+torch 2.2 has no `dynamic_shapes` keyword, so `scripts/export_onnx.py` raised `TypeError` before
+writing a file. With that fixed, one `predict()` answering 3 questions, median of 4 runs,
+interleaved:
+
+| backend | median | vs eager | worst probability drift |
+|---|---|---|---|
+| torch eager, fp32 | 489 ms | — | — |
+| ONNX Runtime, fp32 | **331 ms** | **1.48×** | 0.00000 |
+| ONNX Runtime, INT8 (per-channel) | **170 ms** | **2.9×** | 0.159 |
+
+`predict_batch` over 32 states × 3 questions: 8818 ms eager, 8963 ms ONNX fp32, **5874 ms
+(1.5×) INT8**. The fp32 export is bit-identical to eager — the drift column is the worst cell of
+a sweep over eight states (strings, JSON objects, a conversation list, French, a 58-option
+`choice`) and a batch of eight. INT8 moves probabilities by up to 0.16 and flipped one decision
+in that sample, so it stays the opt-in tradeoff `quantize_model` documents.
+
+```bash
+pip install -e ".[onnx]"     # caps NumPy below 2, which torch 2.2 needs
+python scripts/export_onnx.py --model ./models/laya --output laya.onnx --quantize
+```
+
 ## GPU fast path
 
 `pip install laya[fast]` + `laya.load(..., fast=True)` replaces the encoder/head forward with fused

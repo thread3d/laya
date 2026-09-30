@@ -144,6 +144,13 @@ CPU thread scaling on `laya` (medians): 4 → 501 ms, 8 → 385 ms, **16 → 366
 threads is markedly worse, so `OMP_NUM_THREADS=16` (or `torch.set_num_threads(16)`) is worth
 setting for CPU-only work.
 
+The ONNX Runtime path is faster than torch eager on the same CPU: one `predict()` answering 3
+questions drops from 489 ms to **331 ms (1.48×)** in fp32, bit-identical to eager, and to
+**170 ms (2.9×)** with the opt-in per-channel INT8 copy, which moves probabilities by up to
+0.16. See [`BENCHMARKS.md`](BENCHMARKS.md#onnx-runtime-on-this-cpu). `scripts/export_onnx.py`
+needed a fix first (torch 2.2 has no `dynamic_shapes` keyword), and the `onnx` extra now caps
+NumPy below 2 so installing it cannot break torch 2.2's tensor conversion.
+
 Notes: the first MPS call pays ~13 s of Metal kernel compilation, so warm up before timing;
 everything runs fp32 (bf16 autocast is CUDA-only in Laya).
 
