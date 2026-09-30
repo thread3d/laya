@@ -4,8 +4,11 @@ The first half covers `laya-ts/scripts/export_onnx.py`'s weights check. The seco
 `scripts/export_onnx.py`'s shape declarations: torch 2.2 -- the macOS/Intel pin in
 LOCAL_SETUP.md -- has no `dynamic_shapes` keyword, so the exporter raised
 `TypeError: export() got an unexpected keyword argument 'dynamic_shapes'` there until it
-learned the TorchScript `dynamic_axes` spelling. Both halves are weight-free; neither needs
-the `onnx` extra, which the export call itself imports lazily.
+learned the TorchScript `dynamic_axes` spelling.
+
+The security workflow runs this file on the runner's bare Python, which has neither torch nor
+laya, so the second half is guarded and skips there; the tests job, which installs the package
+and torch, is where those checks execute.
 """
 
 import importlib.util
@@ -13,8 +16,6 @@ import inspect
 import sys
 import tempfile
 from pathlib import Path
-
-import torch
 
 root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(root))
@@ -28,7 +29,6 @@ def _load(name, path):
 
 
 exporter = _load("laya_ts_export_onnx", root / "laya-ts" / "scripts" / "export_onnx.py")
-py_exporter = _load("laya_export_onnx", root / "scripts" / "export_onnx.py")
 
 
 with tempfile.TemporaryDirectory() as directory:
@@ -47,21 +47,34 @@ with tempfile.TemporaryDirectory() as directory:
 
 
 # ------------------------------------------------------- the Python exporter's shape spelling
-AXES = {"input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype", "logits", "act_logits"}
+try:
+    import torch
 
-legacy = py_exporter._shape_kwargs(False)
-assert "dynamic_axes" in legacy and "dynamic_shapes" not in legacy, legacy
-assert legacy["opset_version"] <= 17, legacy["opset_version"]
-assert set(legacy["dynamic_axes"]) == AXES, sorted(legacy["dynamic_axes"])
-assert all(axes for axes in legacy["dynamic_axes"].values()), legacy["dynamic_axes"]
+    py_exporter = _load("laya_export_onnx", root / "scripts" / "export_onnx.py")
+except ImportError as missing:          # the supply-chain job's Python has neither torch nor laya
+    torch = None
+    py_exporter = None
+    _skipped = str(missing)
 
-if hasattr(torch, "export") and hasattr(torch.export, "Dim"):
-    modern = py_exporter._shape_kwargs(True)
-    assert "dynamic_shapes" in modern and "dynamic_axes" not in modern, modern
-    assert modern["opset_version"] == 18, modern["opset_version"]
+if py_exporter is None:
+    print("note: the Python exporter's shape checks were skipped (%s)" % _skipped)
+else:
+    AXES = {"input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype",
+            "logits", "act_logits"}
 
-# The default has to follow the installed torch: a hard-coded choice is the TypeError this
-# branch exists for, and it would be right on only one of the two stacks.
-installed = "dynamic_shapes" in inspect.signature(torch.onnx.export).parameters
-auto = py_exporter._shape_kwargs()
-assert ("dynamic_shapes" in auto) == installed, (sorted(auto), installed)
+    legacy = py_exporter._shape_kwargs(False)
+    assert "dynamic_axes" in legacy and "dynamic_shapes" not in legacy, legacy
+    assert legacy["opset_version"] <= 17, legacy["opset_version"]
+    assert set(legacy["dynamic_axes"]) == AXES, sorted(legacy["dynamic_axes"])
+    assert all(axes for axes in legacy["dynamic_axes"].values()), legacy["dynamic_axes"]
+
+    if hasattr(torch, "export") and hasattr(torch.export, "Dim"):
+        modern = py_exporter._shape_kwargs(True)
+        assert "dynamic_shapes" in modern and "dynamic_axes" not in modern, modern
+        assert modern["opset_version"] == 18, modern["opset_version"]
+
+    # The default has to follow the installed torch: a hard-coded choice is the TypeError this
+    # branch exists for, and it would be right on only one of the two stacks.
+    installed = "dynamic_shapes" in inspect.signature(torch.onnx.export).parameters
+    auto = py_exporter._shape_kwargs()
+    assert ("dynamic_shapes" in auto) == installed, (sorted(auto), installed)
