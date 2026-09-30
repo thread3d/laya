@@ -54,7 +54,12 @@ structured = ["pydantic>=2.0.0"]
 
 # `pip install laya[onnx]` adds ONNX Runtime for `laya.onnx_agent` and `onnxscript`, which
 # `torch.onnx.export` requires (`scripts/export_onnx.py`, `tests/test_onnx.py`).
-onnx = ["onnx", "onnxruntime", "onnxscript"]
+#
+# `numpy<2` is not about ONNX: the extra's own resolution (onnx -> ml-dtypes) otherwise pulls
+# NumPy 2, and torch below 2.3 cannot convert tensors against it ("Numpy is not available"),
+# while this package declares `torch>=2.0.0`. NumPy 1.26 satisfies onnx, onnxruntime and
+# onnxscript, so the cap costs the ONNX path nothing and keeps a torch 2.0-2.2 install working.
+onnx = ["onnx", "onnxruntime", "onnxscript", "numpy<2"]
 
 # `pip install laya[langchain]` adds the LangChain / LangGraph integrations (laya.integrations).
 langchain = [
