@@ -57,6 +57,9 @@ from laya import Router
 # predating them the demo falls back to the 0.3.10 numbers rather than refusing to start,
 # and the fallback is dead code on every release since.
 import laya.serve as _laya_serve
+# `laya/__init__.py` already imports this module for `Router`, so naming it here costs nothing;
+# it is the source of the model registry the check below reads.
+import laya.router as _laya_router
 
 MAX_QUESTIONS = getattr(_laya_serve, "MAX_QUESTIONS", 64)
 MAX_STATE_CHARS = getattr(_laya_serve, "MAX_STATE_CHARS", 50_000)
@@ -66,6 +69,30 @@ MAX_STATE_CHARS = getattr(_laya_serve, "MAX_STATE_CHARS", 50_000)
 MAX_CHOICE_OPTIONS = getattr(_laya_serve, "MAX_CHOICE_OPTIONS", 100)
 MAX_SCORE_LEVELS = getattr(_laya_serve, "MAX_SCORE_LEVELS", 32)
 MAX_TOTAL_OPTIONS = getattr(_laya_serve, "MAX_TOTAL_OPTIONS", 512)
+
+
+def _fallback_state_length(state: Any) -> int:
+    """`laya.serve._state_length` for a laya that predates it, 400 included.
+
+    The 400 is part of what it does: without it an unserializable state raises a bare `TypeError`
+    out of `_check_request_limits`, which `/predict` calls outside its own `try`, so a caller error
+    would arrive as a 500 where it used to be answered.
+    """
+    if isinstance(state, str):
+        return len(state)
+    try:
+        return len(json.dumps(state, ensure_ascii=False))
+    except (TypeError, ValueError, RecursionError):
+        raise HTTPException(status_code=400, detail="'state' must be JSON-serializable")
+
+
+# Borrowed, not restated: the state length has to be measured on the text the tokenizer sees,
+# which is `serialize_state(state)` and not `str(state)`. On states a client can send the two
+# differ by up to 2x upward (a `"` costs one character in `repr` and two in JSON) and 10x downward
+# (`repr` escapes a zero-width space to six characters and a non-BMP format character to ten, where
+# `ensure_ascii=False` writes the one character it is). See `laya.serve._state_length`. Same
+# `getattr` shape as the bounds above.
+_state_length = getattr(_laya_serve, "_state_length", _fallback_state_length)
 
 # The demo answers failures the way laya.serve does: a fixed message to the caller, the
 # traceback to this logger. Without it a 500 arrived as a bare status line in the server
@@ -79,17 +106,47 @@ _log = logging.getLogger("laya.example-server")
 
 MODELS = tuple(getattr(laya, "DEFAULT_MODELS", {}) or ("english", "multilingual", "typed-decisions"))
 
+# `laya.router.normalise_name` is core's one model resolver: it trims, lower-cases, maps
+# `_ALIASES`, and then checks `DEFAULT_MODELS`. Every other surface hands a caller's model string
+# to it -- `laya/serve.py::_resolve_model`, `laya/cli.py::model_name`, `laya/mcp/tools.py` -- and
+# this demo was the exception: it compared the string against `MODELS` exactly, so `laya --model
+# laya` pinned the English checkpoint while the same value POSTed here answered 422.
+normalise_name = _laya_router.normalise_name
+
+# The other spellings a caller may use for a checkpoint, inverted from the router's own table and
+# filtered to aliases that still name one of the checkpoints above, so an alias cannot outlive its
+# target and a checkpoint added to core is pinnable by alias with no edit to this file. Read with
+# the same `getattr` as the bounds: if that table ever moves, `/models` reports no aliases and
+# validation still goes through the public resolver.
+MODEL_ALIASES = {
+    alias: target
+    for alias, target in (getattr(_laya_router, "_ALIASES", {}) or {}).items()
+    if target in MODELS
+}
+
+
+def _model_names() -> str:
+    """The accepted spellings, rendered from the two lists above rather than typed out."""
+    return "one of %s, or an alias core resolves (%s), in any casing; omit to auto-route." % (
+        " | ".join(sorted(MODELS)), ", ".join(sorted(MODEL_ALIASES)))
+
 
 def _check_model(v: Optional[str]) -> Optional[str]:
-    """`model` is optional; when given it must name a known checkpoint."""
+    """`model` is optional; when given it must name a checkpoint the way core names one.
+
+    Returns the canonical checkpoint name, so what reaches the Router and what the response
+    reports is the checkpoint rather than the spelling that named it. A blank string stays
+    "do not pin": the playground posts an empty field, and core's resolver raises on one.
+    """
     if v is None:
         return None
     v = v.strip()
     if not v:
         return None
-    if v not in MODELS:
-        raise ValueError(f"unknown model {v!r}; expected one of {sorted(MODELS)} (or omit it)")
-    return v
+    try:
+        return normalise_name(v)
+    except ValueError as error:
+        raise ValueError("%s (or omit it)" % error) from None
 
 
 class Question(BaseModel):
@@ -131,8 +188,7 @@ class PredictRequest(BaseModel):
     questions: Dict[str, Question] = Field(..., min_length=1)
     model: Optional[str] = Field(
         default=None,
-        description="Optional checkpoint override: english | multilingual | typed-decisions. "
-                    "Omit to auto-route by language.",
+        description="Checkpoint override: " + _model_names(),
         examples=["multilingual"],
     )
     task: Optional[str] = None
@@ -151,9 +207,20 @@ class PredictRequest(BaseModel):
 class BatchRequest(BaseModel):
     states: List[Union[str, Dict[str, Any], List[Any]]] = Field(..., min_length=1, max_length=64)
     questions: Dict[str, Question] = Field(..., min_length=1)
-    model: Optional[str] = None
+    model: Optional[str] = Field(default=None, description="Checkpoint override: "
+                                                           + _model_names())
     task: Optional[str] = None
     lang: Optional[str] = None
+    # The batch shape, not a per-state control: these size and group the forward passes rather
+    # than saying what a state means. `sort_by_length` only reorders a batch that is split into
+    # more than one pass, so it needs a `batch_size` strictly between 1 and the state count.
+    batch_size: Optional[int] = Field(
+        default=None, ge=1,
+        description="states per forward pass; the default sends the whole batch in one pass")
+    sort_by_length: bool = Field(
+        default=False,
+        description="group similarly sized states in the same pass so each pads to a shorter "
+                    "maximum; needs a batch_size below the state count, never changes an answer")
 
     _v_model = field_validator("model")(classmethod(lambda cls, v: _check_model(v)))
 
@@ -247,6 +314,9 @@ def models(request: Request):
     payload = {
         "default": _CFG["default"],
         "allowed": sorted(MODELS),
+        # `allowed` alone would under-report the endpoint: a checkpoint may also be named by any
+        # alias core resolves, in any casing. Both lists come from laya.router, not from this file.
+        "aliases": dict(sorted(MODEL_ALIASES.items())),
         "models": {k: list(v) for k, v in (getattr(laya, "DEFAULT_MODELS", {}) or {}).items()},
     }
     return _models_page(payload) if _wants_html(request) else payload
@@ -268,10 +338,13 @@ def _check_request_limits(state: Any, questions: Dict[str, Any]) -> None:
 
     Laya encodes the state once per question, so cost is questions x state size,
     collated into one tensor, and a choice or score question adds one sequence per
-    option against a shared head budget. The state length is measured exactly as
-    laya.serve measures it -- `len(v)` for a string, `len(str(v))` for a dict or list
-    -- and the option counts exactly as it counts them, over `choice` and `score`
-    criteria only.
+    option against a shared head budget. The state length comes from laya.serve's own
+    `_state_length` by `getattr`, so the two surfaces cannot disagree about what a state
+    *measures*, and the option counts exactly as it counts them, over `choice` and
+    `score` criteria only. They can still differ in which limit they report first: this
+    handler checks state size before the option budgets and `laya.serve` checks it after,
+    so a request violating both gets a different `detail` from each. That ordering is
+    unchanged here.
 
     Checked here rather than declared as pydantic constraints on the request models,
     for two reasons: a `Field(max_length=...)` violation is reported as 422 where
@@ -284,7 +357,7 @@ def _check_request_limits(state: Any, questions: Dict[str, Any]) -> None:
             status_code=413,
             detail="too many questions (%d > %d)" % (len(questions), MAX_QUESTIONS),
         )
-    size = len(state) if isinstance(state, str) else len(str(state))
+    size = _state_length(state)
     if size > MAX_STATE_CHARS:
         raise HTTPException(
             status_code=413,
@@ -361,11 +434,19 @@ def predict_batch(req: BatchRequest) -> Dict[str, Any]:
     controls = {key: value for key, value in (("model", req.model), ("task", req.task),
                                               ("lang", req.lang)) if value is not None}
     requests = [{"state": state, "questions": questions, **controls} for state in req.states]
+    # The batch shape is an argument of the batch call, not a control that travels per request: the
+    # fallback below answers one state at a time, where there is no group to size or reorder. Sent
+    # only when set, so a request that asks for neither keeps making the call it always made.
+    shape = {}
+    if req.batch_size is not None:
+        shape["batch_size"] = req.batch_size
+    if req.sort_by_length:
+        shape["sort_by_length"] = True
     try:
         # One call, not one per state: `Router.predict_batch` routes the whole batch, groups it by
         # checkpoint and shares a forward pass across states that carry the same question schema --
         # which is exactly this endpoint, since `BatchRequest` holds one `questions` map.
-        results: List[Dict[str, Any]] = list(_router().predict_batch(requests))
+        results: List[Dict[str, Any]] = list(_router().predict_batch(requests, **shape))
     except Exception:
         # The batch fails as a unit, so a single bad state would otherwise cost every other state
         # its answer. Fall back to the per-state path to keep the documented envelope: N results,
@@ -3295,9 +3376,12 @@ def _models_page(payload: Dict[str, Any]) -> HTMLResponse:
     return _page(
         "Laya models",
         "Models",
-        "<div class='doc-head'><h1>Models</h1><span class='doc-sub'>Three checkpoints, one router</span></div>"
-        "<p class='lead'>Leave <code>model</code> out and the router picks a checkpoint by language. "
-        "Send it to pin one; any other value is rejected with a 422.</p>"
+        "<div class='doc-head'><h1>Models</h1><span class='doc-sub'>%d checkpoints, one router"
+        "</span></div>" % len(payload["allowed"])
+        + "<p class='lead'>Leave <code>model</code> out and the router picks a checkpoint by language. "
+        "Send it to pin one: a checkpoint name, or any alias core resolves -- "
+        + ", ".join("<code>%s</code>" % escape(alias) for alias in payload["aliases"])
+        + " -- in any casing. Any other value is rejected with a 422.</p>"
         + cards
         + "<div class='foot'><a class='btn line' href='/'>Open the playground</a>"
         "<a class='btn' href='/docs'>API docs</a></div>",
@@ -3438,9 +3522,13 @@ async def gui_predict(request: Request) -> HTMLResponse:
     try:
         _check_request_limits(req.state, req.questions)
     except HTTPException as exc:
-        return _gui_error("Request too large", [str(exc.detail)],
-                          f"The server takes up to {MAX_QUESTIONS} questions and a state of up to "
-                          f"{MAX_STATE_CHARS:,} characters. Split the request or shorten the state.")
+        # Branch on the status: this check answers 400 as well as 413 now, and a size hint under
+        # the heading "Request too large" would describe the wrong problem.
+        if exc.status_code == 413:
+            return _gui_error("Request too large", [str(exc.detail)],
+                              f"The server takes up to {MAX_QUESTIONS} questions and a state of up to "
+                              f"{MAX_STATE_CHARS:,} characters. Split the request or shorten the state.")
+        return _gui_error("Bad request", [str(exc.detail)], "Fix the request and send it again.")
     questions = _questions(req.questions)
     try:
         started = time.perf_counter()

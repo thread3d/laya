@@ -20,9 +20,12 @@ from laya.common import (
     collate_items,
     confidence_from_probs,
     encode_text,
+    render_criterion,
     render_options,
+    resolve_lang_temperatures,
     serialize_state,
     temp_bucket,
+    unpermute_probs,
     TEMP_MIN,
     TEMP_MAX,
     clamp_temperature,
@@ -56,6 +59,7 @@ class ONNXAgent(HookRegistry):
         hooks_concurrent: bool = True,
         hooks_timeout: Optional[float] = None,
         lang_temperatures: Optional[Dict[str, Dict[str, Any]]] = None,
+        calibration: Optional[str] = None,
     ):
         """Load a Laya agent backed by ONNX Runtime.
 
@@ -181,19 +185,10 @@ class ONNXAgent(HookRegistry):
         self.temperature = [clamp_temperature(t) for t in self.temperature_raw]
         self.temperature_by_options = {k: clamp_temperature(v)
                                        for k, v in self.temperature_by_options_raw.items()}
-        # Per-language temperature overrides, built exactly as the PyTorch Agent does so a caller
-        # can hand the same `lang_temperatures` to either backend and read the same confidence.
-        self.lang_temperatures = {}
-        for l, lcfg in (lang_temperatures or {}).items():
-            norm_l = l.split("-")[0].lower()
-            t_raw = lcfg.get("temperature", self.temperature_raw)
-            if len(t_raw) != 3:
-                raise ValueError("Language override %r temperature must be a list of 3 floats" % l)
-            tbo_raw = lcfg.get("temperature_by_options", {})
-            self.lang_temperatures[norm_l] = {
-                "temperature": [clamp_temperature(t) for t in t_raw],
-                "temperature_by_options": {k: clamp_temperature(v) for k, v in tbo_raw.items()},
-            }
+        # Per-language temperature overrides, through the same helper the PyTorch Agent uses, so a
+        # caller can hand the same `lang_temperatures` to either backend and read the same
+        # confidence -- including the same error for the same malformed input.
+        self.lang_temperatures = resolve_lang_temperatures(lang_temperatures, self.temperature_raw)
         entries = [(k, v, self.temperature_by_options[k]) for k, v in self.temperature_by_options_raw.items()]
         entries += [("temperature[%d]" % i, t, self.temperature[i]) for i, t in enumerate(self.temperature_raw)]
         rejected = []
@@ -212,6 +207,15 @@ class ONNXAgent(HookRegistry):
                 "confidence; clamping %s. Treat confidence from the affected buckets as uncalibrated."
                 % (TEMP_MIN, TEMP_MAX, ", ".join(rejected)),
                 RuntimeWarning, stacklevel=2)
+        if calibration:
+            self.load_calibration(calibration)
+
+    def load_calibration(self, path: str) -> None:
+        """Read a JSON map written by `save_calibration` onto this agent."""
+        from .calibrate import apply_calibration_payload
+        with open(path) as f:
+            payload = json.load(f)
+        apply_calibration_payload(self, payload)
 
     @staticmethod
     def _to_internal(qdef: Dict) -> Dict:
@@ -228,6 +232,8 @@ class ONNXAgent(HookRegistry):
         q = {"t": t, "ins": ins, "crit": crit}
         if "labels" in qdef:
             q["labels"] = qdef["labels"]
+        if "option_order" in qdef:
+            q["option_order"] = [int(i) for i in qdef["option_order"]]
         return q
 
     def system_one(self, state: Union[str, dict, list], questions: Dict[str, Dict[str, Any]],
@@ -333,7 +339,19 @@ class ONNXAgent(HookRegistry):
                     raise TypeError(
                         "predict_batch expects a list of states; pass a single state to predict()/system_one()."
                     )
+                if not isinstance(questions, dict):
+                    raise TypeError(
+                        "questions must be a dict of question id -> definition, got %s"
+                        % type(questions).__name__
+                    )
                 states = list(states)
+                if any(state is None for state in states):
+                    # `serialize_state(None)` is `json.dumps(None)`, so a missing state would
+                    # otherwise be answered as a decision about the literal text "null",
+                    # byte-identical to passing `"null"` and at full confidence.
+                    raise TypeError(
+                        "state must not be None; pass a string, dict, or list"
+                    )
                 if not states:
                     ctx.results = []
                 else:
@@ -416,7 +434,9 @@ class ONNXAgent(HookRegistry):
             hooks_timeout: Override the agent's `hooks_timeout` for this call.
 
         Returns a single result dict, the same shape as `system_one`, with `usage["windows"]`
-        added.
+        added. Across several windows the truncation keys are summed or carried the same way as
+        in `Agent.predict_long`: `truncated` is a window count and `truncated_questions` is the
+        last window's list, so `truncated` can be above 0 while the list is empty.
         """
         from .agent import _start_evidence, _with_start_probe
         from .hooks import aggregate_usage
@@ -424,6 +444,11 @@ class ONNXAgent(HookRegistry):
         hook_kwargs = {"hooks": hooks, "on_predict_start": on_predict_start,
                        "on_predict_end": on_predict_end, "hooks_raise": hooks_raise,
                        "hooks_timeout": hooks_timeout}
+        if state is None:
+            raise TypeError("state must not be None; pass a string, dict, or list")
+        if not isinstance(questions, dict):
+            raise TypeError("questions must be a dict of question id -> definition, got %s"
+                            % type(questions).__name__)
         if aggregate != "auto":
             raise ValueError("predict_long: only aggregate='auto' is supported")
         max_len = self.cfg.get("max_len", 512)
@@ -487,12 +512,13 @@ class ONNXAgent(HookRegistry):
             return {"model": "laya-rl-agent-onnx", "answers": {},
                     "usage": {**aggregate_usage(results), "windows": 0}}
 
-        ids = list(questions.keys())
-        internal = {qid: self._to_internal(questions[qid]) for qid in ids}
+        question_types = evidence["question_types"]
+        if question_types is None:       # a replacement predict_batch may not dispatch hooks
+            question_types = {qid: self._to_internal(qdef)["t"] for qid, qdef in questions.items()}
         answers = {}
-        for qid in ids:
+        for qid, qtype in question_types.items():
             per = [r["answers"][qid] for r in results]
-            if internal[qid]["t"] == "noul":
+            if qtype == "noul":
                 # Evidence anywhere: the strongest window decides, carrying its own P(true),
                 # confidence and act so the fields stay mutually consistent.
                 best = max(range(len(per)), key=lambda j: float(per[j]["noul"]))
@@ -508,11 +534,24 @@ class ONNXAgent(HookRegistry):
                                  "count": len(results)}
             answers[qid] = ans
         # Aggregate usage generically so fields predict_batch may grow later are propagated
-        # rather than silently dropped, then record the window count.
+        # rather than silently dropped: sum numeric fields across windows, merge the
+        # per-question records, then record the window count.
+        # A per-question field has to be merged rather than replaced. `usage["options"]` is a
+        # dict keyed by question id, set only on the windows where option spans actually
+        # collapsed, so replacing it left the caller holding whichever collapsing window came
+        # last. The deciding window is the most confident one, not the last one, so that could
+        # report a collapse for a window that did not decide while the deciding window's own
+        # record was gone.
         usage: Dict[str, Any] = {}
         for r in results:
             for key, val in r["usage"].items():
-                usage[key] = (usage.get(key, 0) + val) if isinstance(val, (int, float)) else val
+                prev = usage.get(key)
+                if isinstance(val, (int, float)):
+                    usage[key] = (prev if isinstance(prev, (int, float)) else 0) + val
+                elif isinstance(val, dict) and isinstance(prev, dict):
+                    usage[key] = {**prev, **val}
+                else:
+                    usage[key] = val
         usage["output_tokens"] = 0
         usage["windows"] = len(results)
         return {"model": "laya-rl-agent-onnx", "answers": answers, "usage": usage}
@@ -540,24 +579,27 @@ class ONNXAgent(HookRegistry):
         items = []
         for qid in ids:
             q = internal[qid]
-            seq, markers, stats = build_sequence(
+            seq, markers, stats, state_stats = build_sequence(
                 self.tok, state, q, max_len, head_max_len,
+                option_order=q.get("option_order"),
                 truncate_left=truncate_left, state_ids=state_ids, return_stats=True,
+                return_truncation_stats=True,
             )
             n_opts = len(render_options(q))
             if len(markers) != n_opts:
-                # The markers are placed at absolute positions and `build_sequence` then drops the
-                # ones past `max_len`, so this is about the question fitting in the sequence --
-                # `head_max_len` is how much of it the options were given, and `max_len` is the
-                # ceiling that dropped them. Naming only `head_max_len` pointed at the wrong knob
-                # in both directions: lowering it shortens the option block and can make the
-                # call succeed, while raising it makes the overflow worse.
+                # Same diagnosis as `Agent._encode_state`, so both backends report the same thing.
+                # The markers are placed at absolute positions and `build_sequence` drops the ones
+                # past `max_len`, so `head_max_len` is how much of the sequence the options were
+                # given and `max_len` is the ceiling that dropped them -- naming only
+                # `head_max_len` pointed at the wrong knob in both directions. The count is the
+                # markers that survived, not `len(seq)`, which is always exactly `max_len` here.
                 raise ValueError(
-                    "question %r: its %d options and question text need %d tokens, more than "
-                    "max_len=%d allows once head_max_len=%d is spent on them; lower head_max_len, "
-                    "raise max_len, or use fewer options"
-                    % (qid, n_opts, len(seq), max_len, head_max_len))
-            items.append({"ids": seq, "markers": markers, "qtype": QTYPES[q["t"]], "options": stats})
+                    "question %r: only %d of its %d option markers fit in max_len=%d with "
+                    "head_max_len=%d spent on the question; lower head_max_len, raise max_len, "
+                    "or use fewer options"
+                    % (qid, len(markers), n_opts, max_len, head_max_len))
+            items.append({"ids": seq, "markers": markers, "qtype": QTYPES[q["t"]], "options": stats,
+                          "state_stats": state_stats})
         return items
 
     def _decode_answers(self, logits, act, items: List[Dict[str, Any]], ids: List[str],
@@ -576,6 +618,9 @@ class ONNXAgent(HookRegistry):
             z = logits[offset + r, :k] / t_scale
             p = np.exp(z - z.max())
             p = p / p.sum()
+
+            # The row comes back in slot order; everything below indexes by option.
+            p = unpermute_probs(p, q.get("option_order"))
 
             conf_score = round(confidence_from_probs(p, k), 4)
             # `answer_confidence` is the calibrated max(p) confidence, reported on every question
@@ -599,7 +644,11 @@ class ONNXAgent(HookRegistry):
                 answers[qid] = {
                     "type": "score",
                     "score": round(exp_score, 4),
-                    "legend": {str(i): c for i, c in enumerate(q["crit"])},
+                    # Same as `Agent._decode_answers`, so both backends return the same legend:
+                    # `render_criterion` gives a dict or list level back as the JSON text the
+                    # model was shown, and a numeric level as a string, rather than a Python repr
+                    # or the caller's own type.
+                    "legend": {str(i): render_criterion(c) for i, c in enumerate(q["crit"])},
                     "probabilities": {str(i): round(float(v), 4) for i, v in enumerate(p)},
                     "confidence": conf_score,
                     "answer_confidence": ans_conf,
@@ -680,7 +729,18 @@ class ONNXAgent(HookRegistry):
                 for index, items in zip(indices, per_state_items):
                     nrows = len(items)
                     n_tokens = int(att[row:row + nrows].sum())
-                    usage = {"input_tokens": n_tokens, "output_tokens": 0}
+                    # Same truncation report as Agent.predict_batch (#174).
+                    stats = [item["state_stats"] for item in items]
+                    dropped = max(s["state_tokens_dropped"] for s in stats)
+                    usage = {
+                        "input_tokens": n_tokens,
+                        "output_tokens": 0,
+                        "state_tokens": stats[0]["state_tokens"],
+                        # worst case: the questions share one state, not one head budget
+                        "state_tokens_dropped": dropped,
+                        "truncated": dropped > 0,
+                        "truncated_questions": [qid for qid, s in zip(ids, stats) if s["truncated"]],
+                    }
                     # Only when a question lost options to the head budget, as on the torch Agent.
                     collapsed = collapsed_options(ids, items)
                     if collapsed:

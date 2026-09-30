@@ -331,7 +331,15 @@ for label, qdef in [
                                 "criteria": {"true": "y", "false": "n", "maybe": "?"}}),
     ("unknown type", {"type": "bool", "instructions": "Is it spam?"}),
     ("missing type", {"instructions": "Is it spam?"}),
+    ("list type", {"type": [], "instructions": "Is it spam?"}),
+    ("dict type", {"type": {}, "instructions": "Is it spam?"}),
     ("no instructions", {"type": "noul"}),
+    ("instructions is None", {"type": "noul", "instructions": None}),
+    ("instructions is empty string", {"type": "noul", "instructions": ""}),
+    ("instructions is whitespace", {"type": "noul", "instructions": "   "}),
+    ("instructions is empty list", {"type": "noul", "instructions": []}),
+    ("instructions is empty dict", {"type": "noul", "instructions": {}}),
+    ("instructions is non-container object", {"type": "noul", "instructions": set()}),
     # A criteria list is normalised to `{label: None}`, so its labels are the answer keys. Two
     # entries that land on one key scored fewer options than the caller wrote and returned fewer
     # probabilities than their list, without a word. Python collapses keys that compare equal, so
@@ -407,7 +415,13 @@ if _empty_label is not None:
 # the same questions through the public entry point, not only the method under it
 router = Router()
 router.attach("english", agent)
-for label, qdef in (("choice without criteria", {"type": "choice", "instructions": "x"}),):
+for label, qdef in (
+    ("choice without criteria", {"type": "choice", "instructions": "x"}),
+    ("list type", {"type": [], "instructions": "Is it spam?"}),
+    ("dict type", {"type": {}, "instructions": "Is it spam?"}),
+    ("instructions is None", {"type": "noul", "instructions": None}),
+    ("instructions is empty string", {"type": "noul", "instructions": ""}),
+):
     try:
         router.predict(STATE, {"q": qdef}, model="english")
         FAIL.append("rejected/router %s: no error raised" % label)
@@ -425,6 +439,33 @@ except ValueError as e:
     check_true("rejected/second question names it", "'broken'" in str(e), str(e))
 except Exception as e:
     FAIL.append("rejected/second question: %s instead of ValueError: %s" % (type(e).__name__, e))
+
+# A malformed type must name the question and the allowed values, including when it is second.
+# Lists and dicts used to fail in the type lookup with a bare "unhashable type" TypeError (#707).
+for bad_type in ([], ["noul"], {}, {"name": "noul"}, None, 7, True, "bogus"):
+    name = "rejected/question type %r" % (bad_type,)
+    try:
+        agent.system_one(STATE, {
+            "ok": {"type": "noul", "instructions": "Is it urgent?"},
+            "refund": {"type": bad_type, "instructions": "Is a refund requested?"},
+        })
+        FAIL.append("%s: no error raised" % name)
+    except ValueError as e:
+        check(name, str(e), "question 'refund': unknown type %r; use one of ['choice', 'noul', 'score']"
+              % (bad_type,))
+    except Exception as e:
+        FAIL.append("%s: %s instead of ValueError: %s" % (name, type(e).__name__, e))
+
+# every question id is validated (must be non-empty string)
+for bad_qid in (None, "", "   "):
+    name = "rejected/question id %r" % (bad_qid,)
+    try:
+        agent.system_one(STATE, {bad_qid: {"type": "noul", "instructions": "Is it urgent?"}})
+        FAIL.append("%s: no error raised" % name)
+    except ValueError as e:
+        check_true("%s names question id" % name, "question id" in str(e), str(e))
+    except Exception as e:
+        FAIL.append("%s: %s instead of ValueError: %s" % (name, type(e).__name__, e))
 
 # ...and the shapes that are valid still answer, so this is not validation-only coverage
 GOOD = {

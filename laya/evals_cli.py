@@ -31,9 +31,11 @@ class RouterRunner:
         return self.router.predict(state, questions, model=model)
 
     def predict_batch(self, states: Sequence[Any], questions: Dict[str, Any],
-                      model: Optional[str] = None, batch_size: Optional[int] = None) -> List[Dict[str, Any]]:
+                      model: Optional[str] = None, batch_size: Optional[int] = None,
+                      sort_by_length: bool = False) -> List[Dict[str, Any]]:
         requests = [{"state": state, "questions": questions, "model": model} for state in states]
-        return self.router.predict_batch(requests, batch_size=batch_size)
+        return self.router.predict_batch(requests, batch_size=batch_size,
+                                         sort_by_length=sort_by_length)
 
 
 class OnnxRunner:
@@ -59,10 +61,16 @@ class OnnxRunner:
         return self.agent.predict(state, questions)
 
     def predict_batch(self, states: Sequence[Any], questions: Dict[str, Any],
-                      model: Optional[str] = None, batch_size: Optional[int] = None) -> List[Dict[str, Any]]:
+                      model: Optional[str] = None, batch_size: Optional[int] = None,
+                      sort_by_length: bool = False) -> List[Dict[str, Any]]:
         self._check_model(model)
         agent_batch = getattr(self.agent, "predict_batch", None)
         if agent_batch is not None:
+            if sort_by_length:
+                # Asked for, so it has to reach the agent's own grouping. The per-state fallback
+                # below cannot honour it: there is no batch to reorder.
+                return agent_batch(list(states), questions, batch_size=batch_size,
+                                   sort_by_length=True)
             return agent_batch(list(states), questions, batch_size=batch_size)
         return [self.agent.predict(state, questions) for state in states]
 
@@ -143,6 +151,10 @@ def _build_parser() -> argparse.ArgumentParser:
                           "checkpoint's default branch; the report records the commit that answered "
                           "either way")
     run.add_argument("--batch-size", type=int, help="examples per forward pass when questions match")
+    run.add_argument("--sort-by-length", action="store_true", dest="sort_by_length",
+                     help="with --batch-size N where 1 < N < the run, group similarly sized "
+                          "examples into the same forward pass so each pads to a shorter maximum; "
+                          "scores the same answers, in the same order")
     run.add_argument("--on-error", choices=("fail", "skip"), default="fail")
     run.add_argument("--baseline", help="a baseline report JSON to compare against")
     run.add_argument("--tolerance", action="append", metavar="METRIC=VALUE",
@@ -204,6 +216,21 @@ def _print_deltas(deltas: Dict[str, Dict[str, Any]]) -> None:
               % (metric, delta["baseline"], delta["value"], delta["diff"], delta["tolerance"]))
 
 
+def _comparability_failure(report: evals.EvalReport, baseline: Dict[str, Any]) -> Optional[str]:
+    """The refusal to compare two runs that are not the same measurement, as one failure line.
+
+    The metric gate answers "did the numbers move"; it cannot answer "were these the same
+    numbers", because `EvalReport.compare` reads `overall` and only `overall`. So a baseline
+    recorded against one dataset passes a candidate scored on another, with identical
+    arithmetic. The gate still prints its deltas -- the reviewer wants to see both facts -- but
+    an incomparable pair is not a pass.
+    """
+    ok, reasons = report.comparable_to(baseline)
+    if ok:
+        return None
+    return "baseline is not comparable: " + "; ".join(reasons)
+
+
 def _cmd_validate(args) -> int:
     dataset = evals.Dataset.from_jsonl(args.dataset)
     questions = sorted({qid for example in dataset.examples for qid in example.questions})
@@ -262,13 +289,19 @@ def _cmd_run(args) -> int:
             # download.
             raise EvalError(str(exc)) from exc
         runner = RouterRunner(router)
-    config = {"dataset": args.dataset, "model": args.model, "device": args.device}
+    config = {"dataset": args.dataset, "model": args.model, "device": args.device,
+              # The path above is the name, not the data. Hashing the bytes here is what makes
+              # a committed baseline reviewable: the dataset can be edited in place, moved or
+              # refetched under the same name, and a reviewer comparing two reports needs the
+              # report -- not a file mtime -- to say so.
+              "dataset_sha256": evals.file_fingerprint(args.dataset)}
     if args.onnx:
         config["onnx"] = args.onnx
     if extra:
         config["score_within"] = [evaluator.tolerance for evaluator in extra]
     report = evals.evaluate(runner, dataset, evaluators=evals.default_evaluators() + extra,
-                            batch_size=args.batch_size, on_error=args.on_error, config=config)
+                            batch_size=args.batch_size, on_error=args.on_error, config=config,
+                            sort_by_length=args.sort_by_length)
     # Which commit answered belongs in the artifact a baseline is, and it can only be read after
     # the run: `preload=False` means no checkpoint is resident before the first row.
     # `loaded_revisions` reports the commit each resident agent came from -- the pin when there is
@@ -286,14 +319,25 @@ def _cmd_run(args) -> int:
         mins[key] = args.min_accuracy
     if args.max_ece is not None:
         maxs["ece"] = args.max_ece
+    tolerances = _parse_pairs(args.tolerance)
+    # The gate this run actually applied, recorded with the numbers it produced. A baseline whose
+    # numbers came from a different gate is a different claim, and `docs/staged-adoption.md`
+    # asks for exactly this alongside the checkpoint version and the evaluation set.
+    report.config = dict(report.config,
+                         thresholds={"min": mins, "max": maxs, "baseline_tolerance": tolerances})
 
     failures = _check_thresholds(report.overall, mins, maxs)
     if args.baseline:
         baseline = _load_report(args.baseline)
-        ok, deltas = report.compare(baseline, _parse_pairs(args.tolerance))
+        ok, deltas = report.compare(baseline, tolerances)
         _print_deltas(deltas)
         if not ok:
             failures.append("baseline comparison failed")
+        # Checked after the deltas are printed, so a reviewer sees what moved as well as why the
+        # two runs are not the same experiment.
+        refusal = _comparability_failure(report, baseline)
+        if refusal:
+            failures.append(refusal)
 
     for name in sorted(report.overall):
         print("%-18s %.4f" % (name, report.overall[name]))
@@ -317,12 +361,27 @@ def _cmd_run(args) -> int:
 
 
 def _cmd_compare(args) -> int:
-    report = evals.EvalReport(**{k: v for k, v in _load_report(args.report).items()
-                                 if k in ("config", "overall", "slices", "cases")})
+    # `_identity_of` rather than a bare `config` slice, because a report may carry its identity
+    # at the top level -- `research/evals/act_head_eval.py` puts `schema` there -- and
+    # `EvalReport.comparable_to` reads the candidate's identity out of `config`. Filtering to the
+    # four known keys dropped a top-level `schema` before the report was built, so a candidate
+    # that disagreed with its baseline passed the gate while the same disagreement stated in
+    # `config` was refused. The baseline has always gone through `_identity_of`; this makes the
+    # candidate side symmetric.
+    document = _load_report(args.report)
+    report = evals.EvalReport(
+        config=evals._identity_of(document),
+        **{k: v for k, v in document.items() if k in ("overall", "slices", "cases")})
     baseline = _load_report(args.baseline)
     ok, deltas = report.compare(baseline, _parse_pairs(args.tolerance))
     _print_deltas(deltas)
-    return 0 if ok else 1
+    # `compare` is the offline re-check of a report a reviewer already read, so the same
+    # comparability refusal has to apply here: a saved report that cannot say which experiment
+    # it came from must not pass a gate either.
+    refusal = _comparability_failure(report, baseline)
+    if refusal:
+        print("FAIL: " + refusal, file=sys.stderr)
+    return 0 if ok and not refusal else 1
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -334,8 +393,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return _cmd_run(args)
         return _cmd_compare(args)
     except EvalError as exc:
+        # A malformed dataset, an unreadable report, or a mistyped pin is a usage error, not a
+        # quality result. Returning 1 for these made "my dataset is broken" and "the model
+        # regressed" indistinguishable to a CI job, which is the one distinction the documented
+        # exit codes exist to draw. (argparse already exits 2 for a bad flag on its own.)
         print("laya-evals: %s" % exc, file=sys.stderr)
-        return 1
+        return 2
+    except FileNotFoundError as exc:
+        # A dataset or report path that does not exist is the caller's mistake. Narrowed twice on
+        # purpose. Bare `OSError` would swallow a Hub outage. `FileNotFoundError` still would too:
+        # huggingface_hub raises LocalEntryNotFoundError -- a failed *download*, subclassing
+        # FileNotFoundError -- when a checkpoint is not cached and cannot be fetched, and "the
+        # network is down" is an environment fault, not a usage error. Distinguishing the two by
+        # name is deliberate; a checkpoint that cannot be downloaded stays an unhandled failure,
+        # which is what it was before.
+        from huggingface_hub.errors import LocalEntryNotFoundError
+
+        if isinstance(exc, LocalEntryNotFoundError):
+            raise
+        print("laya-evals: %s" % exc, file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

@@ -45,18 +45,18 @@ function isEnglishSignoff(line: string): boolean {
 const SIGNATURE_MARKERS: Array<(line: string) => boolean> = [
   (l) => /^\s*--\s*$/.test(l),
   isEnglishSignoff,
-  (l) => /^\s*sent from my (iphone|android|mobile|ipad)/i.test(l),
   (l) =>
     /^\s*(atenciosamente|att|abraços?|abs|um abraço|cordialmente|grat[oa]|(muito )?obrigad[oa]s?( desde já| pela atenção)?|(com os melhores )?cumprimentos|saudações|(un )?saludos?( cordiales)?|atentamente|(muchas )?gracias( de antemano)?)[\s,!.]*$/i.test(
       l,
     ),
 ];
 const DEVICE =
-  "iphone|ipad|android|ios|celular|telemóvel|móvil|galaxy|smartphone|samsung|tablet|" +
+  "iphone|ipad|android|ios|mobile|celular|telemóvel|móvil|galaxy|smartphone|samsung|tablet|" +
   "outlook|yahoo|mail|e-?mail|gmail|windows";
 const DEVICE_FOOTER = new RegExp(
   "^\\s*((enviad[oa] (do|pelo|pela|via|desde|a partir do)( meu| minha| mi)?|sent from( my)?)" +
-    ` (${DEVICE})( (${DEVICE}|para|for|no|na|\\d+))*|(obter o|get) outlook (para|for) (ios|android))[\\s.!]*$`,
+    ` (${DEVICE})( (${DEVICE}|para|for|no|na|\\d+|phone|device|pro|max|mini|plus|using [a-z][\\w.+-]*))*` +
+    "|(obter o|get) outlook (para|for) (ios|android))[\\s.!]*$",
   "i",
 );
 const DISCLAIMER = new RegExp(
@@ -165,10 +165,13 @@ export function emailState(
   sender?: string | null,
   clean = true,
   extra: Record<string, unknown> = {},
+  // The budget cleanEmailBody cuts the body to, as Python's email_state(max_chars=) (#589).
+  // Last, so existing positional calls keep their meaning. Ignored when clean is false.
+  maxChars = 3000,
 ): Record<string, unknown> {
   const state: Record<string, unknown> = {
     subject: (subject ?? "").trim(),
-    body: clean ? cleanEmailBody(body ?? "") : (body ?? ""),
+    body: clean ? cleanEmailBody(body ?? "", maxChars) : (body ?? ""),
   };
   if (sender) state["from"] = sender;
   for (const [k, v] of Object.entries(extra ?? {})) {

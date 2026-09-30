@@ -34,7 +34,7 @@ jobs:
       matrix:
         node: ["20", "22"]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ matrix.node }}
@@ -51,8 +51,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
       - run: python research/benchmarks/feishu_zh/audit.py
@@ -71,8 +71,8 @@ jobs:
         # Keep this in lockstep with pyproject classifiers; packaging tests enforce that.
         python: ["3.10", "3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
           cache: pip
@@ -102,12 +102,15 @@ jobs:
           python tests/test_batch.py
           python tests/test_predict_long.py
           python tests/test_attention_dynamic_shapes.py
+          python tests/test_option_order.py
+          python tests/test_state_budget.py
           python tests/test_hooks.py
           python tests/test_hooks_api.py
           python tests/test_structured.py
           python tests/test_structured_api.py
           python tests/test_structured_docs.py
           python tests/test_onnx_lang_parity.py
+          python tests/test_onnx_truncation_parity.py
           python tests/test_onnx_batch.py
           python tests/test_onnx_long.py
           python tests/test_onnx_sort.py
@@ -115,6 +118,7 @@ jobs:
           python tests/test_shortlist.py
           python tests/test_decision_model.py
           python tests/test_head_checkpointing.py
+          python tests/test_truncation.py
           python tests/test_packaging.py
           python tests/test_compose_env.py
           python tests/test_audit_scope.py
@@ -130,6 +134,7 @@ jobs:
           python tests/test_identifier_complexity.py
           python tests/test_lang_stats.py
           python tests/test_calibration_persistence.py
+          python tests/test_calibrate.py
           python tests/test_context_manager.py
           python tests/test_criteria_normalization.py
           python tests/test_docker_entrypoint.py
@@ -204,8 +209,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
           cache: pip
@@ -228,8 +233,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
           cache: pip
@@ -266,8 +271,8 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
           cache: pip
@@ -292,14 +297,6 @@ jobs:
 
       # Same suites as the Linux job. Guarded with -f so a suite added by another open branch
       # cannot make this job red on a tree that does not have it yet.
-      #
-      # test_docker_entrypoint is skipped here on purpose. It drives docker/entrypoint.py, which
-      # only ever runs inside a Linux container, through `os.execvp`. On Windows exec* rebuilds
-      # the command line from argv without re-applying the quoting `subprocess` used to build it,
-      # so its `-c "<script>"` argument arrives split at the first space and the child dies with
-      # "SyntaxError: invalid syntax" before printing. The environment passthrough the suite
-      # exists to check is unaffected, and switching the entrypoint to `subprocess.run` makes it
-      # pass -- a change to a container script, so it belongs in its own PR, not this one.
       - name: Routing and language-detection tests
         run: |
           for t in test_router test_criteria test_batch test_predict_long \
@@ -308,17 +305,13 @@ jobs:
                    test_head_checkpointing test_packaging test_doc_tables \
                    test_tokenizer_cache test_tokenizer_concurrency test_lazy_import \
                    test_runtime_fixes test_lang_guess test_identifier_complexity \
-                   test_lang_stats test_calibration_persistence test_context_manager \
+                   test_lang_stats test_calibration_persistence test_calibrate test_context_manager \
                    test_criteria_normalization test_docker_entrypoint \
                    test_empty_questions test_router_memory test_shortlist_cosine \
                    test_temperature_loading test_confidence test_cli test_mcp \
                    test_langchain test_portability test_training \
                    test_example_server_limits test_blank_lang_routing \
                    test_export_onnx_safety test_load_errors test_revision_pinning; do
-            if [ "$t" = "test_docker_entrypoint" ]; then
-              echo "skipping $t: docker/entrypoint.py is Linux-container only"
-              continue
-            fi
             if [ -f "tests/$t.py" ]; then python "tests/$t.py"; fi
           done
         shell: bash
@@ -357,8 +350,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
       - run: pip install ruff
@@ -367,13 +360,47 @@ jobs:
       - name: Byte-compile every module
         run: python -m compileall -q laya/ tests/ verify/ examples/
 
+  typescript-sdk:
+    name: TypeScript SDK (node${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: sdk/typescript/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install server and SDK
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e '.[serve]' httpx pytest
+          npm ci --prefix sdk/typescript
+      - name: Server contract and generated presets
+        run: |
+          python -m pytest tests/test_serve.py
+          python sdk/typescript/scripts/sync_presets.py --check
+      - name: SDK types, transport, packaging and live inference
+        working-directory: sdk/typescript
+        run: |
+          npm test
+          npm run test:integration
+          npm pack --dry-run
+
   build:
     name: package
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
       - run: pip install build twine
@@ -386,7 +413,7 @@ jobs:
           pkg=$(python -c "import re;print(re.search(r'version = \"(.*)\"', open('pyproject.toml').read()).group(1))")
           tag="${GITHUB_REF_NAME#v}"
           test "$pkg" = "$tag" || { echo "pyproject $pkg != tag $tag"; exit 1; }
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dist
           path: dist/

@@ -22,6 +22,7 @@ Everything is environment variables, so one image serves a laptop dev run and a 
 |---|---|---|
 | `LAYA_HOST` | bind address | `0.0.0.0` |
 | `LAYA_PORT` | bind port | `8000` |
+| `LAYA_ROOT_PATH` | public URL prefix when served behind a reverse proxy | empty |
 | `LAYA_DEVICE` | torch device for every checkpoint | auto |
 | `LAYA_PRELOAD` | build the checkpoints at startup, not lazily | `1` |
 | `LAYA_MODELS` | comma list to preload (`english,multilingual,typed-decisions`); empty = all | all |
@@ -30,6 +31,11 @@ Everything is environment variables, so one image serves a laptop dev run and a 
 | `LAYA_API_KEY` | if set, require `Authorization: Bearer <key>` | none |
 | `LAYA_LOG_LEVEL` | uvicorn log level | `info` |
 | `LAYA_MAX_CONCURRENT` | requests admitted past auth at once; excess gets `503` | `16` |
+
+For a deployment published under a prefix such as `/laya`, set `LAYA_ROOT_PATH=/laya`.
+FastAPI uses it when generating OpenAPI and Swagger UI URLs. Configure the reverse proxy to
+strip `/laya` before forwarding requests to Laya; the app's routes remain `/health` and
+`/v1/systemone` internally.
 
 For containers, including CUDA and ARM64 images, see [Docker quickstart](docker.md).
 
@@ -69,6 +75,22 @@ curl -s localhost:8000/v1/systemone -H 'content-type: application/json' -d '{
 | `state` | yes | text, email, ticket or JSON document to decide on; a missing or `null` state is a `400` |
 | `questions` | yes | object keyed by question id; each question is `choice` / `score` / `noul` with `instructions` and `criteria` |
 | `model` | no | names a checkpoint; anything else is ignored (see below) |
+| `task` | no | forces a checkpoint by workflow name instead of letting routing decide; an unknown name is a `422` naming it |
+| `lang` | no | a language code (`de`, `en-US`) that skips detection when it names a language; a blank or unrecognised code falls through to detection |
+| `lang_guess` | no | a language code from the client's own identifier, consulted after `lang` and before detection; any non-English code routes to the multilingual checkpoint |
+| `max_len` | no | total token window for this request, capped by `LAYA_MAX_TOKEN_BUDGET` |
+| `head_max_len` | no | token window the option prompt shares, same cap; see [Widening the Token Budget](langchain.md) for when a question needs it |
+| `min_confidence` | no | abstention threshold in `[0.0, 1.0]`; an answer whose `answer_confidence` falls below it comes back marked `low_confidence`, and the answer itself is kept |
+
+`model`, `task`, `lang`, `lang_guess`, `max_len`, `head_max_len` and `min_confidence` are the
+arguments `Router.predict` takes that a JSON body can state; each is forwarded only when the request
+sends it, so an absent one leaves the deployment's own `Router(...)` setting in charge. The five
+hook arguments `predict` also takes -- `hooks`, `on_predict_start`, `on_predict_end`,
+`hooks_raise`, `hooks_timeout` -- are refused with a `422` rather than dropped: a hook is a callable
+that runs inside the server process, and the last two say how the hooks a deployment installed
+execute, so no value a caller sends has a meaning here. The same five are refused client-side by a
+LangChain node with a `base_url` (`laya.integrations.langchain`), so a chain and a raw HTTP client
+now get the same answer.
 
 `model` is accepted so a Jev client can keep sending one. The public Hugging Face ids
 (`convaiinnovations/laya-multilingual`, `convaiinnovations/laya-typed-decisions`), the checkpoint
@@ -132,7 +154,7 @@ nothing but the bytes it read. Every one of them is a `413`; the `detail` says w
 | limit | value |
 |---|---|
 | request body | 2 MiB, enforced while streaming -- a chunked or understated `Content-Length` cannot bypass it |
-| `state` | 50,000 characters |
+| `state` | 50,000 characters of the text the model is given -- the string itself for a string state, `json.dumps(state, ensure_ascii=False)` for an object or array |
 | questions per request | 64 |
 | options per `choice` question | 100 |
 | levels per `score` question | 32 |
@@ -151,7 +173,7 @@ requests in-process without the HTTP layer.
 | `400` | body is not valid JSON, not an object, has no `questions`, `state` is missing or `null`, or `questions` is not an object | what is wrong |
 | `401` | `LAYA_API_KEY` is set and the bearer token is missing or wrong | `invalid or missing bearer token` |
 | `413` | any limit above | which limit and by how much |
-| `422` | the question is well-formed JSON but invalid to Laya (unknown type, options over the head budget) | names the question and what to fix |
+| `422` | the question is well-formed JSON but invalid to Laya (unknown type, options over the head budget), or a request control (`lang`, `min_confidence`, a hook argument) is not in the form this endpoint accepts | names the question or the field and what to fix |
 | `500` | inference failed for any other reason | `inference failed` -- always this string, so paths, weights and memory state never leak; the cause is in the server log |
 | `503` | `LAYA_MAX_CONCURRENT` requests are already in flight | `server busy, try again later` |
 

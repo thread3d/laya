@@ -46,9 +46,17 @@
 
 ## Calibration and training
 
+::: laya.common.answer_confidence
+
 ::: laya.common.confidence_from_probs
 
 ::: laya.common.ece_score
+
+::: laya.calibrate.fit_temperatures
+
+::: laya.calibrate.fit_one_temperature
+
+::: laya.calibrate.fit_temperature_map
 
 ::: laya.common.render_options
 

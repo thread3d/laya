@@ -92,23 +92,15 @@ news = records[2][1]
 news_ranked = sorted(news["category"]["probabilities"].items(), key=lambda kv: -kv[1])
 news_top, news_next = news_ranked[0], news_ranked[1]
 print("""
-   What separates the lure from the legitimate mail: `is_phishing` (%.3f versus %.3f) and
-   `category` (security versus %s, both at high confidence). What does not: `is_spam`, where
-   the newsletter -- subscribed, but still bulk marketing -- lands at %.3f, a coin flip
-   either side of the 0.5 gate, against %.3f for the billing mail.
-
-   The newsletter is the honest hard case. It is not a threat (`is_phishing` %.3f), but its
-   own `category` is a near-tie: %s %.3f against %s %.3f, at confidence %.3f. So the team
-   label is not dependable, and the delivery policy is left leaning on `is_spam` alone.
-   When two fields are both sitting on their boundary, that is a message for a human rather
-   than a threshold. `needs_reply` does not separate the lure from the billing mail either
-   (%.3f versus %.3f).
-
-   `urgency` is the softest field on all three messages: an expected level over three
-   buckets, with normalised-entropy confidence, so it is a ranking signal rather than a
-   label. Read the score; do not threshold the confidence.
-   """ % (phish["is_phishing"]["noul"], billing["is_phishing"]["noul"],
-          billing["category"]["choice"], news["is_spam"]["noul"], billing["is_spam"]["noul"],
-          news["is_phishing"]["noul"], news_top[0], news_top[1], news_next[0], news_next[1],
-          news["category"]["confidence"], phish["needs_reply"]["noul"],
-          billing["needs_reply"]["noul"]))
+   What separates the lure from the legitimate mail is `is_phishing` and `category`, both at
+   high confidence; what does not is `is_spam`, where the subscribed newsletter -- bulk
+   marketing, but not a threat -- lands either side of the 0.5 gate. The newsletter is the
+   honest hard case: its own `category` is a near-tie, so the team label is not dependable and
+   the delivery policy is left leaning on `is_spam` alone. When two fields are both sitting on
+   their boundary, that is a message for a human rather than a threshold. `needs_reply` does
+   not separate the lure from the billing mail either.
+ 
+   `urgency` is the softest field on all three messages: an expected level over three buckets,
+   with normalised-entropy confidence, so it is a ranking signal rather than a label. Read the
+   score; do not threshold the confidence. The numbers are above, per message and side by side.
+   """)

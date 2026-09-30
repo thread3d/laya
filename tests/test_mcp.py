@@ -13,6 +13,7 @@ import asyncio
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 os.environ.setdefault("USE_TF", "0")
 os.environ.setdefault("USE_TORCH", "1")
@@ -28,10 +29,12 @@ except ImportError:
 from laya.mcp.device import agent_device, device_report, env_device, resolve_device, router_agent  # noqa: E402
 from laya.mcp.server import _models_from_env, server as mcp_server  # noqa: E402
 from laya.mcp.tools import (  # noqa: E402
+    BATCH_ITEM_OVERRIDES,
     PRESETS,
     PRESET_ALIASES,
     ToolError,
     _overrides,
+    batch_item_key_doc,
     get_available_presets,
     laya_decide,
     laya_predict,
@@ -44,6 +47,7 @@ from laya.mcp.tools import (  # noqa: E402
     validate_batch_requests,
     validate_budget,
     validate_lang,
+    validate_min_confidence,
     validate_model,
     validate_preset,
     validate_questions,
@@ -89,12 +93,22 @@ def test_device():
         else:
             os.environ["LAYA_DEVICE"] = old
     ok("device/fallback", resolve_device(None) in ("cuda", "mps", "xpu", "cpu"))
-    # laya.serve contract: LAYA_DEVICE goes verbatim to torch; the label is lowercased.
+    # laya.serve contract: LAYA_DEVICE is normalised to what torch's device parser accepts --
+    # the device type is lower-cased, the optional index is left alone -- and the same string is
+    # both handed to torch and reported by `resolve_device`.
     old_dev = os.environ.get("LAYA_DEVICE")
     try:
         os.environ["LAYA_DEVICE"] = "cuda:1"
-        ok("device/env_raw_for_torch", env_device() == "cuda:1")
+        ok("device/env_for_torch", env_device() == "cuda:1")
         ok("device/env_label", resolve_device() == "cuda:1")
+        # torch's parser is case-sensitive, so the type is normalised rather than passed through.
+        os.environ["LAYA_DEVICE"] = "CUDA"
+        ok("device/env_upper_type_lowercased", env_device() == "cuda")
+        ok("device/env_upper_matches_label", env_device() == resolve_device())
+        os.environ["LAYA_DEVICE"] = "CUDA:0"
+        ok("device/env_upper_index_kept", env_device() == "cuda:0")
+        os.environ["LAYA_DEVICE"] = "  CPU  "
+        ok("device/env_padded_upper_lowercased", env_device() == "cpu")
         os.environ["LAYA_DEVICE"] = "   "
         ok("device/env_blank_none", env_device() is None)
     finally:
@@ -745,12 +759,16 @@ def test_shortlist():
        repr(out["routing"]))
     ok("shortlist/passthrough_latency", isinstance(out["latency_ms"], float))
 
-    # Default k comes from laya.shortlist (20): a 3-option choice passes through.
+    # Default k comes from laya.shortlist: a choice smaller than it passes through.
+    # Read from the library rather than copied, so raising DEFAULT_SHORTLIST_K cannot
+    # make this assert a stale value against a tool layer that moved correctly.
+    from laya.shortlist import DEFAULT_SHORTLIST_K
+
     router = ShortlistRouter({"english": ShortlistAgent()})
     three = {"dept": {"type": "choice", "instructions": "pick",
                       "criteria": {"a": "A", "b": "B", "c": "C"}}}
     out = laya_shortlist(STATE, three, model="english", router=router, embed_fn=_raising_embed)
-    ok("shortlist/default_k_passthrough", out["shortlist"]["dept"]["k"] == 20
+    ok("shortlist/default_k_passthrough", out["shortlist"]["dept"]["k"] == DEFAULT_SHORTLIST_K
        and out["shortlist"]["dept"]["passthrough"] is True, repr(out["shortlist"]))
 
     # Shortlist path: 5 options with k=2 -> predict sees exactly the kept labels.
@@ -891,6 +909,37 @@ def test_batch_validation():
     # Keys the Router would never expect are dropped, not forwarded.
     out = validate_batch_requests([{"state": STATE, "questions": QUESTIONS, "temperature": 0}])
     ok("batch/validation_unknown_key_dropped", set(out[0]) == {"state", "questions"}, repr(out[0]))
+    # The two token budgets are per-request overrides Router.predict_batch reads off the item,
+    # so they survive validation rather than being dropped with the unknown keys above.
+    out = validate_batch_requests([{"state": STATE, "questions": QUESTIONS,
+                                   "max_len": 1024, "head_max_len": 512}])
+    ok("batch/validation_keeps_budgets", out[0].get("max_len") == 1024
+       and out[0].get("head_max_len") == 512, repr(out[0]))
+    # An explicit null means "keep the checkpoint's default", the same as leaving it out.
+    out = validate_batch_requests([{"state": STATE, "questions": QUESTIONS, "max_len": None}])
+    ok("batch/validation_null_budget_dropped", "max_len" not in out[0], repr(out[0]))
+    for key, bad in (("max_len", 0), ("max_len", "1024"), ("max_len", 2.5), ("max_len", True),
+                     ("head_max_len", 0), ("head_max_len", -1), ("head_max_len", "512")):
+        expect_tool_error("batch/item_bad_%s_%r" % (key, bad),
+                          lambda k=key, v=bad: validate_batch_requests(
+                              [{"state": STATE, "questions": QUESTIONS, k: v}]),
+                          "invalid_%s" % key)
+    # The message that lists the accepted keys must list the ones the validator keeps --
+    # a client reads that list as the schema. Both directions, derived from the validator.
+    probe = {"state": STATE, "questions": QUESTIONS, "model": "english", "task": "massive",
+             "lang": "en", "lang_guess": False, "max_len": 5, "head_max_len": 5}
+    kept = set(validate_batch_requests([probe])[0])
+    ok("batch/validation_covers_every_override",
+       kept == {"state", "questions"} | set(BATCH_ITEM_OVERRIDES), repr(sorted(kept)))
+    message = ""
+    try:
+        validate_batch_requests([])
+    except ToolError as exc:
+        message = str(exc)
+    listed = {part.strip().rstrip("?") for part in
+              message[message.index("{") + 1:message.index("}")].split(",")}
+    ok("batch/error_message_matches_validator", listed == kept,
+       "listed=%r kept=%r" % (sorted(listed), sorted(kept)))
 
 
 def test_batch_predict():
@@ -920,6 +969,21 @@ def test_batch_predict():
     ok("batch/predict_size_forwarded", size == 8, repr(size))
     ok("batch/predict_items_forwarded", [item["state"] for item in forwarded]
        == [request["state"] for request in BATCH_REQUESTS])
+    # A request's own token budget must reach the forward pass: `Router.predict_batch` reads
+    # max_len/head_max_len off each item and splits items that ask for different budgets into
+    # separate calls, so an item that loses them is answered at the checkpoint's default window.
+    router = BatchRouter()
+    laya_predict_batch([{"state": STATE, "questions": QUESTIONS,
+                         "max_len": 1024, "head_max_len": 512},
+                        {"state": {"body": "no budget asked for"}, "questions": QUESTIONS}],
+                       router=router)
+    forwarded = router.predict_batch_calls[0][0]
+    ok("batch/predict_budget_forwarded",
+       forwarded[0].get("max_len") == 1024 and forwarded[0].get("head_max_len") == 512,
+       repr({k: v for k, v in forwarded[0].items() if k not in ("state", "questions")}))
+    ok("batch/predict_budget_absent_when_unset",
+       "max_len" not in forwarded[1] and "head_max_len" not in forwarded[1],
+       repr(sorted(forwarded[1])))
 
     ok("batch/predict_keys", set(out) == {"requests", "model_counts",
                                           "total_latency_ms", "per_request_latency_ms"}, repr(sorted(out)))
@@ -1598,6 +1662,142 @@ def test_controls_signature_and_schema():
         ok("schema/%s_required_unchanged" % name,
            required == (["preset", "state"] if name == "laya_preset" else ["state", "questions"]),
            repr(required))
+
+
+def test_min_confidence_control():
+    """`min_confidence` -- core's per-call abstention gate (#361) -- is reachable over MCP.
+
+    #567 forwarded every other per-call control (task/lang/max_len/head_max_len) to these tools,
+    but not this one: a client could pin a checkpoint and size its budget over the wire, yet could
+    not ask Laya to abstain on an unsure answer -- even though `min_confidence` is a validated
+    keyword of `Agent.predict`, `Router.predict`/`predict_batch` and `laya.decide` on `main`.
+    """
+    import inspect
+
+    # The range/bool/non-finite rule is core's; this layer only re-labels the refusal, so it can
+    # never be wider or narrower than `check_min_confidence`.
+    ok("minconf/none_is_unset", validate_min_confidence(None) is None)
+    for value in (0, 0.0, 0.5, 1, 1.0, 0.94):
+        ok("minconf/ok_%r" % (value,), validate_min_confidence(value) == float(value),
+           repr(validate_min_confidence(value)))
+    for bad in (-0.1, 1.1, 2, True, False, [], {}, "0.5", float("nan"), float("inf")):
+        expect_tool_error("minconf/rejected_%r" % (bad,),
+                          lambda b=bad: validate_min_confidence(b), "invalid_min_confidence")
+
+    # laya_predict forwards it to core's predict, and only when set: a no-abstention call reaches
+    # core exactly as it did before the keyword was exposed here.
+    router = ControlRouter()
+    laya_predict(STATE, QUESTIONS, router=router)
+    ok("predict/minconf_unset_absent", router.predict_calls == [{}], repr(router.predict_calls))
+    router = ControlRouter()
+    laya_predict(STATE, QUESTIONS, min_confidence=0.85, router=router)
+    ok("predict/minconf_forwarded", router.predict_calls == [{"min_confidence": 0.85}],
+       repr(router.predict_calls))
+    router = ControlRouter()
+    laya_predict(STATE, QUESTIONS, lang="de", max_len=1024, min_confidence=0.9, router=router)
+    ok("predict/minconf_alongside_controls",
+       router.predict_calls == [{"lang": "de", "max_len": 1024, "min_confidence": 0.9}],
+       repr(router.predict_calls))
+    router = ControlRouter()
+    expect_tool_error("predict/bad_minconf",
+                      lambda: laya_predict(STATE, QUESTIONS, min_confidence=2, router=router),
+                      "invalid_min_confidence")
+    ok("predict/bad_minconf_no_call", router.predict_calls == [], repr(router.predict_calls))
+    agent = ControlAgent()
+    laya_predict(STATE, QUESTIONS, model="english", min_confidence=0.5, agent=agent)
+    ok("predict/agent_minconf", agent.calls == [{"min_confidence": 0.5}], repr(agent.calls))
+
+    # laya_shortlist carries it to the answering pass beside the budget (route stays budget-free).
+    small = {"dept": {"type": "choice", "instructions": "pick",
+                      "criteria": {"a": "A", "b": "B", "c": "C", "d": "D", "e": "E"}}}
+    router = ControlRouter(routed="multilingual")
+    laya_shortlist(STATE, small, k=2, head_max_len=384, min_confidence=0.8,
+                   router=router, embed_fn=_tie_embed)
+    ok("shortlist/minconf_reaches_predict",
+       router.predict_calls == [{"model": "multilingual", "head_max_len": 384,
+                                 "min_confidence": 0.8}], repr(router.predict_calls))
+    router = ControlRouter(routed="multilingual")
+    laya_shortlist(STATE, small, k=2, router=router, embed_fn=_tie_embed)
+    ok("shortlist/minconf_unset_absent",
+       "min_confidence" not in router.predict_calls[0], repr(router.predict_calls))
+    router = ControlRouter()
+    expect_tool_error("shortlist/bad_minconf",
+                      lambda: laya_shortlist(STATE, small, k=2, min_confidence=-1, router=router,
+                                             embed_fn=_tie_embed),
+                      "invalid_min_confidence")
+
+    # laya_preset inherits the control through laya_predict.
+    def builder(attr):
+        return {"probe": {"type": "noul", "instructions": "Does the `body` need a human?"}}
+    router = ControlRouter()
+    laya_preset("guard", STATE, min_confidence=0.7, router=router, preset_builder=builder)
+    ok("preset/minconf_forwarded", router.predict_calls == [{"min_confidence": 0.7}],
+       repr(router.predict_calls))
+
+    # The flagship: laya_decide uses core's abstention to null an unsure field while still
+    # reporting its confidence -- the one thing a values-consuming client needs and cannot get
+    # any other way over MCP. FakeRouter answers department at 0.94, urgency at 0.8, needs_human
+    # at 0.89, so a 0.9 gate keeps the first and nulls the other two.
+    router = TypeEchoRouter()
+    plain = laya_decide(STATE, DECIDE_SCHEMA, router=router)
+    ok("decide/minconf_unset_no_nul", plain["values"]["urgency"] == 2
+       and plain["values"]["needs_human"] is True, repr(plain["values"]))
+    abstained = laya_decide(STATE, DECIDE_SCHEMA, min_confidence=0.9, router=router)
+    ok("decide/keeps_confident_field", abstained["values"]["department"] == "billing",
+       repr(abstained["values"]))
+    ok("decide/nulls_low_score", abstained["values"]["urgency"] is None,
+       repr(abstained["values"]))
+    ok("decide/nulls_low_noul", abstained["values"]["needs_human"] is None,
+       repr(abstained["values"]))
+    ok("decide/confidence_survives_null",
+       set(abstained["confidence"]) == {"department", "urgency", "needs_human"}
+       and abstained["confidence"]["urgency"] == 0.8, repr(abstained["confidence"]))
+    # A threshold of 0 abstains over nothing -- the raw answers are byte-identical to no call.
+    zero = laya_decide(STATE, DECIDE_SCHEMA, min_confidence=0.0, router=router)
+    ok("decide/zero_is_no_abstention", zero["values"] == plain["values"], repr(zero["values"]))
+
+    # The tool is a thin surface over the documented core abstention, not a second projection.
+    import laya
+
+    core = laya.decide(router, STATE, schema=DECIDE_SCHEMA, min_confidence=0.9)
+    ok("decide/abstention_parity_with_core", abstained["values"] == core,
+       "tool=%r core=%r" % (abstained["values"], core))
+
+    # Refused before core, so a bad threshold costs no forward pass.
+    router = TypeEchoRouter()
+    expect_tool_error("decide/bad_minconf",
+                      lambda: laya_decide(STATE, DECIDE_SCHEMA, min_confidence=1.5, router=router),
+                      "invalid_min_confidence")
+
+    # Every tool that answers exposes the keyword, defaults it to None, and documents it.
+    tools = [laya_predict, laya_shortlist, laya_preset, laya_decide]
+    for fn in tools:
+        params = inspect.signature(fn).parameters
+        ok("sig/%s_has_min_confidence" % fn.__name__, "min_confidence" in params,
+           repr(sorted(params)))
+        ok("sig/%s_min_confidence_default_none" % fn.__name__,
+           params["min_confidence"].default is None, repr(params["min_confidence"].default))
+        ok("sig/%s_min_confidence_keyword_only" % fn.__name__,
+           params["min_confidence"].kind is inspect.Parameter.KEYWORD_ONLY)
+    by_name = {t.name: t for t in asyncio.run(mcp_server.list_tools())}
+    for name in ("laya_predict", "laya_shortlist", "laya_preset", "laya_decide"):
+        tool = by_name[name]
+        schema = tool.input_schema if hasattr(tool, "input_schema") else tool.inputSchema
+        props = schema.get("properties", {})
+        spec = props.get("min_confidence", {})
+        ok("schema/%s_exposes_min_confidence" % name, "min_confidence" in props,
+           repr(sorted(props)))
+        ok("schema/%s_min_confidence_nullable" % name,
+           {"type": "null"} in (spec.get("anyOf") or []), repr(spec))
+        ok("schema/%s_min_confidence_typed" % name,
+           any(opt.get("type") in ("number", "integer") for opt in (spec.get("anyOf") or [spec])),
+           repr(spec))
+        ok("schema/%s_min_confidence_not_required" % name,
+           "min_confidence" not in schema.get("required", []), repr(schema.get("required")))
+        ok("schema/%s_desc_documents_min_confidence" % name,
+           "min_confidence" in tool.description.lower(), repr(tool.description[-80:]))
+
+
 def test_question_validation_matches_the_agent():
     """MCP must reject a bad question the same way the agent does, and say so.
 
@@ -1751,6 +1951,34 @@ def test_timeout_removed():
 
 # --- server registration (schema only, no model load) ------------------------
 
+def test_batch_item_shape_as_documented():
+    """Every place the batch item shape is written out says what the validator keeps.
+
+    Three strings enumerate the keys a batch item may carry: `validate_batch_requests`' error
+    message (checked against the validator in test_batch_validation), each batch tool's registered
+    description, and the README's MCP section. A client reads them as the schema, so all three are
+    compared to `BATCH_ITEM_OVERRIDES` -- the tuple `_validate_batch_item` branches on.
+    `laya_route_batch` leaves the two token budgets out, because routing runs no forward pass and
+    a budget there would be ignored.
+    """
+    by_name = {t.name: t for t in asyncio.run(mcp_server.list_tools())}
+    for tool, omit in (("laya_predict_batch", ()),
+                       ("laya_route_batch", ("max_len", "head_max_len"))):
+        want = batch_item_key_doc(omit=omit)
+        ok("schema/%s_item_shape" % tool, want in (by_name[tool].description or ""),
+           "documents %r" % want)
+
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text()
+    marker = "one tool call takes an array of `{"
+    ok("docs/readme_names_the_batch_shape", marker in readme, "sentence not found")
+    if marker in readme:
+        start = readme.index(marker) + len(marker)
+        inner = readme[start:readme.index("}", start)]
+        named = {part.strip().rstrip("?") for part in inner.split(",")}
+        ok("docs/readme_batch_item_keys",
+           named == {"state", "questions"} | set(BATCH_ITEM_OVERRIDES), repr(sorted(named)))
+
+
 def test_models_from_env():
     old = os.environ.get("LAYA_MODELS")
     try:
@@ -1858,6 +2086,37 @@ def test_server_registration():
             ok("server/desc_%s_requests" % t.name, "non-empty array" in desc)
 
 
+def test_server_shortlist_k_default():
+    """The shortlist tool's advertised `k` default must be `laya.shortlist`'s.
+
+    `laya/mcp/server.py` registers the tool with `k: int = 20` written out as a literal,
+    because the module stays importable without numpy -- `laya.shortlist` imports numpy at
+    module level, so deriving the default from it would put numpy on the MCP server's import
+    path. The literal is therefore necessary, and necessary hand-copies get a drift gate.
+
+    Nothing guarded the copy: with `DEFAULT_SHORTLIST_K = 32` the tool layer, which resolves it,
+    moved, and the MCP surface stayed on 20 with no test reporting the divergence. So both
+    surfaces a client can observe -- the Python signature FastMCP registers and the `tools/list`
+    schema it advertises -- are read against the library constant rather than against 20.
+    """
+    import inspect
+
+    from laya.mcp import server as server_mod
+    from laya.shortlist import DEFAULT_SHORTLIST_K
+
+    params = inspect.signature(server_mod.laya_shortlist_tool).parameters
+    ok("server/shortlist_k_default", params["k"].default == DEFAULT_SHORTLIST_K,
+       "signature=%r library=%r" % (params["k"].default, DEFAULT_SHORTLIST_K))
+
+    by_name = {t.name: t for t in asyncio.run(mcp_server.list_tools())}
+    schema = by_name["laya_shortlist"].input_schema \
+        if hasattr(by_name["laya_shortlist"], "input_schema") \
+        else by_name["laya_shortlist"].inputSchema
+    advertised = schema.get("properties", {}).get("k", {}).get("default", "<absent>")
+    ok("schema/shortlist_k_default", advertised == DEFAULT_SHORTLIST_K,
+       "schema=%r library=%r" % (advertised, DEFAULT_SHORTLIST_K))
+
+
 test_device()
 test_real_device()
 test_private_contract()
@@ -1880,12 +2139,15 @@ test_controls_route()
 test_controls_shortlist()
 test_controls_preset()
 test_controls_signature_and_schema()
+test_min_confidence_control()
 test_question_validation_matches_the_agent()
 test_a_bad_question_is_a_caller_error_not_a_server_fault()
 test_timeout_removed()
 test_models_from_env()
+test_batch_item_shape_as_documented()
 test_auto_task_env()
 test_server_registration()
+test_server_shortlist_k_default()
 
 print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
 for f in FAIL:

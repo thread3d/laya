@@ -52,13 +52,32 @@ _HEADER_NEXT = re.compile(r"^\s*(Enviad[oa]( em| el)?:\s|Sent:\s|(Data|Fecha|Dat
 # `Thanks, żaneta` read as a name and the line counted as a sign-off. The tail is matched
 # structurally instead, and each token's first letter is judged by category below -- the same
 # rule as the TS port's `\p{Lu}\p{Lt}\p{Lo}`. Combining marks ride along with the letter before
-# them (`Jose\u0301` is `José`), as `\p{M}` allows in the port.
+# them (`Jose\u0301` is `José`), as `\p{M}` allows in the port. `re` has no `\p{M}` either, and a
+# class cannot list those ranges any more than it could list the lowercase ones, so a mark that
+# rides on a character is dropped before the tail is matched and the letter it rides on answers
+# the case question. A mark with no base -- opening the tail, or following a space -- is left
+# where it is, so it still breaks the token as the port's leading `\p{Lu}\p{Lt}\p{Lo}` does.
+# `\p{M}` is marks only: ZWJ and ZWNJ are `Cf`, so `Thanks, क्‌ष` is kept here and in the port alike.
 _SIGNOFF_HEAD = re.compile(
     r"^\s*(?i:best|kind|warmest|warm|many thanks|thanks|thank you|regards|cheers|sincerely)"
     r"(?i:\s+(?:and|&)\s+regards|\s+(?:regards|wishes|again|in advance|a lot|so much|very much))?"
 )
-_SIGNOFF_TAIL = re.compile(r"^[\s,;:!.]*(?:[^\W\d_][\w\u0300-\u036f'-]*[\s,.]*){0,3}$")
-_SIGNOFF_TOKEN = re.compile(r"[^\W\d_][\w\u0300-\u036f'-]*")
+_SIGNOFF_TAIL = re.compile(r"^[\s,;:!.]*(?:[^\W\d_][\w'-]*[\s,.]*){0,3}$")
+_SIGNOFF_TOKEN = re.compile(r"[^\W\d_][\w'-]*")
+
+
+def _drop_marks(text: str) -> str:
+    """Remove combining marks, the `Mn`/`Mc`/`Me` categories the port spells `\\p{M}`.
+
+    Only a mark that rides on a preceding character goes; one that opens the string or
+    follows a space has no base to ride on and stays, so it still separates tokens.
+    """
+    kept = []
+    for ch in text:
+        if unicodedata.category(ch).startswith("M") and kept and not kept[-1].isspace():
+            continue
+        kept.append(ch)
+    return "".join(kept)
 
 
 def _is_english_signoff(line: str) -> bool:
@@ -66,7 +85,7 @@ def _is_english_signoff(line: str) -> bool:
     m = _SIGNOFF_HEAD.match(line)
     if m is None:
         return False
-    tail = line[m.end():]
+    tail = _drop_marks(line[m.end():])
     if _SIGNOFF_TAIL.match(tail) is None:
         return False
     return all(unicodedata.category(token[0]) in ("Lu", "Lt", "Lo")
@@ -89,7 +108,6 @@ _SIGNATURE_MARKERS = [
     # follow is judged in `_is_english_signoff` above, a callable because `re` cannot express its
     # rule. `Regards, Łukasz` is a sign-off, `Thanks for the reply` is not.
     _is_english_signoff,
-    re.compile(r"^\s*sent from my (iphone|android|mobile|ipad)", re.I),
     # Portuguese/Spanish sign-offs match only on their own: "Obrigado pelo retorno, mas ..." is a
     # request, not a signature, so unlike the English marker no trailing words are allowed
     re.compile(
@@ -102,11 +120,12 @@ _SIGNATURE_MARKERS = [
 # Mobile and mail-app footers. Only a line that is nothing *but* the footer matches -- "Enviado do meu
 # celular o comprovante ontem." is a request -- and such a line may run to 60 characters, since
 # Samsung's default ("Enviado do meu smartphone Samsung Galaxy.") is longer than a sign-off's 40.
-_DEVICE = (r"iphone|ipad|android|ios|celular|telemóvel|móvil|galaxy|smartphone|samsung|tablet|"
+_DEVICE = (r"iphone|ipad|android|ios|mobile|celular|telemóvel|móvil|galaxy|smartphone|samsung|tablet|"
            r"outlook|yahoo|mail|e-?mail|gmail|windows")
 _DEVICE_FOOTER = re.compile(
     r"^\s*((enviad[oa] (do|pelo|pela|via|desde|a partir do)( meu| minha| mi)?|sent from( my)?)"
-    r" (%s)( (%s|para|for|no|na|\d+))*|(obter o|get) outlook (para|for) (ios|android))[\s.!]*$"
+    r" (%s)( (%s|para|for|no|na|\d+|phone|device|pro|max|mini|plus|using [a-z][a-z0-9_.+-]*))*"
+    r"|(obter o|get) outlook (para|for) (ios|android))[\s.!]*$"
     % (_DEVICE, _DEVICE),
     re.I,
 )

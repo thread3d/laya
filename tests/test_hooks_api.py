@@ -170,6 +170,11 @@ for name in ("PredictContext", "PredictHook", "Hook", "BaseHook", "AsyncHook"):
 check_true("laya.hooks/run_coroutine_sync exists",
            callable(getattr(__import__("laya.hooks", fromlist=["run_coroutine_sync"]),
                             "run_coroutine_sync", None)))
+# Lazily exported, so `hasattr` is what proves `__getattr__` resolves it and not just that the
+# name sits in `__all__`. It must stay reachable as `laya.PINNED_REVISIONS` for the checkpoint
+# integrity guide; `laya.revisions` is not the documented path.
+check_true("__all__/PINNED_REVISIONS", "PINNED_REVISIONS" in laya.__all__)
+check_true("laya.PINNED_REVISIONS exists", hasattr(laya, "PINNED_REVISIONS"))
 
 # BaseHook is the concrete no-op base class; all six events exist and are callable.
 for event in HOOK_EVENTS:
@@ -295,6 +300,7 @@ for label, cls in (("LayaRouter", LayaRouter), ("LayaGuardrail", LayaGuardrail),
 from laya.common import build_sequence, collapsed_options  # noqa: E402
 
 check_param("build_sequence", build_sequence, "return_stats", False)
+check_param("build_sequence", build_sequence, "return_truncation_stats", False)
 check("collapsed_options/nothing collapsed is empty",
       collapsed_options(["q"], [{"options": {"options": 3, "options_distinct": 3,
                                              "tokens_per_option": None}}]), {})
@@ -814,6 +820,24 @@ for path, name, anchor in BUDGET[1:]:
          (run_body(other, second), second.head_max_len, second.max_len,
           run_body(other, empty), empty.head_max_len),
          (None, _widest.head_max_len, _widest.max_len, None, _raised.head_max_len))
+
+
+# --------------------------------------------------------------- the HTTP boundary
+# A hook is a callable that runs inside `predict`, so it cannot cross `/v1/systemone`. The
+# LangChain node refuses the five client-side (`_reject_remote_hooks`) and the packaged server
+# refuses them server-side. Those must stay the same five: if the server's list gained an argument
+# or dropped one, a chain step and a raw HTTP client would get different answers for one request
+# body -- and a caller that was told "no" on one path would be ignored on the other.
+from laya.integrations.langchain import _hook_kwargs as _lc_hook_kwargs  # noqa: E402
+from laya.serve import BODY_CONTROLS as _http_controls, BODY_REFUSALS as _http_refusals  # noqa: E402
+
+check("serve/BODY_REFUSALS is the hook argument set LangChain refuses", sorted(_http_refusals),
+      sorted(_lc_hook_kwargs(hooks=[object()], on_predict_start=object(),
+                             on_predict_end=object(), hooks_raise=False, hooks_timeout=1.0)))
+# A list that grew past hooks would refuse something a body can legitimately state.
+check("serve/BODY_REFUSALS names nothing but hooks",
+      [key for key in _http_refusals if "hook" not in key and "predict" not in key], [])
+check("serve forwards and refuses disjoint sets", sorted(set(_http_controls) & set(_http_refusals)), [])
 
 
 print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))

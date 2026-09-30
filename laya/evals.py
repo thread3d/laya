@@ -10,9 +10,18 @@ checkpoint in tests.
 The report is deterministic for a fixed runner: the same dataset produces the same numbers, and
 ``EvalReport.compare`` turns a baseline into a pass/fail with the per-metric deltas, which is what
 the CI gate consumes.
+
+`compare` reads ``overall`` and nothing else, so a run that says nothing about *what it measured*
+makes a gate that can only compare arithmetic. Every report therefore carries a run identity in
+``config`` -- ``schema``, ``questions_sha256``, ``laya_version`` and (from the CLI)
+``dataset_sha256`` and the ``thresholds`` actually applied -- and
+``EvalReport.comparable_to`` refuses a comparison between two runs that are not the same
+measurement. The identity is deliberately free of anything time-bearing, so a report stays
+byte-reproducible for a fixed runner.
 """
 from __future__ import annotations
 
+import hashlib
 import inspect
 import json
 import statistics
@@ -21,6 +30,34 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
+
+#: The shape of the report this module writes, so a consumer can refuse one it cannot read.
+#: ``research/evals/act_head_eval.py`` publishes a report under its own tag off this prefix.
+REPORT_SCHEMA = "laya-evals-report/1"
+
+#: The keys that decide whether two reports are the same measurement. A key missing
+#: on either side is unknown rather than a conflict, so a baseline committed before these existed
+#: keeps comparing exactly as it did. ``schema`` is also read at the top level, which is where
+#: ``research/evals/act_head_eval.py`` puts its own tag.
+_IDENTITY_KEYS = ("schema", "dataset_sha256", "questions_sha256")
+
+_IDENTITY_LABELS = {
+    "schema": "report schema",
+    "dataset_sha256": "dataset bytes",
+    "questions_sha256": "question schema",
+}
+
+
+def _identity_of(document: Any) -> Dict[str, Any]:
+    """Pull the identity keys out of a report, from ``config`` or from the top level."""
+    if not isinstance(document, dict):
+        return {}
+    config = document.get("config")
+    found = dict(config) if isinstance(config, dict) else {}
+    for key in _IDENTITY_KEYS:
+        if found.get(key) is None and document.get(key) is not None:
+            found[key] = document[key]
+    return found
 
 
 class EvalError(ValueError):
@@ -86,6 +123,121 @@ class Dataset:
         if not examples:
             raise EvalError("%s contains no examples" % path)
         return cls(examples)
+
+
+def _canonical(value: Any) -> str:
+    # `sort_keys=False` on purpose. `examples/hooks/cache.py:22-25` states the rule this mirrors:
+    # "Deliberately not `sort_keys=True`: a choice question's criteria order is positional, so two
+    # orders are two questions, and `_question_schema` in `laya/router.py` keeps them apart for the
+    # same reason." `sort_keys` reorders *dict* keys and leaves *lists* alone, so with a list-valued
+    # `criteria` -- the shape a dataset row actually has -- this was already order-preserving; the
+    # flag only ever mattered for a dict-valued one, where folding is the wrong direction.
+    return json.dumps(value, sort_keys=False, separators=(",", ":"), ensure_ascii=False,
+                      default=str)
+
+
+def _as_tokenized_instructions(body: Dict[str, Any]) -> Any:
+    """`instructions` exactly as `Agent._to_internal` (`laya/agent.py:736-748`) hands it over.
+
+    A non-string becomes ``json.dumps(ins, ensure_ascii=False)``, and that step is not cosmetic:
+    ``tests/test_criteria.py:229-251`` pins that the default ``ensure_ascii=True`` escaped
+    non-ASCII to literal ``\\uXXXX``, the tokenizer read it as escape text, and one German
+    question answered noul=0.1652 as a dict against 0.2650 as the identical plain string. So the
+    fingerprint normalizes the same way, or it hashes the input's JSON shape instead of the text
+    the model reads.
+
+    Not mirrored: the tokenizer's mask-token strip in `common.build_sequence`, which needs
+    `tok.mask_token` and would mean guessing which tokenizer a run loads. Instructions carrying
+    a mask token therefore hash apart even though they render alike -- a false refusal, which is
+    the safe direction to be wrong in.
+    """
+    ins = body.get("instructions")
+    return ins if isinstance(ins, str) else json.dumps(ins, ensure_ascii=False)
+
+
+def questions_fingerprint(dataset: "Dataset") -> str:
+    """A stable hash of *what was asked*, over every question in `dataset`.
+
+    This is the question-schema identity `docs/staged-adoption.md` asks an operator to record
+    with the policy, and the part of the run identity a report can compute for itself: the
+    dataset file hash is the CLI's, but the questions are parsed here.
+
+    It covers every field the answer depends on, which is the same rule `examples/hooks/cache.py`
+    states for a cache key ("has to cover everything the answer depends on") and the same one
+    Laya already applies to its own question identity: `Router._question_schema`
+    (`laya/router.py:141`) and this module's batch grouping (`laya/evals.py`) both hash the whole
+    questions dict. `tests/test_router_batch.py:543` pins that rewording `instructions` alone
+    moves a row into its own batch group.
+
+    It is a function of the decision space, not of the rows, so scoring more states on the same
+    questions leaves it unchanged.
+
+    `criteria` is hashed raw, without `Agent._to_internal`'s list-to-dict and lowercase-key
+    rewrites. That is deliberate and asymmetric: two `noul` questions that render alike but are
+    written differently would then be refused, which is the safe direction to be wrong in.
+    Normalizing them would widen the change past what the identity needs.
+
+    `labels` is hashed for the same reason `instructions` is: it is validated
+    (`laya/agent.py:722-726` -> `_resolve_noul_labels`) and carried into the internal question
+    (`laya/agent.py:748-749`), and `_resolve_noul_labels` (`laya/common.py:92`) turns it into the
+    option text the model reads. Leaving it out let two question sets with different rendered
+    options hash alike, which is the one thing this function exists to prevent.
+    """
+    schemas = set()
+    for example in dataset.examples:
+        for qid, question in example.questions.items():
+            body = question if isinstance(question, dict) else {}
+            schemas.add(_canonical({"qid": qid, "type": body.get("type"),
+                                    "instructions": _as_tokenized_instructions(body),
+                                    "labels": body.get("labels"),
+                                    "criteria": body.get("criteria")}))
+    digest = hashlib.sha256()
+    for schema in sorted(schemas):
+        digest.update(schema.encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def file_fingerprint(path: str) -> str:
+    """The sha256 of a file's bytes -- the dataset identity, where the path is only a name.
+
+    `config.dataset` is the path as typed, and two datasets share a path across a rebase, a CI
+    cache or a colleague's checkout. Raises `EvalError` when the file cannot be read, so a report
+    never carries a hash of something other than the bytes that were parsed.
+    """
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as handle:
+            for block in iter(lambda: handle.read(65536), b""):
+                digest.update(block)
+    except OSError as exc:
+        raise EvalError("%s cannot be read for a fingerprint: %s" % (path, exc)) from exc
+    return digest.hexdigest()
+
+
+def _library_version() -> Optional[str]:
+    """`laya.__version__`, read lazily so this module stays importable on its own.
+
+    `laya/__init__.py` defines the string at import time, so this is a module lookup rather
+    than a load of anything torch-backed -- but it is imported inside the call to keep
+    `laya.evals` free of an import cycle, and a failure here must not fail a run that has
+    already scored every row.
+    """
+    try:
+        import laya
+    except Exception:  # pragma: no cover - identity only
+        return None
+    return getattr(laya, "__version__", None)
+
+
+def _run_identity(dataset: "Dataset") -> Dict[str, Any]:
+    """The `config` keys this module can fill in on its own, with no knowledge of the CLI."""
+    identity: Dict[str, Any] = {"schema": REPORT_SCHEMA,
+                                "questions_sha256": questions_fingerprint(dataset)}
+    version = _library_version()
+    if version is not None:
+        identity["laya_version"] = version
+    return identity
 
 
 # --------------------------------------------------------------------------- evaluators
@@ -240,6 +392,34 @@ class EvalReport:
                 lines.append("| %s | %s |" % (value, " | ".join(cells)))
         return "\n".join(lines) + "\n"
 
+    def comparable_to(self, baseline: Dict[str, Any]) -> Tuple[bool, List[str]]:
+        """Is `baseline` the same measurement as this report? Returns (ok, reasons).
+
+        `compare` reads `overall` and only `overall`, so two reports of different datasets,
+        different question schemas or different report shapes produce identical arithmetic and
+        an identical pass. That is the failure `docs/staged-adoption.md` runs at: a gate that
+        cannot tell which experiment produced a number cannot support a promotion decision.
+
+        A key absent on either side is *unknown*, not a conflict, so every baseline committed
+        before the identity existed -- including the scheduled gate's
+        `research/results/eval_english_51_languages.json`, which comes from `research/eval/` and
+        has no `config.schema` -- keeps comparing exactly as it did. Only a key present on both
+        sides with different values refuses the comparison, and each reason names the key and
+        both values so the failure is actionable from the console alone.
+
+        `laya_version` and `thresholds` are recorded in `config` but deliberately not compared
+        here: a patch release must not invalidate a committed baseline.
+        """
+        other = _identity_of(baseline)
+        reasons: List[str] = []
+        for key in _IDENTITY_KEYS:
+            here, there = self.config.get(key), other.get(key)
+            if here is None or there is None or here == there:
+                continue
+            reasons.append("%s (%s): baseline is %s, this run is %s"
+                           % (key, _IDENTITY_LABELS[key], there, here))
+        return (not reasons), reasons
+
     def compare(self, baseline: Dict[str, Any], tolerances: Optional[Dict[str, float]] = None,
                 ) -> Tuple[bool, Dict[str, Dict[str, float]]]:
         """Compare `overall` to a baseline report's `overall`. Returns (ok, deltas).
@@ -288,10 +468,14 @@ def _group_cases(cases: Sequence[Dict[str, Any]], key: str) -> Dict[str, List[Di
 
 
 def _percentiles(values: Sequence[float]) -> Tuple[float, float]:
-    """(median, 95th) using the nearest-rank rule the report has always used for latency."""
+    """(median, 95th) using the nearest-rank rule for latency."""
     ordered = sorted(values)
-    return (float(statistics.median(ordered)),
-            float(ordered[min(len(ordered) - 1, int(len(ordered) * 0.95))]))
+    n = len(ordered)
+    # Nearest-rank 95th percentile: the ceil(0.95 * n)-th smallest value (1-indexed).
+    # `int(n * 0.95)` truncated where it needed to round up, returning the
+    # (0.95n + 1)-th value whenever n is a multiple of 20. Integer ceil fixes that.
+    rank = (95 * n + 99) // 100
+    return (float(statistics.median(ordered)), float(ordered[rank - 1]))
 
 
 def _aggregate(cases: Sequence[Dict[str, Any]], evaluators: Sequence[Evaluator]) -> Dict[str, float]:
@@ -345,9 +529,27 @@ def _batch_form(runner: Any) -> Optional[str]:
     return None
 
 
+def _takes_sort_by_length(runner: Any) -> bool:
+    """Whether `runner`'s batch entry point can be given the length-grouping knob.
+
+    The same signature check `_batch_form` makes, for the one optional argument this harness
+    forwards: `sort_by_length` is an optimisation, so a runner whose ``predict_batch`` predates it
+    (#294) is scored unsorted rather than raising ``TypeError`` at the first chunk of a long run.
+    A ``**kwargs`` forwarder counts, because whatever it wraps is a real runner.
+    """
+    fn = getattr(runner, "predict_batch", None)
+    if fn is None:
+        return False
+    try:
+        params = inspect.signature(fn).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(p.name == "sort_by_length" or p.kind is p.VAR_KEYWORD for p in params)
+
+
 def evaluate(runner: Any, dataset: Dataset, evaluators: Optional[Sequence[Evaluator]] = None,
              batch_size: Optional[int] = None, on_error: str = "fail",
-             config: Optional[Dict[str, Any]] = None) -> EvalReport:
+             config: Optional[Dict[str, Any]] = None, sort_by_length: bool = False) -> EvalReport:
     """Run `runner` over `dataset`, aggregating per-answer metrics overall and per slice.
 
     `runner` needs a ``predict(state, questions, model=...)`` method, and for `batch_size` above 1
@@ -356,6 +558,12 @@ def evaluate(runner: Any, dataset: Dataset, evaluators: Optional[Sequence[Evalua
     `Router.predict_batch` takes -- ``predict_batch([{"state": ..., "questions": ...,
     "model": ...}, ...], batch_size=...)``. A runner that offers neither is scored one ``predict``
     at a time, which is slower but not wrong.
+
+    `sort_by_length` is forwarded to a chunked runner so similarly sized examples share a forward
+    pass and pad to a shorter maximum. It reaches the checkpoint's own batching only when the
+    runner's ``predict_batch`` takes it, and only when it is on: an unset control is not sent, so a
+    runner that predates the knob is unaffected by a run that does not ask. Nothing about the
+    scored answers changes -- the results come back in chunk order either way.
 
     `on_error` is ``"fail"`` (re-raise a runner error) or ``"skip"`` (record it and continue),
     the latter for evaluating a flaky fleet without aborting the whole run.
@@ -379,6 +587,10 @@ def evaluate(runner: Any, dataset: Dataset, evaluators: Optional[Sequence[Evalua
     examples = dataset.examples
     # Only worth grouping if the runner can be handed the group in one call at all.
     batch_form = _batch_form(runner) if batch_size is not None and batch_size > 1 else None
+    # The chunk shape travels with the calls that have one: a chunk of a single example is a plain
+    # `predict`, which has no batch to reorder, and an off control is not sent at all.
+    shape = ({"sort_by_length": True}
+             if sort_by_length and batch_form and _takes_sort_by_length(runner) else {})
 
     index = 0
     while index < len(examples):
@@ -413,10 +625,11 @@ def evaluate(runner: Any, dataset: Dataset, evaluators: Optional[Sequence[Evalua
                     # per-request dicts carry exactly what the positional call would pass.
                     results = runner.predict_batch(
                         [{"state": e.state, "questions": e.questions, "model": e.model}
-                         for e in chunk], batch_size=batch_size)
+                         for e in chunk], batch_size=batch_size, **shape)
                 else:
                     results = runner.predict_batch([e.state for e in chunk], chunk[0].questions,
-                                                   model=chunk[0].model, batch_size=batch_size)
+                                                   model=chunk[0].model, batch_size=batch_size,
+                                                   **shape)
             else:
                 results = [runner.predict(chunk[0].state, chunk[0].questions, model=chunk[0].model)]
         except Exception as exc:  # noqa: BLE001 -- honoured by on_error
@@ -461,11 +674,19 @@ def evaluate(runner: Any, dataset: Dataset, evaluators: Optional[Sequence[Evalua
         report.overall["latency_p50_ms"], report.overall["latency_p95_ms"] = _percentiles(waits)
         (report.overall["cost_per_decision_p50_ms"],
          report.overall["cost_per_decision_p95_ms"]) = _percentiles(shares)
+    # The run identity, stamped here rather than left to the caller: everything below is
+    # computable from `dataset`, so a programmatic `evaluate` is as identifiable as a CLI run.
+    # The CLI adds `dataset_sha256` and `thresholds`, which need the file path and the gate.
+    report.config = dict(report.config, **_run_identity(dataset))
     report.config = dict(report.config, timing={
         "latency_metric": "per request: the wall time of the call that returned it, unsplit",
         "cost_metric": "per decision: that call divided by its own chunk size",
         "batch_size": batch_size,
         "batch_form": batch_form,
+        "sort_by_length": sort_by_length,
+        # Requested and sent are different claims: `sort_by_length` needs a chunk to reorder, so a
+        # run with no batch form asked for something this harness cannot do.
+        "sort_by_length_sent": bool(shape),
         "chunks": chunks,
         "rows_grouped": rows_grouped,
         "rows_alone": rows_alone,

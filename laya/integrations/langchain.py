@@ -26,6 +26,13 @@ except ImportError:
     RunnableSerializable = object  # type: ignore
     RunnableConfig = Any  # type: ignore
 
+# The per-call control rules live in `._controls` because the CrewAI and LlamaIndex wrappers end
+# at the same `predict` call and the same laya-serve body; keeping the rule in three places is how
+# two of them ended up forwarding only `model`.
+from ._controls import budget_kwargs as _budget_kwargs, hook_kwargs as _hook_kwargs
+from ._controls import predict_kwargs as _predict_kwargs
+from ._controls import reject_remote_hooks as _reject_remote_hooks
+
 
 class LayaGuardrailError(ValueError):
     """Raised when an input violates a Laya guardrail policy."""
@@ -56,29 +63,72 @@ def _extract_text(input_val: Any, state_key: Optional[Union[str, Callable[[Any],
         return input_val
 
     if isinstance(input_val, list):
+        text = _content_text(input_val)
+        if text is not input_val:
+            return text
         return _extract_from_messages_list(input_val)
 
     return str(input_val)
 
 
+def _content_text(val: Any) -> Any:
+    """The text of a message `content` value, unwrapped from a content-block list.
+
+    `content` is not only a string. A `HumanMessage(content=[{"type": "text", "text": ...}])`
+    is accepted by langchain-core and keeps `.content` as a list, so `str(content)` produced a
+    Python repr -- braces, quotes, and the literal field names `type` and `text` -- and that
+    repr is what Laya scored. Nothing raised; the guardrail simply answered about a string the
+    caller never wrote.
+
+    Text-bearing blocks are concatenated in the order they appear, which is how such a list is
+    meant to be read. A list carrying no text block is returned **unchanged**, so a genuinely
+    structured state still reaches the caller as the caller shaped it instead of being
+    flattened into invented prose; callers distinguish "extracted" from "unchanged" by identity.
+    A plain string is returned untouched.
+    """
+    if not isinstance(val, list):
+        return val
+    parts = []
+    for block in val:
+        if isinstance(block, str):
+            parts.append(block)
+        elif isinstance(block, dict):
+            text = block.get("text")
+            if isinstance(text, str):
+                parts.append(text)
+    if not parts:
+        return val
+    return "".join(parts) if len(parts) == 1 else "\n".join(parts)
+
+
 def _extract_from_message_or_value(val: Any) -> Any:
     if hasattr(val, "content"):
-        return str(val.content)
+        return _content_text(val.content)
     if isinstance(val, list):
+        # a content-block list is already text; a list of messages is not
+        text = _content_text(val)
+        if text is not val:
+            return text
         return _extract_from_messages_list(val)
     return val
 
 
-def _extract_from_messages_list(msgs: Sequence[Any]) -> str:
+def _extract_from_messages_list(msgs: Sequence[Any]) -> Union[str, dict, list]:
+    # Not `-> str`. `_content_text` hands a content value back untouched when it holds no
+    # text block, so a message carrying only structured content returns that list, and a list
+    # entry with no `.content` returns the entry itself. Both are states `Agent._encode_state`
+    # already accepts (`state: Union[str, dict, list]`, documented as a conversation turn list),
+    # and the public `_extract_text` above already declares the same three types -- so this
+    # widens the annotation to match the behaviour, not the behaviour to match the annotation.
     if not msgs:
         return ""
     # Search backwards for the most recent human/user message
     for m in reversed(msgs):
         role = getattr(m, "type", None) or getattr(m, "role", None)
         if role in ("human", "user"):
-            return str(getattr(m, "content", m))
+            return _content_text(getattr(m, "content", m))
     last = msgs[-1]
-    return str(getattr(last, "content", last))
+    return _content_text(getattr(last, "content", last))
 
 
 class _SameOriginRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -156,48 +206,6 @@ def _get_default_router():
     return _DEFAULT_ROUTER
 
 
-def _predict_kwargs(model: Optional[str] = None, max_len: Optional[int] = None,
-                    head_max_len: Optional[int] = None) -> Dict[str, Any]:
-    """The per-request overrides a local runner accepts, with the unset ones omitted."""
-    kwargs: Dict[str, Any] = {}
-    if model:
-        kwargs["model"] = model
-    if max_len is not None:
-        kwargs["max_len"] = max_len
-    if head_max_len is not None:
-        kwargs["head_max_len"] = head_max_len
-    return kwargs
-
-
-def _reject_remote_hooks(hook_kwargs: Dict[str, Any], base_url: Optional[str]) -> None:
-    """Refuse hooks on a remote node rather than dropping them silently.
-
-    A hook is a Python callable that runs inside `predict` -- it can cache a decision, gate one or
-    rewrite its state. `laya-serve` has no way to receive or run one, so a node with a `base_url`
-    and hooks configured would report success while never calling them.
-    """
-    if base_url and hook_kwargs:
-        raise ValueError(
-            "%s run in the local runner and cannot be sent to a laya-serve endpoint; "
-            "install them where serve runs, or drop them" % ", ".join(sorted(hook_kwargs))
-        )
-
-
-def _hook_kwargs(hooks: Optional[Any] = None, on_predict_start: Optional[Any] = None,
-                 on_predict_end: Optional[Any] = None, hooks_raise: Optional[bool] = None,
-                 hooks_timeout: Optional[float] = None) -> Dict[str, Any]:
-    """The per-call hook overrides, with the unset ones omitted.
-
-    Core reads `None` as "inherit whatever the runner was built with", so an unset hook has to be
-    absent rather than passed as `None`. Note the `is not None` tests: `hooks=[]` means "no hooks
-    for this call", and `hooks_raise=False` means "keep deciding after a hook fails" -- both are
-    decisions a caller made, not absences.
-    """
-    given = {"hooks": hooks, "on_predict_start": on_predict_start, "on_predict_end": on_predict_end,
-             "hooks_raise": hooks_raise, "hooks_timeout": hooks_timeout}
-    return {k: v for k, v in given.items() if v is not None}
-
-
 def _execute_decision(
     state: Any,
     questions: Dict[str, Any],
@@ -216,9 +224,7 @@ def _execute_decision(
     hook_kwargs = _hook_kwargs(hooks, on_predict_start, on_predict_end, hooks_raise, hooks_timeout)
     if base_url:
         _reject_remote_hooks(hook_kwargs, base_url)
-        # Only what was set, so a stand-in `_call_remote` without the budget keywords still works.
-        budget = {k: v for k, v in (("max_len", max_len), ("head_max_len", head_max_len))
-                  if v is not None}
+        budget = _budget_kwargs(max_len, head_max_len)
         return _call_remote(base_url, state, questions, api_key=api_key, model=model, **budget)
     runner = agent if agent is not None else _get_default_router()
     kwargs = _predict_kwargs(model, max_len, head_max_len)

@@ -47,6 +47,22 @@ cap to fit what it preloads (`laya/router.py:275` -> `:372`), so the demo's own 
 with three checkpoints resident while `/health` reported one. Nothing in the file ever asked the
 running Router what it was holding.
 
+`main` is at 66 checks now, and this file is at 81. The fifteen new ones are the request `model`
+field. `laya.router.normalise_name` is core's one resolver -- trim, lower-case, alias table,
+registry -- and `laya --model` and `laya/serve.py` both hand it the caller's string, but this demo
+compared it against a tuple of the three checkpoint names. So on `main` the aliases, the checkpoint
+ids with the `laya-` prefix, `typed_decisions`, and the upper-cased and space-padded form of every
+one of them answer 422 here: 60 of the 67 spellings core resolves, which
+`laya-bench/model_alias_witness_main.log` counts against `main` at 9d95567 through
+`_check_model` and through `POST /predict` on a TestClient -- `{"model": "english"}` answers 503,
+`{"model": "laya"}` answers 422, while `laya --model laya` pins the checkpoint. The new checks take
+the probe from `laya.router`'s own tables rather than listing the aliases here, require the
+canonical name to reach the Router, keep blank meaning "do not pin" as the playground sends it,
+read the alias list back out of `/models`, its HTML page, the published request schema and the
+README section for this server, and then add a fourth checkpoint to core at runtime, reload the
+demo, and require it to be pinnable by name and by alias and to appear in that text with no edit to
+this file.
+
 Run: python tests/test_example_server_limits.py
 """
 import importlib
@@ -261,10 +277,34 @@ def main():
                + [("n%d" % i, noul_crit) for i in range(30)])),
         ("noul only", "hi", {"n%d" % i: noul_crit for i in range(10)}),
         ("an ordinary request", {"body": "billed twice"}, one),
+        # A state whose `str()` and whose JSON serialization are different lengths (50000 vs 99988).
+        # This case catches the two surfaces DIVERGING -- one measuring the serialized text and the
+        # other `str(state)`. It cannot catch them being wrong together: `examples/server.py` binds
+        # `_state_length` from `laya.serve` by `getattr`, so a regression inside that helper moves
+        # both and parity stays green. Measured: regressing `_state_length` fails 0 of these parity
+        # checks and both of the absolute ones below. Those are the real coverage -- do not prune
+        # them as redundant.
+        ("a state whose repr is half its JSON", {"body": '"' * 49988}, one),
     ]
     for label, st, qs in parity_cases:
         s, d = serve_verdict(st, qs), demo_verdict(st, qs)
         ok("parity with laya.serve: %s" % label, s == d, "serve=%s demo=%s" % (s, d))
+
+    # Parity alone cannot see a bug both surfaces share, and `getattr` guarantees they share one:
+    # with `_state_length` measuring `str(state)` again, both agree on accepting a state that
+    # serializes to 99 988 characters and every parity check above stays green (measured: 0 of them
+    # fail, both of these do). So the verdict itself is asserted, not just the agreement.
+    quote_heavy = {"body": '"' * 49988}
+    # Recorded through `ok` like everything else in this file: a bare `assert` here would raise out
+    # of `main()` and abandon the ~30 checks that follow instead of recording one failure.
+    ok("the quote-heavy fixture passes a str()-based gate",
+       len(str(quote_heavy)) <= MAX_STATE_CHARS, len(str(quote_heavy)))
+    ok("the quote-heavy fixture fails a serialization-based gate",
+       len(json.dumps(quote_heavy, ensure_ascii=False)) > MAX_STATE_CHARS,
+       len(json.dumps(quote_heavy, ensure_ascii=False)))
+    for who, verdict in (("laya.serve", serve_verdict(quote_heavy, one)),
+                         ("the demo server", demo_verdict(quote_heavy, one))):
+        ok("%s refuses a state whose JSON is twice its repr" % who, verdict == "refused", verdict)
 
     # --- the resident-checkpoint cap: derived, not copied -------------------
     # examples/server.py used to build its Router with `max_loaded=1`, a copy of a default
@@ -473,6 +513,80 @@ def main():
        and not any("task" in r for r in sent),
        json.dumps(sent[:1])[:200])
 
+    # --- how the batch is packed is askable ---------------------------------------------
+    #
+    # `Router.predict_batch` has taken `batch_size` and `sort_by_length` since #294, and the README
+    # teaches `router.predict_batch(requests, batch_size=8, sort_by_length=True)`. The endpoint that
+    # answers up to 64 states in one call forwarded neither, so every batch was one forward pass
+    # padded to its longest state: a caller who wanted smaller passes had no way to ask, in code or
+    # over HTTP. These drive the real request model, so a body that named the keys and had them
+    # dropped by validation fails here rather than returning a silently slower 200.
+    shape_params = set(inspect.signature(CoreRouter.predict_batch).parameters) - {"self", "requests"}
+    ok("core still takes the shape keys this endpoint forwards",
+       {"batch_size", "sort_by_length"} <= shape_params, str(sorted(shape_params)))
+
+    shaped = RecordingRouter()
+    demo.ROUTER = shaped
+    body = TestClient(demo.app, raise_server_exceptions=False).post(
+        "/predict/batch", json={"states": states, "questions": one,
+                                "batch_size": 4, "sort_by_length": True})
+    ok("a shape request is still one batch call, in order",
+       len(shaped.batch_calls) == 1 and not shaped.predict_calls
+       and body.json().get("count") == 8
+       and [r.get("state") for r in body.json()["results"]] == states,
+       "predict_batch=%d predict=%d" % (len(shaped.batch_calls), len(shaped.predict_calls)))
+    ok("batch_size and sort_by_length reach predict_batch",
+       shaped.batch_calls[0][1] == {"batch_size": 4, "sort_by_length": True},
+       str(shaped.batch_calls[0][1]))
+
+    sized = RecordingRouter()
+    demo.ROUTER = sized
+    TestClient(demo.app, raise_server_exceptions=False).post(
+        "/predict/batch", json={"states": states, "questions": one, "batch_size": 2})
+    ok("batch_size alone does not invent a sort request",
+       sized.batch_calls[0][1] == {"batch_size": 2}, str(sized.batch_calls[0][1]))
+
+    # Core documents `sort_by_length` without a split batch as a no-op, not an error; the endpoint
+    # must not be the surface that turns a valid call into a 422.
+    unsized = RecordingRouter()
+    demo.ROUTER = unsized
+    no_split = TestClient(demo.app, raise_server_exceptions=False).post(
+        "/predict/batch", json={"states": states, "questions": one, "sort_by_length": True})
+    ok("sort_by_length alone is accepted and forwarded, as core takes it",
+       no_split.status_code == 200 and unsized.batch_calls[0][1] == {"sort_by_length": True},
+       "%s %s" % (no_split.status_code, str(unsized.batch_calls[0][1])))
+
+    junk = TestClient(demo.app, raise_server_exceptions=False).post(
+        "/predict/batch", json={"states": states, "questions": one, "batch_size": 0})
+    ok("a zero-size forward pass is a 422 before any router call",
+       junk.status_code == 422, "%s %s" % (junk.status_code, str(junk.json())[:120]))
+
+    # The shape belongs to the batch call only. When a state fails, the endpoint retries per state
+    # through `Router.predict`, which takes neither key: leaking them there would turn one bad
+    # state into 8 TypeErrors and an empty batch.
+    leaked = RecordingRouter(fail_on="ticket 3")
+    demo.ROUTER = leaked
+    retried = TestClient(demo.app, raise_server_exceptions=False).post(
+        "/predict/batch", json={"states": states, "questions": one,
+                                "batch_size": 4, "sort_by_length": True})
+    ok("the per-state fallback carries no batch shape",
+       leaked.batch_calls[0][1] == {"batch_size": 4, "sort_by_length": True}
+       and len(leaked.predict_calls) == 8
+       and not any("batch_size" in kw or "sort_by_length" in kw
+                   for _, kw in leaked.predict_calls)
+       and [r for r in retried.json()["results"] if "error" in r][0]["index"] == 3,
+       str([kw for _, kw in leaked.predict_calls][:1])[:200])
+
+    legacy_shaped = LegacyRouter()
+    demo.ROUTER = legacy_shaped
+    old = TestClient(demo.app, raise_server_exceptions=False).post(
+        "/predict/batch", json={"states": states, "questions": one,
+                                "batch_size": 4, "sort_by_length": True})
+    ok("a router without predict_batch still answers a shaped request",
+       old.status_code == 200 and len(old.json()["results"]) == 8
+       and not [r for r in old.json()["results"] if "error" in r],
+       "%s %s" % (old.status_code, json.dumps(old.json())[:200]))
+
     # One state failing must not cost its neighbours their answer: the endpoint's published
     # contract is per-item errors inside a 200.
     partial = RecordingRouter(fail_on="ticket 3")
@@ -506,6 +620,166 @@ def main():
        and all("503" in r.get("error", "") for r in not_ready.json()["results"]),
        json.dumps(not_ready.json())[:200])
     demo.ROUTER = None
+
+    # ---- the `model` field resolves the way core resolves one ----------------
+    # `laya.router.normalise_name` trims, lower-cases and maps its alias table before it checks
+    # the checkpoint registry, and `laya --model laya` and `POST /v1/systemone {"model":"laya"}`
+    # both go through it. This demo compared the string against a tuple of the three names, so the
+    # alias worked on the CLI and answered 422 here. The probe below is built from laya.router's
+    # own tables, so it covers spellings this file has never heard of and cannot fall behind.
+    from laya import router as _router_mod
+
+    names = sorted(_router_mod.DEFAULT_MODELS)
+    aliases = sorted(a for a, target in _router_mod._ALIASES.items()
+                     if target in _router_mod.DEFAULT_MODELS)
+    spellings = [spelling for value in names + aliases
+                 for spelling in (value, value.upper(), " %s " % value)]
+
+    refused, not_canonical = [], []
+    for value in spellings:
+        want = _router_mod.normalise_name(value)
+        try:
+            got = demo._check_model(value)
+        except Exception as exc:
+            refused.append("%r -> %s" % (value, exc))
+            continue
+        if got != want:
+            not_canonical.append("%r -> %r, core says %r" % (value, got, want))
+    ok("every one of the %d spellings core resolves, the demo resolves too" % len(spellings),
+       not refused, "; ".join(refused[:3]))
+    ok("and what reaches the Router is the checkpoint, not the spelling that named it",
+       not not_canonical, "; ".join(not_canonical[:3]))
+
+    # The negatives, derived from the same tables so one of them cannot accidentally be real.
+    unknown = [v + "-nope" for v in names + aliases]
+
+    def _refuses(fn, value):
+        try:
+            fn(value)
+        except ValueError:
+            return True
+        return False
+
+    ok("a name neither core nor the demo knows still refuses on both surfaces",
+       all(_refuses(_router_mod.normalise_name, v) and _refuses(demo._check_model, v)
+           for v in unknown),
+       repr([v for v in unknown if not _refuses(demo._check_model, v)][:3]))
+
+    # Blank is the demo's own convenience, not core's: the playground posts an empty field, and
+    # core's resolver raises on one. Parity must not take that away.
+    def _resolves(v):
+        """The value the field validator accepts, or the refusal it gave -- never a raised error."""
+        try:
+            return demo._check_model(v)
+        except Exception as exc:
+            return "refused: %s" % exc
+
+    ok("a blank or whitespace-only model still means 'do not pin'",
+       [_resolves(v) for v in (None, "", "   ")] == [None, None, None],
+       repr([(v, _resolves(v)) for v in (None, "", "   ")])[:180])
+
+    regressed = demo.ROUTER
+    demo.ROUTER = RecordingRouter()
+    http = TestClient(demo.app, raise_server_exceptions=False)
+    single = http.post("/predict", json={"state": "ticket 0", "questions": one, "model": "ml"})
+    ok("an alias is accepted by /predict and the Router is asked for its checkpoint",
+       single.status_code == 200 and demo.ROUTER.predict_calls
+       and demo.ROUTER.predict_calls[-1][1].get("model") == "multilingual",
+       "%s %r" % (single.status_code, demo.ROUTER.predict_calls[-1:]))
+    batch = http.post("/predict/batch", json={"states": states, "questions": one, "model": "LAYA"})
+    ok("the same alias on /predict/batch pins english for every state in the batch",
+       batch.status_code == 200 and demo.ROUTER.batch_calls
+       and [r.get("model") for r in demo.ROUTER.batch_calls[-1][0]] == ["english"] * len(states),
+       "%s %r" % (batch.status_code, [r.get("model")
+                                      for r in (demo.ROUTER.batch_calls[-1][0]
+                                                if demo.ROUTER.batch_calls else [])][:3]))
+    bad = http.post("/predict", json={"state": "ticket 0", "questions": one,
+                                      "model": names[0] + "-nope"})
+    bad_text = json.dumps(bad.json())
+    ok("an unknown name is still a 422, in core's words plus this server's own hint",
+       bad.status_code == 422 and "unknown model" in bad_text and "choose one of" in bad_text
+       and "(or omit it)" in bad_text, bad_text[:220])
+
+    listing = http.get("/models").json()
+    ok("/models publishes the aliases a caller may use, and every one it publishes validates",
+       listing["allowed"] == names and listing.get("aliases") == {a: _router_mod._ALIASES[a]
+                                                                  for a in aliases}
+       and all(_resolves(a) == c for a, c in (listing.get("aliases") or {}).items()),
+       json.dumps(listing)[:220])
+    page = http.get("/models", headers={"accept": "text/html"}).text
+    ok("the page that lists the checkpoints names the count and the spellings it accepts",
+       ("%d checkpoints, one router" % len(names)) in page
+       and all("<code>%s</code>" % a in page for a in aliases), page[:160])
+    demo.ROUTER = regressed
+
+    def _rendered(desc):
+        """The checkpoint list and the alias list, read back out of the field's own description.
+
+        That sentence is generated from `MODELS`/`MODEL_ALIASES`, so the honest gate is to parse
+        the lists out of it and compare them with what `laya.router` accepts -- a substring check
+        would also pass a sentence somebody typed beside the tables. A render this cannot read
+        comes back as two empty lists, which fails by name instead of raising and aborting the run.
+        """
+        try:
+            names_part, alias_part = desc.split("one of ", 1)[1].split(
+                ", or an alias core resolves (", 1)
+            alias_part = alias_part.split("), in any casing", 1)[0]
+        except (IndexError, ValueError):
+            return [], []
+        return ([p.strip() for p in names_part.split(" | ")] if names_part.strip() else [],
+                [p.strip() for p in alias_part.split(", ")] if alias_part.strip() else [])
+
+    schema = http.get("/openapi.json").json()["components"]["schemas"]
+    description = schema["PredictRequest"]["properties"]["model"].get("description", "")
+    ok("the published request schema lists every name and alias the endpoint takes, in neither "
+       "more nor less", _rendered(description) == (names, aliases),
+       "rendered %r %r from tables %r %r" % (_rendered(description)[0], _rendered(description)[1],
+                                             names, aliases))
+    ok("and both request models describe the one field identically",
+       description and description
+       == schema["BatchRequest"]["properties"]["model"].get("description", ""),
+       schema["BatchRequest"]["properties"]["model"].get("description", ""))
+
+    # The section of the README that teaches this server has to say the field exists and where its
+    # spellings come from, or the only way to learn it is to get a 422.
+    with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as handle:
+        readme = handle.read()
+    demo_page = readme.split("## Try it locally: web GUI + JSON API", 1)[1].split("\n---", 1)[0]
+    ok("the README section for this server teaches `model` and where its names come from",
+       "`model`" in demo_page and "laya.router" in demo_page and "/models" in demo_page,
+       demo_page[-200:])
+
+    # The registry is read, not copied. A checkpoint added to laya.router has to become pinnable
+    # here -- by name, by alias, in the schema text and on /models -- with no edit to this file.
+    # `laya.DEFAULT_MODELS` is the same dict object, so one insert reaches both reads.
+    _router_mod.DEFAULT_MODELS["spanish"] = (_router_mod.BUNDLE_REPO, "spanish")
+    _router_mod._ALIASES["es"] = "spanish"
+    try:
+        grown = importlib.reload(demo)
+        grown_names = sorted(_router_mod.DEFAULT_MODELS)
+        ok("a checkpoint core gains is pinnable here without editing this file",
+           "spanish" in grown.MODELS and _resolves("spanish") == "spanish"
+           and _resolves(" ES ") == "spanish"
+           and grown.MODEL_ALIASES.get("es") == "spanish",
+           "%r %r" % (sorted(grown.MODELS), _resolves(" es ")))
+        grown_schema = TestClient(grown.app, raise_server_exceptions=False).get(
+            "/openapi.json").json()["components"]["schemas"]
+        grown_description = grown_schema["PredictRequest"]["properties"]["model"].get("description", "")
+        ok("and the text that teaches the list is rendered from it, not typed beside it",
+           _rendered(grown_description) == (grown_names, sorted(grown.MODEL_ALIASES))
+           and grown_description
+           == grown_schema["BatchRequest"]["properties"]["model"].get("description", ""),
+           "rendered %r from %r -- %s" % (_rendered(grown_description), grown_names,
+                                          grown_description[:120]))
+        grown_listing = TestClient(grown.app, raise_server_exceptions=False).get("/models").json()
+        ok("/models reports the new checkpoint and its new alias",
+           grown_listing["allowed"] == grown_names
+           and (grown_listing.get("aliases") or {}).get("es") == "spanish",
+           json.dumps(grown_listing)[:220])
+    finally:
+        _router_mod.DEFAULT_MODELS.pop("spanish", None)
+        _router_mod._ALIASES.pop("es", None)
+        demo = importlib.reload(demo)
 
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     for f in FAIL:

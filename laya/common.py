@@ -6,7 +6,7 @@ import threading
 from contextlib import nullcontext
 from contextvars import ContextVar
 from functools import wraps
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 import numpy as np
 import torch
@@ -142,6 +142,7 @@ def build_sequence(
     truncate_left: bool = False,
     state_ids: Optional[List[int]] = None,
     return_stats: bool = False,
+    return_truncation_stats: bool = False,
 ):
     """Format: [CLS] <type> instructions [SEP] [MASK] opt0 [MASK] opt1 ... [SEP] state [SEP].
 
@@ -151,6 +152,19 @@ def build_sequence(
     `return_stats` adds a third return value describing what the head budget did to the options:
     `options` (how many the question defines), `options_distinct` (how many still have a token
     span of their own) and `tokens_per_option` (the cap applied to each, or None when none was).
+
+    The state is clamped to whatever room is left after the head, so a long state loses tokens
+    here silently. `return_truncation_stats=True` adds one more return value, after the option
+    stats when both are asked for, reporting that clamp:
+
+        {"state_tokens": int, "state_tokens_used": int, "state_tokens_dropped": int,
+         "truncated": bool}
+
+    Callers cannot reconstruct this from the outside. The budget is in tokens, not characters,
+    and the room left for the state depends on `max_len`, `head_max_len`, the instruction and
+    the rendered options - so it moves per checkpoint and per question. A caller guessing with a
+    fixed character threshold is wrong in both directions: it reports truncation that did not
+    happen, and stays silent while evidence is being dropped (issue #174).
     """
     mask_tok = tok.mask_token
     opts = render_options(q)
@@ -192,19 +206,28 @@ def build_sequence(
     st = state_ids[max(0, len(state_ids) - room):] if truncate_left else state_ids[:room]
     ids = ids + st + [tok.sep_token_id]
     ids, markers = ids[:max_len], [m for m in markers if m < max_len]
+    extra = ()
+    if return_truncation_stats:
+        # `room` leaves space for the closing [SEP], so every token in `st` survives the [:max_len] clamp
+        extra = ({
+            "state_tokens": len(state_ids),
+            "state_tokens_used": len(st),
+            "state_tokens_dropped": len(state_ids) - len(st),
+            "truncated": len(st) < len(state_ids),
+        },)
     if not return_stats:
-        return ids, markers
+        return (ids, markers) + extra
     # Two options that share a prefix can come out of the cut as the same token span: the marker
     # count still matches the option count, so the guard in `Agent._encode_state` passes and
     # nothing downstream can tell that the question lost the ability to name them apart. Counted
     # on the capped option ids, before assembly: re-slicing the finished sequence cannot close
     # the last option's span -- it runs on into the serialized state, which differs per request,
     # so the last option always looks distinguishable however it collided (#538).
-    return ids, markers, {
+    return (ids, markers, {
         "options": len(opt_ids),
         "options_distinct": len({tuple(o) for o in opt_ids}),
         "tokens_per_option": per_option,
-    }
+    }) + extra
 
 
 def collapsed_options(qids, items) -> Dict[str, Dict[str, Optional[int]]]:
@@ -273,6 +296,23 @@ class _DynamicMultiheadAttention(nn.MultiheadAttention):
         if self.batch_first:
             attn = attn.transpose(0, 1)
         return self.out_proj(attn), None
+
+
+def unpermute_probs(p: np.ndarray, option_order: Optional[List[int]]) -> np.ndarray:
+    """Put a slot-ordered probability row back into the caller's option order.
+
+    `build_sequence` puts option `option_order[s]` in slot `s`, so a model row comes back
+    indexed by slot. Everything downstream indexes by option -- `zip(keys, p)` for a choice,
+    `arange(k) * p` for a score level, `p[1]` for noul-true -- so the row has to be inverted
+    first or the probabilities end up attached to the wrong options, which is silent.
+
+    A missing or mismatched order returns `p` untouched, so the canonical path is unaffected.
+    """
+    if option_order is None or len(option_order) != len(p):
+        return p
+    canonical = np.empty_like(p)
+    canonical[np.asarray(option_order, dtype=int)] = p
+    return canonical
 
 
 class DecisionModel(nn.Module):
@@ -472,8 +512,12 @@ def answer_confidence(p: np.ndarray, k: int) -> float:
 
     This is the quantity temperature scaling fits, and the quantity every calibration figure in
     this repository is computed on -- both benchmark harnesses take `conf = max(probs)` before
-    calling `ece_score`. It is therefore the one confidence with the property the README's
-    gating section relies on: of the answers returned at confidence c, about c of them are right.
+    calling `ece_score`. The README's gating section relies on the property that goes with it:
+    of the answers returned at confidence c, about c of them are right. That property is
+    conditional, and the condition is not met by default -- it holds only after the temperatures
+    have been fitted and validated on held-out data for this checkpoint and this option count.
+    The shipped checkpoints are over-confident: `choice:11+` is a ~10x sharpener that returns a
+    point mass at 1.0, so a threshold applied to them selects below model accuracy (issue #394).
 
     `confidence_from_probs` below reports a different quantity on a different scale and carries
     no such guarantee, so the two must not be compared against the same threshold.
@@ -518,6 +562,49 @@ def clamp_temperature(t, lo: float = TEMP_MIN, hi: float = TEMP_MAX) -> float:
     if t != t or t in (float("inf"), float("-inf")):    # NaN / inf
         return 1.0
     return min(hi, max(lo, t))
+
+
+def resolve_lang_temperatures(raw: Optional[Dict[str, Any]],
+                              base_temperature: Sequence[float]) -> Dict[str, Dict[str, Any]]:
+    """Parse the `lang_temperatures` option into `{language: {temperature, temperature_by_options}}`.
+
+    One implementation, because `Agent` and `ONNXAgent` both accept this option and both promise
+    the same confidences for it. Reading it with `cfg.get(...)` and `len(...)` before checking the
+    shape of either raised `AttributeError` and `TypeError` for exactly the inputs the
+    `ValueError` below is written for, after the whole checkpoint had loaded:
+
+        {"de": {"temperature": 2}}       -> TypeError: object of type 'int' has no len()
+        {"de": {"temperature": None}}    -> TypeError: object of type 'NoneType' has no len()
+        {"de": None}                     -> AttributeError: 'NoneType' object has no attribute 'get'
+
+    A `null` entry or a `null` temperature both mean "inherit the checkpoint's own", which is how
+    the `laya-ts` port reads the same option (`agent.ts:322-327`).
+    """
+    resolved: Dict[str, Dict[str, Any]] = {}
+    for lang, cfg in (raw or {}).items():
+        if not isinstance(lang, str):
+            raise ValueError("Language override keys must be strings, got %r" % (lang,))
+        norm = lang.split("-")[0].lower()
+        if cfg is None:
+            cfg = {}
+        if not isinstance(cfg, dict):
+            raise ValueError("Language override %r must be a mapping, got %s"
+                             % (lang, type(cfg).__name__))
+        t_raw = cfg.get("temperature")
+        if t_raw is None:
+            t_raw = base_temperature
+        if not isinstance(t_raw, (list, tuple)) or len(t_raw) != 3:
+            raise ValueError("Language override %r temperature must be a list of 3 floats, got %r"
+                             % (lang, t_raw))
+        tbo_raw = cfg.get("temperature_by_options") or {}
+        if not isinstance(tbo_raw, dict):
+            raise ValueError("Language override %r temperature_by_options must be a mapping of "
+                             "bucket -> float, got %s" % (lang, type(tbo_raw).__name__))
+        resolved[norm] = {
+            "temperature": [clamp_temperature(t) for t in t_raw],
+            "temperature_by_options": {k: clamp_temperature(v) for k, v in tbo_raw.items()},
+        }
+    return resolved
 
 
 def amp_dtype(name: Optional[str]) -> torch.dtype:

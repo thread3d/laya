@@ -27,6 +27,7 @@ env var                    meaning                                        defaul
 ``LAYA_MAX_LOADED``        checkpoints kept resident at once. Below what  2
                            routing can choose, one reloads per switch.
 ``LAYA_API_KEY``           if set, require ``Authorization: Bearer <it>``  (none)
+``LAYA_ROOT_PATH``         public URL prefix behind a reverse proxy        (none)
 ``LAYA_LOG_LEVEL``         uvicorn log level                              info
 ``LAYA_MAX_CONCURRENT``    cap on requests past auth at once; excess      16
                            gets 503 (see below)
@@ -46,6 +47,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import time
 from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional
@@ -56,16 +58,12 @@ from typing import Any, Dict, Optional
 # propagates there without this module setting up any handlers.
 _log = logging.getLogger("laya.serve")
 
-# The three checkpoint names the router understands; used to decide whether a
-# client's `model` field names a Laya checkpoint (honour it) or is some other
-# Jev model id (ignore it and let the router auto-select).
-_KNOWN_MODELS = {"english", "multilingual", "typed-decisions"}
-
 # Guardrails for unauthenticated remote input. The state is tokenized once per
 # question and collated into one tensor, so an unbounded body can OOM the worker;
 # the single-worker pool means one large request would also starve /health.
 MAX_QUESTIONS = 64
 MAX_STATE_CHARS = 50000
+MAX_BATCH_STATES = 64
 MAX_BODY_BYTES = 2 * 1024 * 1024
 # HTTP-only amplification guard; the library keeps its head_max_len-aware budget.
 MAX_CHOICE_OPTIONS = 100
@@ -78,13 +76,17 @@ MAX_TOTAL_OPTIONS = 512
 DEFAULT_MAX_CONCURRENT = 16
 # Server-side ceiling on per-request max_len/head_max_len token budget overrides.
 DEFAULT_MAX_TOKEN_BUDGET = 8192
-# Public Hugging Face ids, accepted so a client can name a checkpoint. The root bundle is
-# deliberately absent: the documented ``convaiinnovations/laya`` value means
-# "let the Router choose", rather than pinning the English checkpoint.
-_PUBLISHED_MODEL_IDS = {
-    "convaiinnovations/laya-multilingual": "multilingual",
-    "convaiinnovations/laya-typed-decisions": "typed-decisions",
-}
+
+# Every control ``Router.predict`` takes beyond ``state`` and ``questions``, split by whether a
+# JSON body can mean it. ``tests/test_serve.py`` pins the two lists against
+# ``inspect.signature(Router.predict)``, so a control added to the core call has to be placed on
+# one side of that line -- forwarded or refused -- before the suite goes green again. The line is
+# not drawn by value type: a hook is a callable that runs in the server process, and
+# ``hooks_raise`` / ``hooks_timeout`` govern how the hooks the *operator* installed execute, so
+# none of those five has a meaning a request could give it. Which checkpoint answers, which
+# language it reads, how many tokens it gets and where it abstains are all plain data.
+BODY_CONTROLS = ("model", "max_len", "head_max_len", "task", "lang", "lang_guess", "min_confidence")
+BODY_REFUSALS = ("hooks", "on_predict_start", "on_predict_end", "hooks_raise", "hooks_timeout")
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -94,23 +96,39 @@ def _env_bool(name: str, default: bool) -> bool:
     return v.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _published_model_ids() -> Dict[str, str]:
+    """Public Hugging Face ids accepted so a client can name a checkpoint.
+
+    Inverted from `laya.router.STANDALONE_MODELS` at call time rather than typed out: the
+    ids a client may send belong to that registry, and a copy here would silently auto-route
+    a checkpoint the router already knows. The root bundle is deliberately absent -- the
+    documented ``convaiinnovations/laya`` value means "let the Router choose", rather than
+    pinning the English checkpoint. Imported here rather than at module scope, the way this
+    module's other `laya.router` use does, so ``import laya.serve`` stays cheap.
+    """
+    from .router import BUNDLE_REPO, STANDALONE_MODELS
+
+    return {repo: name for name, repo in STANDALONE_MODELS.items() if repo != BUNDLE_REPO}
+
+
 def _resolve_model(model: Optional[str]) -> Optional[str]:
     """Map a client's `model` field onto a Laya checkpoint, or None to auto-route."""
     if not model:
         return None
-    published = _PUBLISHED_MODEL_IDS.get(str(model).strip().lower())
+    published = _published_model_ids().get(str(model).strip().lower())
     if published is not None:
         return published
     from .router import normalise_name
 
     # normalise_name raises ValueError on anything that is not a known checkpoint
-    # or alias. A Jev client's `model` field (e.g. "jev-1") is expected to miss;
-    # treat that as "no explicit checkpoint" and let the router auto-select.
+    # or alias, and returns a name from router.DEFAULT_MODELS when it does accept one --
+    # so it is the only list of accepted names this needs. A Jev client's `model` field
+    # (e.g. "jev-1") is expected to miss; treat that as "no explicit checkpoint" and let
+    # the router auto-select.
     try:
-        key = normalise_name(model)
+        return normalise_name(model)
     except Exception:
         return None
-    return key if key in _KNOWN_MODELS else None
 
 
 def _resolve_max_concurrent() -> int:
@@ -162,6 +180,65 @@ def _validate_budget_param(body: Dict[str, Any], key: str, max_cap: int) -> Opti
     return val
 
 
+def _refuse_body_refusals(body: Dict[str, Any]) -> None:
+    """Reject a request that sends one of ``BODY_REFUSALS`` (422) instead of ignoring it.
+
+    A hook is a callable that runs inside ``predict`` -- it can cache a decision, gate one or
+    rewrite its state -- and ``laya-serve`` has no way to receive or run one, which is why
+    ``laya.integrations.langchain`` already refuses them on a node with a ``base_url``
+    (``_reject_remote_hooks``). ``hooks_raise`` and ``hooks_timeout`` belong with them: they say
+    how the hooks the deployment installed execute, so honouring a caller's value would let a
+    request change server-side behaviour. Today all five are read into the body and dropped, so a
+    client that asks for one is told nothing.
+    """
+    from fastapi import HTTPException
+
+    given = sorted(key for key in BODY_REFUSALS if key in body and body[key] is not None)
+    if given:
+        raise HTTPException(
+            status_code=422,
+            detail="%s run inside the server process and cannot be sent to this endpoint; "
+                   "install them where laya-serve runs, or drop them" % ", ".join(given))
+
+
+def _validate_language_param(body: Dict[str, Any], key: str) -> Optional[str]:
+    """Return a ``lang`` / ``lang_guess`` value, requiring the code-string form (422).
+
+    ``Router`` reads both through ``_english_from_code``, which stringifies its input, so a JSON
+    ``true`` would become the code ``"true"`` -- a real, non-English one -- and decide the
+    checkpoint. A callable hint, the other form core accepts, cannot cross an HTTP body. Explicit
+    ``null`` stays "no hint", which is what lets a deployment's ``Router(lang_guess=...)`` answer.
+    """
+    from fastapi import HTTPException
+
+    val = body.get(key)
+    if val is None:
+        return None
+    if not isinstance(val, str):
+        raise HTTPException(status_code=422,
+                            detail='%s must be a language code string such as "de", or null' % key)
+    return val
+
+
+def _validate_min_confidence(body: Dict[str, Any]) -> Optional[float]:
+    """Round-trip the body's ``min_confidence`` through core's validator, reporting its 422.
+
+    Validation happens here rather than inside ``predict`` so a bad threshold is refused before the
+    request takes an inference slot, and through ``laya.confidence`` rather than a copy of its
+    bounds so the accepted range cannot drift from what the abstention gate itself enforces.
+    """
+    from fastapi import HTTPException
+
+    if body.get("min_confidence") is None:
+        return None
+    from .confidence import check_min_confidence
+
+    try:
+        return check_min_confidence(body["min_confidence"])
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from None
+
+
 def _resolve_max_loaded() -> Optional[int]:
     """Resident-checkpoint cap from ``LAYA_MAX_LOADED``; ``None`` leaves it to ``Router``.
 
@@ -197,6 +274,121 @@ def _resolve_port() -> int:
     if not 1 <= port <= 65535:
         raise SystemExit("invalid LAYA_PORT %r: must be an integer 1-65535" % (raw,))
     return port
+
+
+#: Values the walk in `_state_length_lower_bound_over` will examine before giving up. This bounds the
+#: values *inspected*, not the total work: `stack.extend` pushes a container's elements without
+#: charging them against the budget, so a 2 MiB body of many small values costs ~0.43 ms of walking
+#: before falling through to the dump it was going to pay anyway (~6% on top). An ACCEPTED state is
+#: capped at MAX_STATE_CHARS, where the walk is ~0.01 ms.
+_STATE_PROBE_VALUES = 64
+
+
+def _state_length_lower_bound_over(state: Any, cap: int) -> int:
+    """A measured lower bound on the serialized length, if it already exceeds `cap`; else 0.
+
+    Non-zero only when exceeding `cap` is certain, and 0 for "not proven" -- never the other way
+    round, so a 0 sends the state on to the exact `json.dumps` measurement and no verdict changes.
+
+    The value is returned rather than a bool so the 413 can quote a number something measured. It
+    understates the true length (see below), so the message is a true statement about the state --
+    unlike reporting `cap + 1`, which would answer "state too large (50001 > 50000 chars)" for a
+    60 012-character state. That is the same fabricated-count flaw this gate replaces, and an
+    earlier revision of this branch reintroduced it.
+
+    One consequence worth knowing: the number in a 413 is therefore the exact serialized length when
+    the encoder ran, and this understated bound when it did not. Both are truthful and neither
+    overstates, but a client trimming exactly the difference the message names can still be refused.
+
+    The bound: the raw lengths of the string values are a *lower* bound on the JSON length. Escaping
+    maps each character to one or more characters and so never shortens; keys, separators, brackets
+    and quotes only add; numbers, booleans and nulls contribute at least one character each and are
+    counted as zero here. Every one of those makes this an under-estimate, which is the safe
+    direction: under-estimating can only fail to refuse, and then the encoder decides.
+
+    Why it is worth having. The dump runs before the gate refuses, so its cost is bounded by
+    `MAX_BODY_BYTES` rather than by `cap`: a 2 MiB body -- the largest the streaming cap admits --
+    cost 5.68 ms to serialize for a request that is then rejected, which is more than the 2.22 ms
+    `json.loads` spent parsing it in the first place. Finding one 2 MiB string instead takes a single
+    `len()`. Measured: 5.687 ms -> 0.0003 ms on that state, while every state that IS accepted pays
+    at most 0.01 ms more (worst ratio 2.08x, on a 6 us deeply-nested case).
+    """
+    total = 0
+    budget = _STATE_PROBE_VALUES
+    stack = [state]
+    while stack and budget > 0:
+        budget -= 1
+        item = stack.pop()
+        if isinstance(item, str):
+            total += len(item)
+            if total > cap:
+                return total
+        elif type(item) is dict:
+            # `.values()` and `extend` stay at C level; the keys are ignored, which keeps this a
+            # lower bound. Iterating items in Python here made a 2000-key state 1.66x slower.
+            stack.extend(item.values())
+        elif type(item) is list or type(item) is tuple:
+            stack.extend(item)
+        else:
+            # EXACT types only, deliberately. A `dict` subclass may override `values()` while
+            # `json.dumps` reads the real items, which would let this "lower bound" exceed the true
+            # length -- measured: a 13-character state refused as `60000 > 50000`. Anything else,
+            # including a subclass, a set or a cycle, is handed to the encoder, which decides the
+            # size or raises and becomes the 400 below. `json.loads` only ever builds exact types,
+            # so no HTTP request takes this branch.
+            return 0
+    return 0
+
+
+def _state_length(state: Any) -> int:
+    r"""Length of the state text that will be tokenized; 400 if it has none.
+
+    `laya.common.serialize_state(state)` is what gets tokenized -- the state itself for a string,
+    `json.dumps(state, ensure_ascii=False)` for a dict or list, which the agents then strip mask
+    tokens out of, and that can only shorten it. `MAX_STATE_CHARS` has to be measured on that
+    text, not on `str()`, which is a different length in both directions:
+
+    * `repr` quotes a value with `'` and leaves a `"` inside it one character, where JSON escapes
+      it to the two characters `\"`. A `{"body": '"' * 49988}` state has a `len(str())` of exactly
+      50000, so it passed the gate, and then serialized to 99988 -- the documented 50000-character
+      limit admitting very nearly twice what it says.
+    * `repr` renders a zero-width space as the six characters `\u200b` where `ensure_ascii=False`
+      writes the one character it is, so a state that serializes to 8344 characters -- a sixth of
+      the limit -- was refused with "state too large (50004 > 50000 chars)".
+
+    `json.dumps` inline rather than importing `serialize_state`: `laya.common` imports torch at
+    module level and `import laya.serve` must not (tests/test_lazy_import.py). The two are pinned
+    to each other in tests/test_serve.py.
+
+    Cost. At the gate's own ceiling the dump is 0.133 ms against 0.080 ms for the `str()` it
+    replaces -- orders of magnitude under the forward pass that state then gets, so the serialized
+    text is not worth threading through `predict()` to be encoded only once. A state large enough
+    for that difference to matter never reaches the dump: `_state_length_lower_bound_over` refuses it
+    first, which is what keeps an oversized body from costing more to reject than it did upstream.
+    (Best of 200 after 20 warm-up iterations, CPython 3.12 on a 10-core arm64 laptop.)
+    """
+    from fastapi import HTTPException
+
+    if isinstance(state, str):
+        return len(state)  # `serialize_state` returns a string state unchanged
+    over = _state_length_lower_bound_over(state, MAX_STATE_CHARS)
+    if over:
+        # Already past the cap on a lower bound, so serializing the rest cannot change the verdict.
+        # The bound is what gets reported: it is a measured number and it understates, so the 413
+        # never claims a length larger than the state really has.
+        return over
+    try:
+        return len(json.dumps(state, ensure_ascii=False))
+    except (TypeError, ValueError, RecursionError):
+        # A state `serialize_state` cannot render is not a size problem, and the 413 this replaces
+        # reported a count nothing had measured: `str()` raises on an integer of over 4300 digits
+        # (CPython's own int-to-str guard), and the old `except` answered "state too large (50001
+        # > 50000 chars)" for a state of a few kilobytes. No HTTP request reaches that case --
+        # `json.loads` builds only JSON types and refuses that integer itself, which
+        # `_systemone_inner` already answers 400 -- but in-process callers get here, and a state
+        # `json.dumps` refuses (a set, a datetime, a circular reference) used to pass the gate on
+        # its `str()` and then fail inside `serialize_state`, reported as a 500 "inference failed".
+        raise HTTPException(status_code=400, detail="'state' must be JSON-serializable")
 
 
 def _check_request_limits(state: Any, questions: Any) -> None:
@@ -245,13 +437,55 @@ def _check_request_limits(state: Any, questions: Any) -> None:
             detail="too many answer options across questions (%d > %d)" % (total_options, MAX_TOTAL_OPTIONS),
         )
 
-    try:
-        state_len = len(state) if isinstance(state, str) else len(str(state))
-    except Exception:
-        state_len = MAX_STATE_CHARS + 1
+    state_len = _state_length(state)
     if state_len > MAX_STATE_CHARS:
         raise HTTPException(status_code=413,
                             detail="state too large (%d > %d chars)" % (state_len, MAX_STATE_CHARS))
+
+
+def _check_batch_limits(states: Any, questions: Any) -> None:
+    """Validate batch states and questions before inference (400/413)."""
+    from fastapi import HTTPException
+
+    if not isinstance(states, list) or len(states) == 0:
+        raise HTTPException(status_code=400, detail="'states' must be a non-empty list")
+    if len(states) > MAX_BATCH_STATES:
+        raise HTTPException(
+            status_code=413,
+            detail="too many states in batch (%d > %d)" % (len(states), MAX_BATCH_STATES),
+        )
+    for state in states:
+        _check_request_limits(state, questions)
+# One surrogate code point in a Python string. Compiled once: a nested body can hold many
+# strings, and `re.search` scans each at C speed, where the per-character Python loop this
+# replaced cost ~170 ms on a near-cap body on the event loop.
+_LONE_SURROGATE = re.compile("[\ud800-\udfff]")
+
+
+def _has_lone_surrogate(value: Any) -> bool:
+    """True if any string in the parsed body contains an unpaired surrogate code point.
+
+    `json.loads` accepts a `\\udXXX` escape and builds a `str` holding that code point, which
+    cannot be encoded to UTF-8. A *pair* of escapes is combined into one ordinary astral
+    character by the decoder, so it never appears here and an emoji still works.
+
+    Walks with an explicit stack rather than recursing: `json.loads` accepts nesting far deeper
+    than Python's default recursion limit, so a recursive walk turned a body the parser handles
+    into a `RecursionError` -- one 500 replaced by another. The size checks run first, so the
+    strings reached here are bounded by `MAX_STATE_CHARS` and `MAX_QUESTIONS`.
+    """
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, str):
+            if _LONE_SURROGATE.search(item):
+                return True
+        elif isinstance(item, dict):
+            stack.extend(item.keys())
+            stack.extend(item.values())
+        elif isinstance(item, (list, tuple)):
+            stack.extend(item)
+    return False
 
 
 async def _read_body_capped(request: Any) -> bytes:
@@ -278,6 +512,23 @@ async def _read_body_capped(request: Any) -> bytes:
             raise HTTPException(status_code=413, detail="request body too large")
         chunks.append(chunk)
     return b"".join(chunks)
+
+
+async def _read_json_body(request: Any) -> Any:
+    """Read the request body and decode JSON, enforcing size caps and parse error guards."""
+    from fastapi import HTTPException
+
+    if request.headers.get("content-length"):
+        try:
+            if int(request.headers["content-length"]) > MAX_BODY_BYTES:
+                raise HTTPException(status_code=413, detail="request body too large")
+        except ValueError:
+            pass
+    raw = await _read_body_capped(request)
+    try:
+        return json.loads(raw)
+    except (ValueError, RecursionError):
+        raise HTTPException(status_code=400, detail="request body must be valid JSON")
 
 
 def _apply_thread_limit():
@@ -367,6 +618,7 @@ def create_app(router: Optional[Any] = None):
     app = FastAPI(
         title="laya-serve",
         summary="Laya System-1 decisions over the TypeSafe Jev /v1/systemone protocol",
+        root_path=os.environ.get("LAYA_ROOT_PATH", ""),
         lifespan=lifespan,
     )
 
@@ -422,10 +674,9 @@ def create_app(router: Optional[Any] = None):
             "cpu_fallbacks": fallbacks,
         }
 
-    @app.post("/v1/systemone")
-    async def systemone(request: Request, authorization: Optional[str] = Header(default=None)):
-        nonlocal gate, admission
-        _check_auth(authorization)
+    @asynccontextmanager
+    async def _admit():
+        nonlocal admission
         if admission is None:
             admission = asyncio.Semaphore(max_concurrent)
         if admission.locked():
@@ -437,44 +688,59 @@ def create_app(router: Optional[Any] = None):
                                 headers={"Retry-After": "1"})
         await admission.acquire()
         try:
-            return await _systemone_inner(request)
+            yield
         finally:
             admission.release()
 
+    @app.post("/v1/systemone")
+    async def systemone(request: Request, authorization: Optional[str] = Header(default=None)):
+        _check_auth(authorization)
+        async with _admit():
+            return await _systemone_inner(request)
+
     async def _systemone_inner(request: Request):
         nonlocal gate
-        # A declared length over the cap is rejected before anything is read; the
-        # streaming cap below is what actually enforces it, for bodies that declare
-        # no length or understate it.
-        if request.headers.get("content-length"):
-            try:
-                if int(request.headers["content-length"]) > MAX_BODY_BYTES:
-                    raise HTTPException(status_code=413, detail="request body too large")
-            except ValueError:
-                pass
-        raw = await _read_body_capped(request)
-        try:
-            # A client can cause ValueError (JSONDecodeError for malformed/empty/truncated
-            # bodies, UnicodeDecodeError for invalid UTF-8) or RecursionError (deeply nested
-            # arrays/objects). A broader catch would also swallow ClientDisconnect and
-            # Starlette's own stream errors, reporting a transport or server fault as the client's.
-            body = json.loads(raw)
-        except (ValueError, RecursionError):
-            raise HTTPException(status_code=400, detail="request body must be valid JSON")
+        body = await _read_json_body(request)
         if not isinstance(body, dict) or "questions" not in body:
             raise HTTPException(status_code=400, detail="request body must be an object with a 'questions' field")
         state = body.get("state")
         questions = body["questions"]
         _check_request_limits(state, questions)
+        _refuse_body_refusals(body)
+        # After the size checks, so an oversized body is refused before anything walks it, and
+        # `MAX_STATE_CHARS`/`MAX_QUESTIONS` bound what the walk can reach. A `\udXXX` escape with
+        # no pair is legal JSON that cannot be UTF-8 encoded, so the tokenizer raised `TypeError`
+        # from inside `build_sequence` and the client's own mistake came back as a 500
+        # "inference failed". A *paired* surrogate is an ordinary astral character (an emoji) by
+        # the time `json.loads` is done, so only lone ones are rejected here.
+        if _has_lone_surrogate(body):
+            raise HTTPException(status_code=400,
+                                detail="request body contains an unpaired surrogate escape; "
+                                       "those cannot be encoded as UTF-8")
         model = _resolve_model(body.get("model"))
         max_budget_cap = _resolve_max_token_budget()
         max_len = _validate_budget_param(body, "max_len", max_budget_cap)
         head_max_len = _validate_budget_param(body, "head_max_len", max_budget_cap)
+        # Each control is sent only when the client sent it: core reads an absent argument as
+        # "inherit what the Router was built with", so passing None would override a deployment's
+        # own `Router(lang_guess=...)` or abstention threshold with the server's default.
         predict_kwargs = {}
         if max_len is not None:
             predict_kwargs["max_len"] = max_len
         if head_max_len is not None:
             predict_kwargs["head_max_len"] = head_max_len
+        # An unknown task is left to `route`, which normalises it through `normalise_name` and
+        # raises; the `except ValueError` below turns that into a 422 naming the task, so the
+        # accepted set is core's and not a list restated here.
+        if body.get("task") is not None:
+            predict_kwargs["task"] = body["task"]
+        for key in ("lang", "lang_guess"):
+            value = _validate_language_param(body, key)
+            if value is not None:
+                predict_kwargs[key] = value
+        min_confidence = _validate_min_confidence(body)
+        if min_confidence is not None:
+            predict_kwargs["min_confidence"] = min_confidence
         if gate is None:
             gate = asyncio.Lock()
         try:
@@ -513,6 +779,61 @@ def create_app(router: Optional[Any] = None):
             # value cannot forge log entries (py/log-injection) if that ever stops holding.
             _log.exception("inference failed for model=%s",
                            str(model).replace("\n", "\\n").replace("\r", "\\r"))
+            raise HTTPException(status_code=500, detail="inference failed")
+
+    @app.post("/v1/systemone/batch")
+    async def systemone_batch(request: Request, authorization: Optional[str] = Header(default=None)):
+        _check_auth(authorization)
+        async with _admit():
+            return await _systemone_batch_inner(request)
+
+    async def _systemone_batch_inner(request: Request):
+        nonlocal gate
+        body = await _read_json_body(request)
+        if not isinstance(body, dict) or "questions" not in body or "states" not in body:
+            raise HTTPException(
+                status_code=400,
+                detail="request body must be an object with 'states' and 'questions' fields",
+            )
+        states = body["states"]
+        questions = body["questions"]
+        _check_batch_limits(states, questions)
+        model = _resolve_model(body.get("model"))
+        if gate is None:
+            gate = asyncio.Lock()
+        try:
+            async with gate:
+                loop = asyncio.get_running_loop()
+
+                def _do_batch():
+                    if hasattr(router, "predict_batch"):
+                        reqs = [{"state": s, "questions": questions, "model": model} for s in states]
+                        results = router.predict_batch(reqs)
+                    else:
+                        results = [router.predict(s, questions, model=model) for s in states]
+                    total_tokens = sum(r.get("usage", {}).get("input_tokens", 0) for r in results)
+                    return {
+                        "results": results,
+                        "total_usage": {"input_tokens": total_tokens, "output_tokens": 0},
+                    }
+
+                t0 = time.perf_counter()
+                batch_res = await loop.run_in_executor(pool, _do_batch)
+                infer_ms = (time.perf_counter() - t0) * 1000.0
+                from fastapi.responses import JSONResponse
+                return JSONResponse(
+                    content=batch_res,
+                    headers={
+                        "Server-Timing": f"inference;dur={infer_ms:.2f}",
+                        "X-Inference-Time-Ms": f"{infer_ms:.2f}"
+                    }
+                )
+        except HTTPException:
+            raise
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        except Exception:  # noqa: BLE001
+            _log.exception("batch inference failed")
             raise HTTPException(status_code=500, detail="inference failed")
 
     return app

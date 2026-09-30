@@ -14,15 +14,20 @@ from .presets import (
 from .router import DEFAULT_MODELS, RouteDecision, Router
 from .structured import DecisionResult, decide, decide_batch
 
-__version__ = "0.3.21"
+__version__ = "0.3.22"
 
 # Routing, language detection and email cleaning are pure Python. The torch-backed names are
 # resolved lazily so that `import laya` -- and therefore `from laya import Router` or
 # `from laya.lang import detect_script` -- does not pay torch's import time and memory.
 _LAZY_ATTRS = {
+    # stdlib-only module, but keep it lazy so `import laya` does not pull in hashlib
+    "PINNED_REVISIONS": (".revisions", "PINNED_REVISIONS"),
     "Agent": (".agent", "Agent"),
     "RLAgent": (".agent", "RLAgent"),
     "load": (".agent", "load"),
+    "fit_temperatures": (".calibrate", "fit_temperatures"),
+    "fit_one_temperature": (".calibrate", "fit_one_temperature"),
+    "fit_temperature_map": (".calibrate", "fit_temperature_map"),
     "proper_reward": (".common", "proper_reward"),
     "td_lambda_targets": (".common", "td_lambda_targets"),
     "ece_score": (".common", "ece_score"),
@@ -66,6 +71,9 @@ __all__ = [
     "Agent",
     "RLAgent",
     "load",
+    "fit_temperatures",
+    "fit_one_temperature",
+    "fit_temperature_map",
     "Router",
     "RouteDecision",
     "DEFAULT_MODELS",
@@ -107,5 +115,6 @@ __all__ = [
     "decide",
     "decide_batch",
     "DecisionResult",
+    "PINNED_REVISIONS",
     "__version__",
 ]

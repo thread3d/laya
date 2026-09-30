@@ -74,6 +74,10 @@ def make_agent(batch_result_fn):
     return a
 
 
+# `_encode_state` items carry the state truncation counts that `predict_batch` reports in `usage` (#174)
+NO_STATE_STATS = {"state_tokens": 0, "state_tokens_used": 0, "state_tokens_dropped": 0, "truncated": False}
+
+
 def make_real_agent():
     """`predict_long` on the real `predict_batch`/`system_one`, with only the three composed
     helpers stubbed -- the harness `tests/test_hooks.py` uses, so no weights are involved.
@@ -97,7 +101,7 @@ def make_real_agent():
 
     def _encode_state(state, ids, internal, **overrides):
         a._encoded.append(state)
-        return [{"ids": [1, 2, 3], "markers": [0, 1], "qtype": 2} for _ in ids]
+        return [{"ids": [1, 2, 3], "markers": [0, 1], "qtype": 2, "state_stats": NO_STATE_STATS} for _ in ids]
 
     def _forward(b):
         n = b["input_ids"].shape[0]
@@ -169,6 +173,53 @@ check("long/choice names the deciding window", res["answers"]["dept"]["window"][
 check("long/noul names the deciding window", res["answers"]["flag"]["window"]["index"], 2)
 check("long/window start is the 3rd overlap offset", res["answers"]["dept"]["window"]["token_start"], 72)
 check("long/window carries the count", res["answers"]["flag"]["window"]["count"], nwin)
+
+
+# 2b. a per-question usage field is merged across windows, not replaced
+# `usage["options"]` is a dict keyed by question id, set only on the windows where option
+# spans actually collapsed. The deciding window is the most confident one, so it is not
+# necessarily the last window that collapsed: replacing instead of merging reported a
+# collapse for a window that did not decide and dropped the deciding window's own record.
+def collapsing(states, q):
+    # window 0 collapses dept and is the most confident; every later window collapses flag,
+    # so the last collapsing window is not the deciding one
+    out = []
+    for i, _ in enumerate(states):
+        conf = 0.9 if i == 0 else 0.4
+        which = "dept" if i == 0 else "flag"
+        total, distinct = (58, 42) if which == "dept" else (30, 12)
+        opt = {which: {"total": total, "distinct": distinct, "tokens_per_option": 0.5}}
+        out.append({"answers": {
+            "dept": {"type": "choice", "choice": "b" if i == 0 else "a",
+                     "probabilities": {"a": 1 - conf, "b": conf}, "confidence": conf,
+                     "answer_confidence": conf, "action": {"act_probability": 1.0}},
+            "flag": {"type": "noul", "noul": 0.9 if i == 0 else 0.1, "confidence": conf,
+                     "answer_confidence": conf, "action": {"act_probability": 1.0}},
+        }, "usage": {"input_tokens": 10, "options": opt}})
+    return out
+
+
+_seen_windows = []
+
+
+def collapsing_capturing(states, q, **kw):
+    _seen_windows.extend(states)
+    return collapsing(states, q, **kw)
+
+
+a = make_agent(collapsing_capturing)
+res = a.predict_long({"body": "y" * 300}, Q)
+opts = res["usage"].get("options") or {}
+nwin = len(_seen_windows)
+decided = res["answers"]["dept"]["window"]["index"]
+check("collapse/records from more than one window survive", sorted(opts), ["dept", "flag"])
+check("collapse/the deciding window is the confident first one", decided, 0)
+check_true("collapse/which is not the last window scanned", decided != nwin - 1, [decided, nwin])
+check("collapse/so the deciding window's own record is reported", opts.get("dept"), {
+    "total": 58, "distinct": 42, "tokens_per_option": 0.5})
+check("collapse/a later non-deciding window is reported too", opts.get("flag"), {
+    "total": 30, "distinct": 12, "tokens_per_option": 0.5})
+check("collapse/numerics still sum across every window", res["usage"]["input_tokens"], 10 * nwin)
 
 # 3. only aggregate="auto" is supported
 a = make_agent(canned)
@@ -425,6 +476,59 @@ check("rewrite/the same length is still the same count",
       ((upper or {}).get("usage") or {}).get("windows", "<absent>"), nwin)
 check("rewrite/a text rewrite names no span",
       sorted(k for v in (upper or {}).get("answers", {}).values() for k in v if k == "window"), [])
+
+# A shared start hook may add a review question or replace the request's schema. Aggregate the
+# questions that actually ran, just as a short state does, including a changed type under one id.
+def _question_agent():
+    a = make_real_agent()
+    a.temperature, a.temperature_by_options, a.lang_temperatures = [1.0] * 3, {}, {}
+    del a._decode_answers                 # exercise the real typed answer decoder
+
+    def forward(b):
+        n = b["input_ids"].shape[0]
+        logits = np.tile(np.array([[0.0, 1.4]], dtype=np.float32), (n, 1))
+        logits[0] = [3.0, 0.0]           # most confident differs from strongest P(true)
+        return logits, np.full((n, 2), 0.5, dtype=np.float32)
+
+    a._forward = forward
+    return a
+
+
+question_rewrites = [
+    ("append", {**Q, "review": Q["flag"]}),
+    ("replace", {"review": Q["flag"]}),
+    ("delete", {"flag": Q["flag"]}),
+    ("clear", {}),
+    ("choice to noul", {**Q, "dept": Q["flag"]}),
+    ("noul to choice", {**Q, "flag": Q["dept"]}),
+]
+for name, rewritten_questions in question_rewrites:
+    expected = _question_agent().predict_long(LONG, rewritten_questions)
+    actual, exc = _attempt(lambda: _question_agent().predict_long(
+        LONG, Q, on_predict_start=lambda ctx: setattr(ctx, "questions", rewritten_questions)))
+    check("questions/%s returns without error" % name, _kind(exc), None)
+    check("questions/%s matches directly requesting the final schema" % name, actual, expected)
+
+check("questions/no-op preserves the unhooked result",
+      _question_agent().predict_long(LONG, Q, on_predict_start=lambda ctx: None),
+      _question_agent().predict_long(LONG, Q))
+
+# An end hook may annotate only one window. Extra answers are not questions in the scan.
+def _annotate_first_window(ctx):
+    ctx.results[0]["answers"]["review"] = {"type": "noul", "noul": 0.9, "answer_confidence": 0.9}
+
+
+expected = _question_agent().predict_long(LONG, Q)
+actual, exc = _attempt(lambda: _question_agent().predict_long(LONG, Q, on_predict_end=_annotate_first_window))
+check("questions/a first-window end annotation preserves the scan's answers", actual, expected)
+check("questions/a first-window end annotation does not require other windows to match", _kind(exc), None)
+
+# The recorder must leave invalid input to predict_batch's existing question validation.
+for malformed in (None, [], {"bad": None}, {"bad": {}}, {"bad": {"type": "unknown"}}):
+    _, direct_exc = _attempt(lambda: _question_agent().system_one(LONG, malformed))
+    _, long_exc = _attempt(lambda: _question_agent().predict_long(LONG, malformed))
+    check("questions/invalid input keeps the validator's error: %r" % malformed,
+          (_kind(long_exc), str(long_exc)), (_kind(direct_exc), str(direct_exc)))
 
 # 8e. a hook that leaves nothing scores nothing: 0 windows and no answers, not a max() over []
 a = make_real_agent()

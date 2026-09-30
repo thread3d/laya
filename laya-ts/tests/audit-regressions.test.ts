@@ -38,6 +38,53 @@ describe("audit regressions", () => {
     expect(rendered).toContain("refund request");
   });
 
+  it("preserves the newest conversation turn in systemOne and predictBatch", async () => {
+    const encoderBatches: any[] = [];
+    const testProvider = {
+      async runEncoder(batch: any) {
+        encoderBatches.push(batch);
+        return { lastHidden: Array(batch.inputIds.length).fill([[0, 0]]) };
+      },
+      async runHead(_hidden: any, batch: any) {
+        return {
+          logits: Array(batch.inputIds.length).fill([1, 0]),
+          act: Array(batch.inputIds.length).fill([1, 0]),
+        };
+      },
+    };
+    const agent = new Agent({
+      provider: testProvider,
+      tok: tokenizer(),
+      max_len: 64,
+      head_max_len: 32,
+    } as any);
+
+    const conv = [
+      { text: "old context that must be truncated" },
+      { text: "newest refund request" },
+    ];
+    const questions = { q: { type: "noul", instructions: "?" } };
+
+    // 1. systemOne
+    await agent.systemOne(conv, questions);
+    expect(encoderBatches.length).toBe(1);
+    const systemOneRendered = encoderBatches[0].inputIds[0]
+      .map((id: number) => String.fromCodePoint(id))
+      .join("");
+    expect(systemOneRendered).toContain("refund request");
+    expect(systemOneRendered).not.toContain("old context");
+
+    // 2. predictBatch
+    encoderBatches.length = 0;
+    await agent.predictBatch([conv], questions);
+    expect(encoderBatches.length).toBe(1);
+    const batchRendered = encoderBatches[0].inputIds[0]
+      .map((id: number) => String.fromCodePoint(id))
+      .join("");
+    expect(batchRendered).toContain("refund request");
+    expect(batchRendered).not.toContain("old context");
+  });
+
   it("renders custom noul labels and validates unsupported labels", () => {
     const q = toInternal({
       type: "noul",
@@ -86,8 +133,24 @@ describe("audit regressions", () => {
     expect(check(["yes", { k: 1 }])).toThrow("choice label 1 is a dict");
     expect(check([["y", ["z"]], "no"])).toThrow("choice label 0 is a list");
     expect(check(["a", "b", [1]])).toThrow('question "q": choice label 2 is a list');
-    expect(check(["a", 1, true, null, 2.5])).not.toThrow();
+    expect(check(["a", 1, true, "", 2.5])).not.toThrow();
     expect(() => checkQuestion("q", { type: "choice", instructions: "?", criteria: { a: "x", b: { d: 1 } } })).not.toThrow();
+  });
+
+  it("rejects a null choice label, as Python does (#508)", () => {
+    const check = (criteria: unknown[]) => () => checkQuestion("q", { type: "choice", instructions: "?", criteria });
+    expect(check(["billing", null])).toThrow('question "q": choice label 1 is null');
+    expect(check([undefined, "a"])).toThrow("choice label 0 is null");
+    expect(check(["a", , "b"])).toThrow("choice label 1 is null");
+    expect(() => checkQuestion("q", { type: "choice", instructions: "?", criteria: { a: null, b: null } })).not.toThrow();
+  });
+
+  it("rejects choice labels that share an answer key, as Python does (#496)", () => {
+    const check = (criteria: unknown[]) => () => checkQuestion("q", { type: "choice", instructions: "?", criteria });
+    expect(check(["a", "b", "a"])).toThrow('question "q": choice label 2 ("a") repeats label 0');
+    expect(check([1, "1"])).toThrow("choice label 1 (\"1\") repeats label 0");
+    expect(check([true, "true"])).toThrow("repeats label 0");
+    expect(check(["a", "A", 1, 2, true, false])).not.toThrow();
   });
 
   it("rejects malformed provider output", async () => {
