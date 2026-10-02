@@ -436,6 +436,83 @@ with f.hooks_installed(Tag(log, "t"), Tag(log, "t")):
     pass
 check("hooks_installed/no residue when nothing was installed before", len(f.hooks), 0)
 
+
+# --------------------------------------------------------------- skip() counts
+# `skip()` replaces the whole call, so the count is part of the contract its docstring
+# states: one result per state, or a single result for the whole call (the shape
+# `predict_long` takes as the document's answer -- its scan hands the hook every window
+# as a state). Anything else used to pass through unchecked: `Router.predict` then
+# indexed `results[0]` of an empty list (an `IndexError`, a 500 over serve), and
+# `predict_batch` returned a shorter list than it was given states, silently dropping
+# rows the caller was about to zip against.
+
+def _skipper(*results):
+    def hook(ctx):
+        ctx.skip(list(results))
+    return hook
+
+
+CACHED = {"model": "cache", "usage": {},
+          "answers": {"a": {"type": "noul", "noul": 0.9}, "b": {"type": "noul", "noul": 0.1}}}
+
+# one per state: the docs' cache pattern, and the shape `predict_batch` returns
+f = make_fake()
+res = f.predict_batch(["s0", "s1", "s2"], QUESTIONS, on_predict_start=_skipper(CACHED, CACHED, CACHED))
+check("skip/one per state is accepted", len(res), 3)
+check("skip/forward never ran", len(f._encode_states), 0)
+check("skip/the payload comes back untouched", res[0], CACHED)
+
+# one result for the whole call: what a `predict_long` scan's hook answers with, even
+# though `ctx.states` holds every window. Pinned here because the scan's own check
+# (`predict_long: a start hook answered this state with N results`) reads the other
+# shape as a mistake, and this is the path it accepts.
+f = make_fake()
+res = f.predict_batch(["s0", "s1"], QUESTIONS, on_predict_start=_skipper(CACHED))
+check("skip/one result for the whole call is accepted", len(res), 1)
+check("skip/whole-call answer: forward never ran", len(f._encode_states), 0)
+
+# short and long counts are refused at the hook, with the contract in the message
+f = make_fake()
+err = None
+try:
+    f.predict_batch(["s0", "s1", "s2"], QUESTIONS, on_predict_start=_skipper(CACHED, CACHED))
+except ValueError as exc:
+    err = exc
+check_true("skip/a short list is refused", err is not None, repr(err))
+check_true("skip/the refusal names the contract",
+           err is not None and "one per state" in str(err), repr(err))
+check("skip/a refused skip leaves inference untouched", len(f._encode_states), 0)
+
+f = make_fake()
+err = None
+try:
+    f.predict_batch(["s0"], QUESTIONS, on_predict_start=_skipper())
+except ValueError as exc:
+    err = exc
+check_true("skip/an empty answer for a non-empty call is refused", err is not None, repr(err))
+check_true("skip/the refusal counts the states",
+           err is not None and "(1); got 0" in str(err), repr(err))
+
+# under hooks_raise=False a refusal warns like any other hook failure and the call still
+# gets an answer: the cache is wrong, not the request.
+f = make_fake()
+with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    res = f.predict_batch(["s0"], QUESTIONS, on_predict_start=_skipper(), hooks_raise=False)
+check("skip/refusal under hooks_raise=False falls back to inference", len(res), 1)
+check_true("skip/refusal under hooks_raise=False is warned",
+           any(issubclass(w.category, RuntimeWarning) and "ctx.skip()" in str(w.message)
+               for w in caught), [str(w.message) for w in caught])
+
+# Router.predict used to turn an empty answer into `ctx.results[0]` -- IndexError, a 500
+# over serve. The same refusal, raised where the contract is written.
+_skip_router = Router()
+_skip_router.attach("english", FakeAgent())
+check_raises("router/skip empty is a ValueError, not an IndexError",
+             ValueError,
+             lambda: _skip_router.predict("hello", QUESTIONS,
+                                          on_predict_start=lambda ctx: ctx.skip([])))
+
 log = []
 r = Router()
 r.add_hook(Tag(log, "router"))

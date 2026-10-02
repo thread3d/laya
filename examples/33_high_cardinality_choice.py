@@ -145,6 +145,7 @@ for head, ctx in ((512, 1024), (1024, 2048)):
     budget_report(agent, seventy_seven, ctx, head)
     ask(agent, seventy_seven, "77 options, raised")
 
-print("\n   confidence is 1.000 either way: the `choice:11+` temperature (0.1006) sharpens the")
+print("\n   confidence is 1.000 either way: the `choice:11+` bucket applies 0.5 -- its shipped")
+print("   0.1006 is below the floor and is clamped into [0.5, 5] at load -- which sharpens the")
 print("   logits, so it cannot warn you that a 4-token option was misread. Raise the budget or")
 print("   split the label space; do not trust confidence on large option sets.")

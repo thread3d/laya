@@ -83,6 +83,64 @@ describe("lang_temperatures", () => {
     ).toThrow('Language override "de" temperature must be a list of 3 floats');
   });
 
+  it("rejects bucket overrides that are not a mapping, as Python does", () => {
+    // Python (common.py resolve_lang_temperatures) is two lines: `cfg.get(...) or {}`, then
+    // `isinstance(..., dict)`. So a Python-falsy value collapses to {} and is accepted, a dict
+    // is accepted, and anything else truthy is rejected naming the language.
+    //
+    // JavaScript truthiness is not that test, in two places: an empty array is truthy here and
+    // falsy in Python, and NaN is falsy here and truthy in Python. A string also reached
+    // Object.entries and became character keys -- Object.entries("nope") is
+    // [["0","n"],["1","o"],["2","p"],["3","e"]] -- none of which is a bucket any question asks for.
+    const truthyNonMappings: Array<[string, unknown]> = [
+      ["a non-empty string", "nope"],
+      ["a non-zero number", 42],
+      ["a boolean", true],
+      ["a non-empty list", ["choice:2"]],
+      ["NaN", NaN],
+      ["Infinity", Infinity],
+      // Not dicts in Python, and Object.entries reads none of their contents, so accepting
+      // them turns a configured override into an empty one without a word.
+      ["a Map", new Map([["choice:2", 2.0]])],
+      ["a Set", new Set(["choice:2"])],
+      ["a Date", new Date(0)],
+      ["a class instance", new (class { "choice:2" = 2.0 })()],
+    ];
+    for (const [label, buckets] of truthyNonMappings) {
+      expect(
+        () => new Agent({ provider: fakeProvider(), lang_temperatures: { de: { temperature_by_options: buckets } } } as any),
+        label,
+      ).toThrow('Language override "de" temperature_by_options must be a mapping of bucket -> float');
+    }
+  });
+
+  it("treats a Python-falsy bucket override as no override, as Python does", () => {
+    // `x or {}` is what makes these "no override" in Python, and the empty array is the case
+    // that has to be named rather than inferred. All must keep passing rather than start
+    // failing on a shape that already means "none".
+    for (const buckets of [undefined, null, {}, [], 0, -0, false, ""]) {
+      const a = new Agent({
+        provider: fakeProvider(),
+        lang_temperatures: { de: { temperature_by_options: buckets } },
+      } as any);
+      expect(a.langTemperatures.de.temperatureByOptions, JSON.stringify(buckets) ?? "undefined").toEqual({});
+    }
+  });
+
+  it("keeps a real mapping, and a null-prototype one, as Python's dict", () => {
+    const mapped = new Agent({
+      provider: fakeProvider(),
+      lang_temperatures: { de: { temperature_by_options: { "choice:2": 2.0 } } },
+    } as any);
+    expect(mapped.langTemperatures.de.temperatureByOptions).toEqual({ "choice:2": 2.0 });
+    // JSON.parse and Object.create(null) are both dicts in Python; both must survive.
+    const bare = new Agent({
+      provider: fakeProvider(),
+      lang_temperatures: { de: { temperature_by_options: Object.assign(Object.create(null), { "choice:2": 2.0 }) } },
+    } as any);
+    expect(bare.langTemperatures.de.temperatureByOptions).toEqual({ "choice:2": 2.0 });
+  });
+
   it("rejects a base temperature that is not a list of 3 floats, as Python does (#502)", () => {
     for (const temperature of [[1, 1], [1, 1, 1, 1], 2, "1"]) {
       expect(() => new Agent({ provider: fakeProvider(), temperature } as any)).toThrow(

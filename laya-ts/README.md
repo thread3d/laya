@@ -115,6 +115,23 @@ out.usage.truncated_questions;   // ids of the questions whose head left too lit
 The fields are absent only where no state was ever encoded (empty question schema, or a
 start hook that supplied the result).
 
+### Collapsed options
+
+The same budget also cuts the options themselves: each is capped at 48 tokens, and once they
+overflow `head_max_len` all of them are re-capped at `max(4, (head_max_len - 16) // n)`. Two
+options that share a prefix can come out of that cut as the *same* token span, so the question
+can no longer name them apart while still answering normally — and an answer chosen from 42
+distinguishable spans of 58 has an accuracy ceiling of 72% that nothing else in the response
+mentions (issue #538; mirrors Python `laya.common.collapsed_options`):
+
+```ts
+out.usage.options;   // absent when every option kept a span of its own
+out.usage.options?.intent;  // { total: 58, distinct: 42, tokens_per_option: 4 }
+```
+
+`total` is what the question defines, not the markers that reached the sequence, so a report
+cannot read "43 of 43" about a question whose missing options never entered the input at all.
+
 ## Batching (many states, one call)
 
 Port of `Agent.predict_batch` / `Router.route_batch` / `Router.predict_batch`. The throughput

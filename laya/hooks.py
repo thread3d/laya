@@ -50,8 +50,22 @@ class PredictContext:
 
         `results` replaces the whole call, so it carries one entry per state in `ctx.states` --
         the shape `predict_batch` returns -- in that order. A hook fires once per call, and a
-        call can carry many states.
+        call can carry many states. The one other accepted shape is a single entry for the
+        whole call, which is what `predict_long` takes as the document's answer (its scan
+        hands the hook every window as a state, and refuses anything but one result).
+
+        The count is checked here, against this contract, so a wrong one fails inside the
+        hook under the caller's `hooks_raise` policy instead of downstream: `Router.predict`
+        indexed `results[0]` of an empty list (an `IndexError`, which serve maps to 500),
+        and `predict_batch` returned a shorter list than it was given states, quietly
+        dropping rows the caller was about to zip against.
         """
+        states = self.states
+        if (isinstance(states, (list, tuple)) and isinstance(results, (list, tuple))
+                and len(results) not in (1, len(states))):
+            raise ValueError(
+                "ctx.skip() takes one result for the whole call or one per state in "
+                "ctx.states (%d); got %d" % (len(states), len(results)))
         self.results = results
 
 

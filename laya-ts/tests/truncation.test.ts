@@ -95,6 +95,11 @@ describe("reported counts match the sequence", () => {
   ] as const)("accounting/%s", (_name, maxLen, headMaxLen) => {
     const { ids, stats } = buildSequence(TOK, LONG, Q as never, maxLen, headMaxLen);
     expect(ids.length).toBeLessThanOrEqual(maxLen);
+    expect(stats.state_tokens_used).toBeLessThanOrEqual(ids.length);
+    expect(stats.state_tokens_used + stats.state_tokens_dropped).toBe(stats.state_tokens);
+    expect(stats.truncated).toBe(stats.state_tokens_dropped > 0);
+  });
+});
 
 describe("systemOne reports truncation in usage", () => {
   const provider = () => ({
@@ -102,8 +107,12 @@ describe("systemOne reports truncation in usage", () => {
       return { lastHidden: b.inputIds.map((row) => row.map(() => 0)) };
     },
     async runHead(_h: unknown, b: { inputIds: number[][] }) {
+      // The agent requires logitRow.length >= that question's marker count, so this row has to
+      // be at least as wide as the widest question any test here asks. The widest is the
+      // four-option `choice` below; a narrower row fails validation rather than the assertion
+      // under test. Extra columns are ignored, so the noul cases still read [0, 2].
       return {
-        logits: b.inputIds.map(() => [0, 2]),
+        logits: b.inputIds.map(() => [0, 2, 0, 0]),
         act: b.inputIds.map(() => [1, 0]),
       };
     },
@@ -156,11 +165,5 @@ describe("systemOne reports truncation in usage", () => {
   it("empty questions keep the bare usage shape (no state ever encoded)", async () => {
     const r = await agent().systemOne("hi", {});
     expect(r.usage).toEqual({ input_tokens: 0, output_tokens: 0 });
-  });
-});
-
-    expect(stats.state_tokens_used).toBeLessThanOrEqual(ids.length);
-    expect(stats.state_tokens_used + stats.state_tokens_dropped).toBe(stats.state_tokens);
-    expect(stats.truncated).toBe(stats.state_tokens_dropped > 0);
   });
 });

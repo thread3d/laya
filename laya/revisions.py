@@ -35,13 +35,33 @@ PINNED_REVISIONS: Dict[str, str] = {
 REVIEWED = "reviewed"
 
 
+def _reviewed_pin(model_id_or_path: str) -> Optional[str]:
+    """The reviewed SHA for `model_id_or_path`, matching repo ids case-insensitively.
+
+    Hugging Face repo ids are case-insensitive -- ``ConvaiInnovations/Laya`` resolves to the
+    same repository as ``convaiinnovations/laya`` -- so a load that spells a released
+    checkpoint differently must still find its pin. Refusing it instead would report a
+    missing reviewed SHA for a repository that has one, which is the opposite of what the
+    control exists for. The table's keys keep the canonical lowercase spelling.
+    """
+    pinned = PINNED_REVISIONS.get(model_id_or_path)
+    if pinned is not None:
+        return pinned
+    wanted = model_id_or_path.lower()
+    for repo, sha in PINNED_REVISIONS.items():
+        if repo.lower() == wanted:
+            return sha
+    return None
+
+
 def resolve_revision(model_id_or_path: str, revision: Optional[str] = None) -> Optional[str]:
     """Pick the revision to download.
 
     An explicit `revision` is returned unchanged. Otherwise ``LAYA_REVISION``, stripped; empty or
     unset means "not asked for". The variable holds either a commit SHA/branch/tag, applied to
     every checkpoint load the way `Router(revision=)` applies one, or the word ``reviewed``, which
-    looks `model_id_or_path` up in `PINNED_REVISIONS`.
+    looks `model_id_or_path` up in `PINNED_REVISIONS` -- case-insensitively, the way the Hub
+    itself reads repo ids, so `laya.load("ConvaiInnovations/Laya")` finds its pin.
 
     ``reviewed`` for a repository the table has no entry for raises rather than loading it
     unpinned: a pin that quietly resolves to nothing is the failure mode this control exists to
@@ -52,7 +72,7 @@ def resolve_revision(model_id_or_path: str, revision: Optional[str] = None) -> O
     if not value:
         return None
     if value == REVIEWED:
-        pinned = PINNED_REVISIONS.get(model_id_or_path)
+        pinned = _reviewed_pin(model_id_or_path)
         if pinned is None:
             raise ValueError(
                 "laya: LAYA_REVISION=reviewed, but %r has no reviewed SHA in "

@@ -106,7 +106,7 @@ python examples/01_first_call_minimal.py         # any Python with torch + trans
 | `30_custom_schema_design.py` | building a question schema from scratch for your own domain, with the design decisions spelled out. |
 | `31_structured_criteria.py` | criteria as dicts and lists — rendered as compact JSON for the model. |
 | `32_typed_decisions_workflow.py` | the fine-tuned checkpoint's four real workflows, and `auto_task_detection`. |
-| `33_high_cardinality_choice.py` | 20, 77 and 120 options: the `head_max_len` option budget, and when to raise it. |
+| `33_high_cardinality_choice.py` | 20 and 77 options: the `head_max_len` option budget, and when to raise it. |
 | `34_calibration_temperature.py` | the shipped temperature buckets, and what they do to the logits. |
 
 **You can now** write a schema for your own problem and know where its limits are.

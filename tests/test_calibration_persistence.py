@@ -25,7 +25,7 @@ from tokenizers.models import WordLevel  # noqa: E402
 from transformers import BertConfig, BertModel, PreTrainedTokenizerFast  # noqa: E402
 
 from laya import load  # noqa: E402
-from laya.common import DecisionModel, QTYPES  # noqa: E402
+from laya.common import DecisionModel, QTYPES, TEMP_MIN, TEMP_MAX  # noqa: E402
 
 
 def export_notebook_config(cfg, fitted_temps, output_dir):
@@ -163,6 +163,21 @@ class CalibrationPersistenceTests(unittest.TestCase):
         self.cfg.pop("temperature")
         self.write_config()
         self.assert_inference_temperatures({(t, 2): 1.0 for t in QTYPES})
+
+    def test_fit_temperature_clamps_to_common_bounds(self):
+        """The fit must clamp to the runtime's bounds, not the old 0.1..10.0.
+
+        `fit_one_temp` used to live in the notebook's `%%writefile` cell; the fine-tuning loop
+        moved into `laya.finetune.train_rlcd`, whose `fit_temperature` owns the clamp now, so the
+        guard follows the logic there instead. A fit outside TEMP_MIN..TEMP_MAX is silently
+        re-clamped at inference, so the exported temperature would not be the one the fit chose.
+        """
+        from laya.finetune import fit_temperature
+
+        high_sel = [([10.0, 0.0], [0.5, 0.5]) for _ in range(20)]
+        t_high = fit_temperature(high_sel)
+        self.assertLessEqual(t_high, TEMP_MAX)
+        self.assertGreaterEqual(t_high, TEMP_MIN)
 
 
 if __name__ == "__main__":

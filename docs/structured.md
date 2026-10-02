@@ -150,9 +150,20 @@ result.values["department"]            # "billing"
 result.answer_confidence["department"] # 0.94  max(p): the quantity min_confidence gates on
 result.confidence["department"]        # 0.71  normalized entropy, which depends on label count
 result.probabilities["department"]     # {"billing": 0.94, "support": 0.06, "sales": 0.0}
-result.usage                           # {"input_tokens": 42, "output_tokens": 0}
+result.usage                           # {"input_tokens": ..., "output_tokens": 0,
+                                       #  "state_tokens": ..., "state_tokens_dropped": ...,
+                                       #  "truncated": ..., "truncated_questions": [...]}
 result.routing                         # the Router decision, when a Router answered
 ```
+
+`usage` is the block `predict()` built, forwarded whole: `input_tokens` sums the state over one
+row per question and `output_tokens` is always 0 because nothing is generated, while the other
+four keys are the truncation report (#174) -- `state_tokens` is what the whole serialized state
+needs, `state_tokens_dropped` the most of it any one question's head gave up, and `truncated` /
+`truncated_questions` say which. A seventh key, `options`, is present only when the head budget
+left some question's options sharing a token span (#538); `docs/http-api.md` documents both this
+block and that field as response keys, and `tests/test_structured_docs.py` holds this page's list
+to the code that builds it.
 
 `confidence` and `answer_confidence` are different quantities, and the names follow the definitions.
 `answer_confidence` is `max(p)`, the probability mass on the answer being reported. It is what

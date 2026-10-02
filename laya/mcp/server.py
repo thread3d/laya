@@ -15,6 +15,9 @@ Environment (same meaning as laya.serve where it exists):
   LAYA_AUTO_TASK  "1" lets a request auto-route to the typed-decisions checkpoint
                   (same as laya.serve). It does not preload it: LAYA_MODELS still
                   decides what is built at startup.
+  LAYA_DEFAULT_MODEL  the checkpoint a state with no language evidence falls back to
+                  (same as laya.serve, including its aliases); an unset value leaves
+                  it to Router, an unresolvable one is a tool error.
 """
 
 from __future__ import annotations
@@ -36,8 +39,8 @@ except ImportError as exc:  # mcp extra not installed
     ) from exc
 
 # laya.serve only imports os/typing at module level, so reusing its helpers
-# keeps one meaning for LAYA_PRELOAD / LAYA_THREADS across the package.
-from laya.serve import _apply_thread_limit, _env_bool
+# keeps one meaning for LAYA_PRELOAD / LAYA_THREADS / LAYA_DEFAULT_MODEL across the package.
+from laya.serve import _apply_thread_limit, _default_model_option, _env_bool
 
 from .device import env_device
 from .tools import (
@@ -99,6 +102,9 @@ _CONTROLS_DOC = (
     "refused on a call that also pins model, since the pin would win and the task would be ignored. "
     "lang: a language code ('de', 'en-US') -- routes non-English text to the multilingual "
     "checkpoint and selects that checkpoint's per-language calibration. "
+    "lang_guess: a soft language code -- a probable-but-uncertain language that participates in "
+    "routing (checked after lang, before built-in detection) rather than forcing the checkpoint the "
+    "way lang does; like task it only routes, so it is refused on a call that pins model. "
     "max_len / head_max_len: positive integers overriding the answering token budget for this call "
     "only -- head_max_len is the option-and-instructions budget, so raise it when a choice question "
     "has many options and the answers look like the labels blur together. "
@@ -123,12 +129,14 @@ def _models_from_env() -> list[str]:
 def _ensure_router() -> Any:
     """Build the Router from the environment, following the laya.serve contract.
 
-    LAYA_DEVICE / LAYA_PRELOAD / LAYA_THREADS / LAYA_AUTO_TASK keep the same meaning as
-    in laya.serve (the helpers are reused, not duplicated). LAYA_MODELS follows the
-    serve comma-list but defaults to english+multilingual here, so typed-decisions stays
-    lazy: LAYA_AUTO_TASK=1 only lets a matching question schema route to it, and it is
-    then loaded on demand. The global is only set once the router is fully built, so a
-    failed preload stays retriable on the next tool call, and construction errors
+    LAYA_DEVICE / LAYA_PRELOAD / LAYA_THREADS / LAYA_AUTO_TASK / LAYA_DEFAULT_MODEL keep the
+    same meaning as in laya.serve (the helpers are reused, not duplicated). The last one
+    differs only in what an unresolvable value costs: serve refuses to start, while a stdio
+    server has no startup to refuse, so the ValueError rides on into the ToolError below.
+    LAYA_MODELS follows the serve comma-list but defaults to english+multilingual here, so
+    typed-decisions stays lazy: LAYA_AUTO_TASK=1 only lets a matching question schema route
+    to it, and it is then loaded on demand. The global is only set once the router is fully
+    built, so a failed preload stays retriable on the next tool call, and construction errors
     surface as ToolError payloads instead of being swallowed.
     """
     global _ROUTER
@@ -144,7 +152,8 @@ def _ensure_router() -> Any:
         try:
             _apply_thread_limit()
             router = Router(device=env_device(),
-                            auto_task_detection=_env_bool("LAYA_AUTO_TASK", False))
+                            auto_task_detection=_env_bool("LAYA_AUTO_TASK", False),
+                            **_default_model_option())
             if _env_bool("LAYA_PRELOAD", True):
                 router.preload(_models_from_env())
         except Exception as exc:
@@ -204,7 +213,7 @@ def laya_status_tool() -> str:
     description=(
         "Decide which Laya checkpoint would answer, without running a forward pass. "
         "Use this to explain routing (english vs multilingual vs typed-decisions) to the user. "
-        "Passing a laya_predict call's model/task/lang here reproduces the routing block it "
+        "Passing a laya_predict call's model/task/lang/lang_guess here reproduces the routing block it "
         "reported, without paying for the forward pass; leaving model unset (or 'auto') routes as "
         "normal. "
         + _GUARDRAILS
@@ -217,6 +226,7 @@ def laya_route_tool(
     model: str | None = None,
     task: str | None = None,
     lang: str | None = None,
+    lang_guess: str | None = None,
 ) -> str:
     """Decide which Laya checkpoint would answer, without running a forward pass."""
     router = _router_or_error()
@@ -227,6 +237,7 @@ def laya_route_tool(
         model=model,
         task=task,
         lang=lang,
+        lang_guess=lang_guess,
         router=router,
     )
 
@@ -250,6 +261,7 @@ def laya_predict_tool(
     model: str = "auto",
     task: str | None = None,
     lang: str | None = None,
+    lang_guess: str | None = None,
     max_len: int | None = None,
     head_max_len: int | None = None,
     min_confidence: float | None = None,
@@ -263,6 +275,7 @@ def laya_predict_tool(
         model=model,
         task=task,
         lang=lang,
+        lang_guess=lang_guess,
         max_len=max_len,
         head_max_len=head_max_len,
         min_confidence=min_confidence,
@@ -285,7 +298,8 @@ def laya_predict_tool(
         + _GUARDRAILS
     ),
 )
-def laya_predict_batch_tool(requests: list, batch_size: int = 0) -> str:
+def laya_predict_batch_tool(requests: list, batch_size: int = 0, hooks_timeout: float = 0,
+                             min_confidence: float = -1, sort_by_length: bool = False) -> str:
     """Answer many typed-question requests in one batched call."""
     router = _router_or_error()
     # batch_size=0 means "unset": MCP clients send defaults eagerly, and
@@ -294,6 +308,9 @@ def laya_predict_batch_tool(requests: list, batch_size: int = 0) -> str:
         laya_predict_batch,
         requests=requests,
         batch_size=batch_size or None,
+        hooks_timeout=hooks_timeout if hooks_timeout > 0 else None,
+        min_confidence=min_confidence if min_confidence >= 0 else None,
+        sort_by_length=sort_by_length,
         router=router,
     )
 
@@ -306,14 +323,24 @@ def laya_predict_batch_tool(requests: list, batch_size: int = 0) -> str:
         + batch_item_key_doc(omit=("max_len", "head_max_len")) + ". Use this to "
         "inspect or aggregate the routing of a workload before paying model-load cost. "
         "Returns one {model, repo, reason} decision per request in input order, plus "
-        "model_counts. "
+        "model_counts. hooks_timeout: positive number or unset -- override the "
+        "Router's own hook deadline for this sweep's on_route dispatch, so a slow "
+        "or hung operator hook cannot stall a routing pass the caller only wants "
+        "the checkpoint labels for. "
         + _GUARDRAILS
     ),
 )
-def laya_route_batch_tool(requests: list) -> str:
+def laya_route_batch_tool(requests: list, hooks_timeout: float = 0) -> str:
     """Route many requests to checkpoints without a forward pass."""
     router = _router_or_error()
-    return _wrap(laya_route_batch, requests=requests, router=router)
+    # hooks_timeout=0 means "unset": MCP clients send defaults eagerly, and
+    # None is what Router.route_batch takes as "use my own timeout".
+    return _wrap(
+        laya_route_batch,
+        requests=requests,
+        hooks_timeout=hooks_timeout or None,
+        router=router,
+    )
 
 
 @server.tool(
@@ -339,6 +366,7 @@ def laya_shortlist_tool(
     k: int = 20,
     task: str | None = None,
     lang: str | None = None,
+    lang_guess: str | None = None,
     max_len: int | None = None,
     head_max_len: int | None = None,
     min_confidence: float | None = None,
@@ -357,6 +385,7 @@ def laya_shortlist_tool(
         k=k,
         task=task,
         lang=lang,
+        lang_guess=lang_guess,
         max_len=max_len,
         head_max_len=head_max_len,
         min_confidence=min_confidence,
@@ -396,6 +425,7 @@ def laya_preset_tool(
     state: dict,
     task: str | None = None,
     lang: str | None = None,
+    lang_guess: str | None = None,
     max_len: int | None = None,
     head_max_len: int | None = None,
     min_confidence: float | None = None,
@@ -408,6 +438,7 @@ def laya_preset_tool(
         state=state,
         task=task,
         lang=lang,
+        lang_guess=lang_guess,
         max_len=max_len,
         head_max_len=head_max_len,
         min_confidence=min_confidence,

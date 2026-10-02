@@ -318,13 +318,42 @@ identical-option control passes in Japanese and Turkish, so on those states it w
 not catch the prior on its own. That is the case for running both checks in every
 language.
 
+### The choice control (`choice_slot0_identical`)
+
+The identical-option control, applied to `choice` (#602, part a). Choice keys must be
+unique, so the options are numbered keys with one shared description (`1: a request`,
+`2: a request`, ...), the counterpart of score's `level N:` prefix. The metric is the
+score control's metric on the choice marker logits: slot 0 minus the mean over the
+options, averaged over the states and both texts. It is gated at 4 options (the gate
+is the same, −0.20), and 3 options are reported beside it. The control runs in every
+`--lang` run, and `--checks choice_slot0_identical` names it anywhere. Without either,
+the default English report is unchanged. With the control, the parity check also
+compares the choice probabilities with `Agent.system_one`.
+
+CPU, fp32, `convaiinnovations/laya@55cf4c4`, laya 0.3.21. Full output:
+`research/results/presentation_checks_choice.json`. `Router` picks `english` for the
+English states and `multilingual` for the rest; every row runs on the checkpoint named.
+
+| checkpoint | language | `choice_slot0_identical`, K = 4 (leave-one-out) | K = 3 | choice parity |
+|---|---|---|---|---|
+| `laya` (english) | `en` | +0.902 (+0.833 .. +0.971) PASS | +0.322 | 4.84e-5 |
+| `laya-multilingual` | `en` | +0.399 (+0.334 .. +0.455) PASS | +0.249 | 4.93e-5 |
+| `laya-multilingual` | `ja` | +0.394 (+0.283 .. +0.493) PASS | +0.196 | 4.89e-5 |
+| `laya-multilingual` | `ko` | +0.096 (−0.025 .. +0.204) PASS | −0.147 | 4.87e-5 |
+| `laya-multilingual` | `hi` | +0.346 (+0.285 .. +0.389) PASS | +0.267 | 4.97e-5 |
+| `laya-multilingual` | `tr` | +0.538 (+0.431 .. +0.588) PASS | +0.360 | 4.95e-5 |
+
+On the same states `laya-multilingual` fails the score first-slot check in every
+language, so its slot-0 deficit is specific to `score`: with choice options it
+favours slot 0 instead. Korean is closest to the gate, and below 0 at 3 options.
+
 ### Tests
 
 `research/eval/test_presentation_checks.py` runs offline, with scripted logits in
 place of a checkpoint:
 
 ```bash
-python research/eval/test_presentation_checks.py     # 154 passed, 0 failed
+python research/eval/test_presentation_checks.py     # 219 passed, 0 failed
 ```
 
 It pins the fixed inputs and both gates. It checks that the identical-option
@@ -334,7 +363,9 @@ bounds, the one-sided gates, and the exit codes. A scripted slot-0 hole fails bo
 checks, and an order-invariant model scores exactly 1/3. For each language it
 pins ten distinct states, three levels in every slot twice, and routing to
 `multilingual`. It also checks the `--lang` parsing. The default run gives the same
-report as `lang="en"`.
+report as `lang="en"`. For the choice control it checks the `N: <same text>` rendering,
+the centring and the gate at 4 options by hand, the 3-option value beside it, and
+that the control stays out of the default run.
 
 ### Limits
 
@@ -348,14 +379,14 @@ report as `lang="en"`.
   (multilingual: −0.75 / −0.52 / −0.25 and −0.58 / −0.47 / −0.37.)
 * Passing is not accuracy. A checkpoint can clear both gates and still rank urgency
   badly; this checks one known failure, not `score` quality.
-* `score` only, 10 states per language. The states are short support messages, so a
+* Score checks and the choice control only, 10 states per language. The states are short support messages, so a
   checkpoint's behaviour on long inputs is not covered here. The Korean, Hindi and
   Turkish states and levels were written by a non-native speaker; corrections from
   native speakers are welcome.
 * Thresholds were set on CPU fp32. On CUDA, `Agent` runs the forward pass under
   reduced-precision autocast and `score_cases` does not. The parity check reports that
   difference instead of hiding it.
-* New checks are one function each, registered in `CHECKS`.
+* New checks are one function each, registered in `CHECKS` (score) or `CHOICE_CHECKS`.
 
 
 ## Metamorphic option-order robustness (experimental)

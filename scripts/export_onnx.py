@@ -8,15 +8,28 @@ import torch
 from laya.agent import Agent
 
 
-def quantize_model(model_path: str, output_path: str) -> str:
+def quantize_model(model_path: str, output_path: str, per_channel: bool = False) -> str:
     """Write an INT8 weight-only dynamically quantized copy of `model_path`.
 
     Dynamic quantization converts the weights of every `MatMul` (the attention and MLP linear
-    layers) to int8 while leaving activations in fp32; the quantization scales are computed per
-    output channel at load time, so no calibration dataset is needed. The graph structure and
-    the input/output names are unchanged, which is what lets `ONNXAgent` load the result by
-    pointing `onnx_path` at it. It is CPU-only: ONNX Runtime has no INT8 MatMul kernel on the
-    CUDAExecutionProvider, so an int8 graph on GPU falls back to CPU.
+    layers) to int8 while leaving activations in fp32; the activation scale is computed per input
+    at run time, so no calibration dataset is needed. The graph structure and the input/output
+    names are unchanged, which is what lets `ONNXAgent` load the result by pointing `onnx_path` at
+    it. It is CPU-only: ONNX Runtime has no INT8 MatMul kernel on the CUDAExecutionProvider, so an
+    int8 graph on GPU falls back to CPU.
+
+    `per_channel` defaults to **False** (one scale per weight tensor). Per-channel scales are a
+    static/QDQ feature; on the dynamic `MatMulInteger` path the per-channel weight scale does not
+    combine correctly with the per-input activation scale, and on the real checkpoints it collapses
+    the decision model (measured: the English ModernBERT-large agreed with the eager Agent on only
+    31/96 held-out choice decisions at `per_channel=True` vs 64/96 at `per_channel=False`; the
+    multilingual mmBERT was 40% vs 83%). See issue #790.
+
+    INT8 is a size/latency option, not a free one. On CPU it is roughly 2x faster than eager and
+    ~1.8x faster than the fp32 ONNX graph, and 1.4-2.8x smaller, but even at `per_channel=False` it
+    trades real accuracy (the drift above is substantial, and worse on the larger checkpoint): do
+    not use it where the calibrated probability or confidence matters. Accuracy-safe int8 for this
+    model would need QAT or SmoothQuant-style outlier handling, not an export-time flag.
     """
     from onnxruntime.quantization import QuantType, quantize_dynamic
 
@@ -33,11 +46,7 @@ def quantize_model(model_path: str, output_path: str) -> str:
         model_output=output_path,
         op_types_to_quantize=["MatMul"],
         weight_type=QuantType.QInt8,
-        # One scale per output channel rather than one per tensor. On the English checkpoint
-        # measured on 20 support-ticket states x choice/noul/score, per-tensor int8 flipped 3
-        # of 20 decisions (max probability drift 0.29); per-channel flipped none (max 0.09)
-        # at the same size and speed.
-        per_channel=True,
+        per_channel=per_channel,
     )
     return output_path
 
@@ -153,10 +162,16 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=str, default="laya.onnx", help="Output path for the ONNX file")
     parser.add_argument("--quantize", action="store_true",
                         help="Also write an INT8 weight-only quantized copy (CPU-only speed and "
-                             "size win) next to --output, named <output>.int8.onnx")
+                             "size win, at a real accuracy cost) next to --output, named "
+                             "<output>.int8.onnx")
+    parser.add_argument("--per-channel", action="store_true",
+                        help="Quantize weights per output channel instead of per tensor. Off by "
+                             "default: on the dynamic path per-channel collapses the model (see "
+                             "issue #790). Only meaningful with --quantize.")
     args = parser.parse_args()
 
     export_to_onnx(args.model, args.output)
     if args.quantize:
-        int8_path = quantize_model(args.output, int8_output_path(args.output))
+        int8_path = quantize_model(args.output, int8_output_path(args.output),
+                                   per_channel=args.per_channel)
         print(f"Successfully wrote INT8 quantized model to: {int8_path}")

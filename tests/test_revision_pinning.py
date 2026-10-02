@@ -23,7 +23,7 @@ from laya.revisions import (  # noqa: E402
     snapshot_revision,
     verify_digests,
 )
-from laya.router import Router  # noqa: E402
+from laya.router import Router, _digests_from_env, _merge_expected_digests  # noqa: E402
 
 
 class _StopLoad(Exception):
@@ -68,6 +68,28 @@ class ResolveRevisionTests(unittest.TestCase):
     def test_unknown_repo_keeps_the_hub_default(self):
         self.assertIsNone(resolve_revision("acme/custom-model"))
         self.assertIsNone(resolve_revision("acme/custom-model", ""))
+
+    def test_reviewed_finds_the_pin_whatever_case_the_repo_is_spelled_in(self):
+        """Hugging Face resolves repo ids case-insensitively, so the pin lookup must too.
+
+        `laya.load("ConvaiInnovations/Laya")` under `LAYA_REVISION=reviewed` is the same
+        repository as the table's lowercase key. An exact-match lookup called it unpinned and
+        refused the load -- reporting a missing reviewed SHA for one that exists, the
+        opposite of what this control is for.
+        """
+        repo = "convaiinnovations/laya"
+        sha = PINNED_REVISIONS[repo]
+        for spelling in (repo, repo.upper(), repo.title(), repo.capitalize()):
+            with patch.dict(os.environ, {"LAYA_REVISION": "reviewed"}):
+                self.assertEqual(resolve_revision(spelling), sha, spelling)
+            # the explicit-argument form reaches the same branch
+            self.assertEqual(resolve_revision(spelling, "reviewed"), sha, spelling)
+
+    def test_reviewed_still_refuses_a_repo_the_table_does_not_have(self):
+        for spelling in ("Acme/Some-Model", "ACME/SOME-MODEL"):
+            with patch.dict(os.environ, {"LAYA_REVISION": "reviewed"}):
+                with self.assertRaises(ValueError, msg=spelling):
+                    resolve_revision(spelling)
 
 
 class SnapshotRevisionTests(unittest.TestCase):
@@ -463,6 +485,30 @@ class RouterDigestEndToEndTests(unittest.TestCase):
     def _env(self, per_model):
         return patch.dict(os.environ, {"LAYA_SHA256_DIGESTS": json.dumps(per_model)})
 
+    # An `agent_kwargs` map is the third channel, and neither of the other two may cancel it:
+    # `expected_sha256` is reachable there on purpose, and a caller that pins a file is asking
+    # for it to be verified on every checkpoint this Router builds.
+    WRONG = {"model.safetensors": "0" * 64}
+
+    def test_agent_kwargs_still_refuses_a_checkpoint_the_environment_map_skips(self):
+        with self._env({"english": {"model.safetensors": self.digests["english"]}}):
+            router = self._router({}, agent_kwargs={"expected_sha256": self.WRONG})
+            with self.assertRaises(ValueError) as cm:
+                router.load("multilingual")
+        self.assertIn("SHA-256 mismatch", str(cm.exception))
+
+    def test_agent_kwargs_still_refuses_a_checkpoint_listed_as_none(self):
+        router = self._router({"multilingual": None}, agent_kwargs={"expected_sha256": self.WRONG})
+        with self.assertRaises(ValueError) as cm:
+            router.load("multilingual")
+        self.assertIn("SHA-256 mismatch", str(cm.exception))
+
+    def test_a_correct_agent_kwargs_digest_loads_under_the_same_configuration(self):
+        with self._env({"english": {"model.safetensors": self.digests["english"]}}):
+            router = self._router({}, agent_kwargs={
+                "expected_sha256": {"model.safetensors": self.digests["multilingual"]}})
+            self._assert_past_the_digest_gate(router, "multilingual")
+
 
 class RouterEnvDigestTests(unittest.TestCase):
     """How `Router` reads the two shapes of `LAYA_SHA256_DIGESTS`.
@@ -542,6 +588,357 @@ class RouterEnvDigestTests(unittest.TestCase):
         for value in ("", "   ", "{not json", "[]", '"digests"', "{}"):
             with self._env(value):
                 self.assertEqual(Router().sha256_digests, {}, value)
+
+
+class RouterDigestPrecedenceTests(unittest.TestCase):
+    """What reaches `Agent` when more than one channel pins the same checkpoint.
+
+    `expected_sha256` is deliberately *not* router-owned -- `test_accepted_names_are_read_from_
+    agent_rather_than_copied_here` asserts that, and the class docstring advertises
+    `Router(agent_kwargs={"expected_sha256": ...})` -- so a Router can hold digests from three
+    places at once: that argument, `sha256_digests`, and a nested `LAYA_SHA256_DIGESTS`. These
+    pin down that none of them silently turns another one off.
+    """
+
+    SHARED = {"tokenizer.json": "a" * 64}
+    PER_MODEL = {"model.safetensors": "b" * 64}
+
+    def setUp(self):
+        """Start every test from an unset `LAYA_SHA256_DIGESTS`.
+
+        Several checks here assert that *no* `expected_sha256` reaches `Agent`, which is only true of
+        an unconfigured process. A developer machine or CI runner that exports a **nested** variable --
+        the shape this feature exists to support -- seeds a `{}` placeholder for every model, so
+        `expected_sha256={}` is passed and those assertions fail with no code change. Tests that want
+        the variable set use `_env`.
+        """
+        patcher = patch.dict(os.environ, {}, clear=False)
+        patcher.start()
+        os.environ.pop("LAYA_SHA256_DIGESTS", None)
+        self.addCleanup(patcher.stop)
+
+    def _capture(self):
+        """Agent stand-in carrying the real signature, so `check_agent_kwargs` still applies."""
+        import inspect
+
+        import laya.agent
+
+        captured: list = []
+
+        class FakeAgent:
+            def __init__(self, repo, **kwargs):
+                captured.append(kwargs)
+
+            __init__.__signature__ = inspect.signature(Agent.__init__)
+
+        return patch.object(laya.agent, "Agent", FakeAgent), captured
+
+    def _env(self, per_model):
+        return patch.dict(os.environ, {"LAYA_SHA256_DIGESTS": json.dumps(per_model)})
+
+    def _load(self, name, **router_kwargs):
+        capture, captured = self._capture()
+        with capture:
+            Router(**router_kwargs).load(name)
+        return captured[0]
+
+    def test_a_nested_environment_pin_does_not_unverify_the_other_checkpoints(self):
+        # The variable names `english` only. `multilingual` is not mentioned by it, which is not
+        # the same as being asked for unverified: the caller's own map still has to apply.
+        with self._env({"english": {"model.safetensors": "e" * 64}}):
+            kwargs = self._load("multilingual", agent_kwargs={"expected_sha256": self.SHARED})
+        self.assertEqual(kwargs["expected_sha256"], self.SHARED)
+
+    def test_a_none_entry_does_not_discard_the_agent_kwargs_map(self):
+        kwargs = self._load("english", sha256_digests={"english": None},
+                            agent_kwargs={"expected_sha256": self.SHARED})
+        self.assertEqual(kwargs["expected_sha256"], self.SHARED)
+
+    def test_the_two_maps_are_merged_file_by_file(self):
+        kwargs = self._load("english", sha256_digests={"english": self.PER_MODEL},
+                            agent_kwargs={"expected_sha256": self.SHARED})
+        self.assertEqual(kwargs["expected_sha256"], dict(self.SHARED, **self.PER_MODEL))
+
+    def test_a_per_checkpoint_pin_wins_over_a_shared_one_for_the_same_file(self):
+        """The two channels are not equally specific, so the narrower one decides.
+
+        `agent_kwargs["expected_sha256"]` reaches every checkpoint, and `model.safetensors` is the
+        one name every checkpoint uses for a *different* file -- so a shared entry for it cannot be
+        a correct claim about all of them at once. An earlier version of this fix refused the
+        overlap as a contradiction, which broke the ordinary shape it appears in: a shared pin plus
+        a per-checkpoint override, which loaded correctly before any of this existed.
+        """
+        capture, captured = self._capture()
+        with capture:
+            router = Router(agent_kwargs={"expected_sha256": {"model.safetensors": "c" * 64}},
+                            sha256_digests={"multilingual": {"model.safetensors": "b" * 64}})
+            router.load("english")
+            router.load("multilingual")
+        self.assertEqual(captured[0]["expected_sha256"], {"model.safetensors": "c" * 64},
+                         "the shared pin applies where nothing overrides it")
+        self.assertEqual(captured[1]["expected_sha256"], {"model.safetensors": "b" * 64},
+                         "the per-checkpoint pin wins for the file both name")
+
+    def test_an_environment_pin_overrides_the_shared_one_per_checkpoint(self):
+        """Same precedence, reached through the variable, and every checkpoint stays loadable.
+
+        This is the shape that matters in a deployment: the variable pins each checkpoint's own
+        weight file and the caller passes one shared map. Refusing it would have stopped the server
+        from serving the checkpoint the two configurations do not actually disagree about.
+        """
+        capture, captured = self._capture()
+        shared = {"model.safetensors": "c" * 64}
+        with self._env({"english": {"model.safetensors": "b" * 64}}), capture:
+            router = Router(agent_kwargs={"expected_sha256": shared})
+            router.load("multilingual")
+            router.load("english")
+        self.assertEqual(captured[0]["expected_sha256"], shared,
+                         "the checkpoint the variable does not name keeps the shared pin")
+        self.assertEqual(captured[1]["expected_sha256"], {"model.safetensors": "b" * 64},
+                         "the checkpoint the variable names uses its own digest")
+
+    def test_files_only_one_channel_names_are_still_merged(self):
+        """Precedence applies per file, not per map: a file only one channel names still counts.
+
+        This is the half of the merge that is worth having -- the caller pins the tokenizer, the
+        deployment pins the weights, and the load verifies both. Ranking whole maps against each
+        other, as the code did before this fix, verified only one of them.
+        """
+        capture, captured = self._capture()
+        with self._env({"english": {"model.safetensors": "b" * 64}}), capture:
+            router = Router(agent_kwargs={"expected_sha256": {"tokenizer.json": "d" * 64}})
+            router.load("english")
+        self.assertEqual(captured[0]["expected_sha256"],
+                         {"tokenizer.json": "d" * 64, "model.safetensors": "b" * 64},
+                         "both channels' files must reach verify_digests")
+
+    def test_digests_added_into_an_environment_placeholder_in_place_are_verified(self):
+        """Filling in the placeholder the variable left is a pin, and has to be honoured.
+
+        `_digests_from_env` leaves an empty entry for every checkpoint a nested
+        `LAYA_SHA256_DIGESTS` does not name, tagged as "not something anyone asked for" so it cannot
+        cancel an `agent_kwargs` map. But `sha256_digests` is public: an operator may add digests to
+        that entry in place. Treating it as unpinned for ever dropped them silently -- and only when
+        an `agent_kwargs` map happened to be present, so the behaviour was config-dependent.
+        """
+        capture, captured = self._capture()
+        with self._env({"english": {"model.safetensors": "b" * 64}}), capture:
+            router = Router(agent_kwargs={"expected_sha256": {"tokenizer.json": "d" * 64}})
+            router.sha256_digests["multilingual"]["model.safetensors"] = "e" * 64
+            router.load("multilingual")
+        self.assertEqual(captured[0]["expected_sha256"],
+                         {"tokenizer.json": "d" * 64, "model.safetensors": "e" * 64},
+                         "a digest added into the placeholder must reach verify_digests")
+
+    def test_an_untouched_environment_placeholder_still_reaches_agent_as_an_empty_map(self):
+        """A placeholder must arrive as `{}`, NOT be omitted -- omitting it is a refusal.
+
+        This looks backwards until you run it: with a *nested* `LAYA_SHA256_DIGESTS` and no
+        `expected_sha256` kwarg at all, `verify_digests` reads that nested map as an artifact map and
+        raises `cannot verify 'english': no such file` -- on a checkpoint the variable never named.
+        The empty map is what masks that fallback. Passing nothing is only correct when no channel
+        said anything.
+        """
+        capture, captured = self._capture()
+        with self._env({"english": {"model.safetensors": "b" * 64}}), capture:
+            Router().load("multilingual")
+        self.assertEqual(captured[0].get("expected_sha256"), {},
+                         "the placeholder must mask the nested-variable fallback")
+
+        # And with nothing configured anywhere, no kwarg is passed at all (#332).
+        capture2, captured2 = self._capture()
+        with capture2:
+            Router().load("multilingual")
+        self.assertNotIn("expected_sha256", captured2[0])
+
+    def test_an_explicit_none_entry_masks_a_flat_environment_map(self):
+        """`sha256_digests={"english": None}` means "load this one unverified", and has to hold.
+
+        A *flat* `LAYA_SHA256_DIGESTS` is applied by `verify_digests` itself, for every checkpoint.
+        Saying "not this one" therefore cannot be expressed by passing nothing -- that is exactly
+        what lets the flat map through. It has to arrive as an empty map.
+        """
+        flat = {"model.safetensors": "f" * 64}
+        for entry in (None, {}):
+            capture, captured = self._capture()
+            with self._env(flat), capture:
+                Router(sha256_digests={"english": entry}).load("english")
+            self.assertEqual(captured[0].get("expected_sha256"), {},
+                             "an explicit %r entry must mask the flat variable" % (entry,))
+        # And with no entry at all the flat map is left to apply.
+        capture, captured = self._capture()
+        with self._env(flat), capture:
+            Router().load("english")
+        self.assertNotIn("expected_sha256", captured[0])
+
+    def test_a_pin_assigned_after_construction_wins_for_its_own_file(self):
+        """`sha256_digests` is public and mutable, so a pin assigned later has to take effect."""
+        capture, captured = self._capture()
+        with capture:
+            router = Router(agent_kwargs={"expected_sha256": {"model.safetensors": "c" * 64}})
+            router.sha256_digests["english"] = {"model.safetensors": "b" * 64}
+            router.load("english")
+        self.assertEqual(captured[0]["expected_sha256"], {"model.safetensors": "b" * 64})
+
+    def test_a_pin_added_after_construction_is_verified(self):
+        # `sha256_digests` is public and mutable, so what it holds at load time is what has to be
+        # verified. Deciding "somebody asked for this checkpoint" from a key set frozen in
+        # `__init__` dropped a later per-checkpoint pin -- and only when `agent_kwargs` happened
+        # to carry a map, which is the one configuration where the drop mattered.
+        capture, captured = self._capture()
+        with capture:
+            router = Router(agent_kwargs={"expected_sha256": self.SHARED})
+            router.sha256_digests["english"] = self.PER_MODEL
+            router.load("english")
+        self.assertEqual(captured[0]["expected_sha256"], dict(self.SHARED, **self.PER_MODEL))
+
+    def test_an_empty_map_assigned_after_construction_replaces_the_environment_entry(self):
+        """Assigning `{}` over an environment entry drops that entry's files.
+
+        What this pins is the *assignment*, not a placeholder/explicit distinction: `_digest_entry`
+        collapses a caller's `{}`, a caller's `None` and the placeholder to the same `{}` on purpose,
+        so there is nothing here that could tell them apart. The behaviour worth pinning is that the
+        entry the variable had put there is gone, which is why the shared map alone is the answer.
+        """
+        capture, captured = self._capture()
+        with self._env({"english": dict(self.PER_MODEL)}), capture:
+            router = Router(agent_kwargs={"expected_sha256": dict(self.SHARED)})
+            router.sha256_digests["english"] = {}
+            router.load("english")
+        self.assertEqual(captured[0]["expected_sha256"], self.SHARED,
+                         "the assigned empty map must replace the variable's entry")
+
+    def test_the_environment_entries_still_read_as_plain_maps(self):
+        # How the placeholder is marked is this module's business: `sha256_digests` is public, and
+        # `RouterEnvDigestTests` reads it as plain dicts.
+        with self._env({"english": {"model.safetensors": "e" * 64}}):
+            digests = Router().sha256_digests
+        self.assertEqual(digests, {"english": {"model.safetensors": "e" * 64},
+                                   "multilingual": {}, "typed-decisions": {}})
+
+    def test_the_same_digest_from_both_channels_is_not_a_conflict(self):
+        both = {"model.safetensors": "b" * 64}
+        kwargs = self._load("english", sha256_digests={"english": both},
+                            agent_kwargs={"expected_sha256": {"model.safetensors": "B" * 64}})
+        self.assertEqual({k: v.lower() for k, v in kwargs["expected_sha256"].items()}, both)
+
+    def test_nothing_configured_still_passes_no_map_at_all(self):
+        # #332's opt-in guarantee: an unconfigured Router must leave `verify_digests` its own
+        # `LAYA_SHA256_DIGESTS` fallback, so an existing HF_HUB_OFFLINE=1 cache loads as before.
+        self.assertNotIn("expected_sha256", self._load("english"))
+
+
+class RouterRevisionFallbackTests(unittest.TestCase):
+    """A `revisions` entry that names no commit must not cost the caller the pin it did ask for.
+
+    `revisions` is typed `Optional[Dict[str, Optional[str]]]`, so `None` values are legal, and
+    `{"english": os.environ.get("EN_SHA")}` produces one whenever that variable is unset.
+    """
+
+    def _capture(self):
+        import inspect
+
+        import laya.agent
+
+        captured: list = []
+
+        class FakeAgent:
+            def __init__(self, repo, **kwargs):
+                captured.append(kwargs)
+
+            __init__.__signature__ = inspect.signature(Agent.__init__)
+
+        return patch.object(laya.agent, "Agent", FakeAgent), captured
+
+    def _load(self, name="english", env="", **router_kwargs):
+        capture, captured = self._capture()
+        with patch.dict(os.environ, {"LAYA_REVISION": env}), capture:
+            Router(**router_kwargs).load(name)
+        return captured[0]
+
+    def _effective(self, kwargs, env=""):
+        """What `Agent` would download: `resolve_revision` applied to the kwarg it was handed."""
+        with patch.dict(os.environ, {"LAYA_REVISION": env}):
+            return resolve_revision("convaiinnovations/laya", kwargs.get("revision"))
+
+    def test_a_none_entry_inherits_the_router_wide_revision(self):
+        kwargs = self._load(revision="aaa", revisions={"english": None})
+        self.assertEqual(kwargs["revision"], "aaa")
+
+    def test_a_none_entry_does_not_hand_the_checkpoint_to_the_environment(self):
+        kwargs = self._load(revision="aaa", revisions={"english": None}, env="bbb")
+        self.assertEqual(self._effective(kwargs, env="bbb"), "aaa")
+
+    def test_a_blank_entry_is_read_the_same_way(self):
+        for blank in ("", "   "):
+            kwargs = self._load(revision="aaa", revisions={"english": blank}, env="bbb")
+            self.assertEqual(self._effective(kwargs, env="bbb"), "aaa", blank)
+
+    def test_a_blank_router_wide_revision_is_not_a_pin(self):
+        self.assertNotIn("revision", self._load(revision="   "))
+
+    def test_an_explicit_per_model_revision_still_wins(self):
+        kwargs = self._load("multilingual", revision="aaa",
+                            revisions={"multilingual": "ccc", "english": None}, env="bbb")
+        self.assertEqual(kwargs["revision"], "ccc")
+
+    def test_an_unconfigured_router_still_leaves_the_revision_to_the_environment(self):
+        # The other half of #332: nothing asked for means the deployment's `LAYA_REVISION` (or
+        # huggingface_hub's default) applies, exactly as it does for a hand-built `Agent`.
+        kwargs = self._load(env="bbb")
+        self.assertNotIn("revision", kwargs)
+        self.assertEqual(self._effective(kwargs, env="bbb"), "bbb")
+
+
+class ReviewGapTests(unittest.TestCase):
+    """Guards an adversarial review found unpinned: each mutant below survived every lane."""
+
+    def test_a_non_dict_per_checkpoint_entry_is_handed_on_untouched(self):
+        """`_merge_expected_digests` hands a non-dict on so `verify_digests` owns the message.
+
+        Dropping the guard let a list of pairs be `dict.update`-ed into a map and silently accepted
+        as digests. Both shapes still fail closed, but only one of them fails in the right words.
+        """
+        self.assertEqual(_merge_expected_digests({"a": "1" * 64}, "nope"), "nope")
+        self.assertEqual(_merge_expected_digests({"a": "1" * 64}, [("a", "1" * 64)]),
+                         [("a", "1" * 64)])
+
+    def test_a_non_dict_shared_map_is_handed_on_untouched(self):
+        """The same for the shared half, which had the same missing coverage."""
+        self.assertEqual(_merge_expected_digests("nope", None), "nope")
+        self.assertEqual(_merge_expected_digests(["a"], None), ["a"])
+
+    def test_a_blank_revision_suppresses_the_environment_through_agent(self):
+        """`(revision or env).strip()`: a truthy-but-blank argument wins the `or`, then strips away.
+
+        The Router drops a blank before it reaches here, and that is tested. `Agent`/`laya.load` do
+        not, so a config line that ends up whitespace silently loses the deployment's pin and gets
+        huggingface_hub's default. Undocumented and untested before: the mutant that makes a blank
+        behave like an absent value survived every lane. Pinned as the behaviour that exists, so a
+        change to it is a decision rather than an accident.
+        """
+        with patch.dict(os.environ, {"LAYA_REVISION": "deadbeef"}, clear=False):
+            self.assertEqual(resolve_revision("some/repo", None), "deadbeef")
+            self.assertEqual(resolve_revision("some/repo", ""), "deadbeef")
+            self.assertIsNone(resolve_revision("some/repo", "   "))
+            self.assertIsNone(resolve_revision("some/repo", "\t"))
+            self.assertEqual(resolve_revision("some/repo", "  aaa  "), "aaa")
+
+    def test_a_flat_environment_map_is_masked_by_any_other_pin(self):
+        """The documented exception, asserted so the class docstring cannot drift from it again.
+
+        `verify_digests` reads a flat `LAYA_SHA256_DIGESTS` only `if expected is None`, so anything
+        reaching `Agent` as `expected_sha256` means the flat variable is not consulted. An earlier
+        revision of the class docstring said the two were "merged file by file", which is true of
+        the per-checkpoint shape and false of this one.
+        """
+        with patch.dict(os.environ,
+                             {"LAYA_SHA256_DIGESTS": json.dumps({"model.safetensors": "a" * 64})},
+                             clear=False):
+            self.assertEqual(_digests_from_env(["english"]), {})   # flat: not a layer here
+            merged = _merge_expected_digests({"tokenizer.json": "b" * 64}, None)
+            self.assertEqual(merged, {"tokenizer.json": "b" * 64})
+            self.assertNotIn("model.safetensors", merged)
 
 
 if __name__ == "__main__":

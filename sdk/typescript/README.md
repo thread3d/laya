@@ -144,10 +144,29 @@ await laya.predict(state, questions, { model: 'typed-decisions' });
 await laya.predict(state, questions, { model: 'multilingual' });
 ```
 
-Laya accepts its local checkpoint aliases. The HTTP endpoint supports `model`;
-it does not expose standalone `route()`, `task`, or `lang` overrides. Laya
-still detects language automatically; set `LAYA_AUTO_TASK=1` on the server to
-enable automatic workflow routing.
+Laya accepts its local checkpoint aliases. The HTTP endpoint forwards the
+per-request controls documented in the [HTTP API](../../docs/http-api.md)
+reference, and this client exposes them as options on `predict()`:
+
+| option | wire field | meaning |
+|---|---|---|
+| `model` | `model` | checkpoint name or alias for this request |
+| `task` | `task` | force a workflow; an unknown name is a 422 naming it |
+| `lang` | `lang` | a language code that skips detection when it names a language |
+| `langGuess` | `lang_guess` | a code from your own LID, consulted before detection |
+| `maxLen` | `max_len` | total token window for this request (server-capped) |
+| `headMaxLen` | `head_max_len` | token window the option prompt shares, same cap |
+| `minConfidence` | `min_confidence` | abstention threshold in `[0, 1]`; low-confidence answers are marked, not dropped |
+
+```js
+await laya.predict(state, questions, { task: 'typed', minConfidence: 0.8 });
+await laya.predict(state, questions, { lang: 'de', maxLen: 4096, headMaxLen: 512 });
+```
+
+Absent options stay absent, so the deployment's own `Router(...)` settings remain
+in charge. The endpoint does not expose a standalone `route()` call. Laya still
+detects language automatically; set `LAYA_AUTO_TASK=1` on the server to enable
+automatic workflow routing.
 
 Laya returns `model`, `answers`, and `usage`, with optional `routing`, answer
 `action`, and Noul `confidence` metadata. Those fields are validated when
@@ -204,7 +223,7 @@ authenticated gateway. A shared server key embedded in browser code is public.
 
 Laya's server binds to `0.0.0.0` by default; the quickstart sets `LAYA_HOST=127.0.0.1`
 for local use. Set `LAYA_API_KEY` in its environment to require Bearer
-authentication for predictions. `/health` remains public. `HF_TOKEN`, if needed
+authentication for predictions. `/health` remains public for liveness; `loaded` and `device` need the bearer. `HF_TOKEN`, if needed
 for checkpoint downloads, is a separate server-only credential. Configure CORS
 and TLS at your application proxy or gateway.
 
@@ -212,7 +231,7 @@ and TLS at your application proxy or gateway.
 
 | Endpoint | Request | Response |
 | --- | --- | --- |
-| `GET /health` | None | `{status, loaded, device}` |
+| `GET /health` | None for liveness | `{status}`, plus `loaded` and `device` with the bearer |
 | `POST /v1/systemone` | `{state, questions, model?}` | `{model, answers, usage}` plus optional `routing` |
 
 Laya errors use FastAPI's `{detail: ...}` body: 400 for malformed requests, 401

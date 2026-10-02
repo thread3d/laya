@@ -15,9 +15,11 @@ from laya.router import (  # noqa: E402
     STANDALONE_MODELS,
     _english_from_code,
     _repo_str,
+    _split,
     Router,
     match_typed_decisions_workflow,
     normalise_name,
+    resolve_model_spec,
 )
 
 PASS, FAIL = [], []
@@ -313,6 +315,25 @@ try:
     FAIL.append("alias/unknown: should have raised")
 except ValueError:
     PASS.append("alias/unknown raises")
+
+
+# --------------------------------------------------------------------- registry spec resolution (#780)
+# `load()` resolves a name or alias through this table instead of forwarding it to the Hub as a
+# repo id, so both entry points read one registry. Anything the registry does not know -- a repo
+# id, a local path, an ONNX export -- resolves to None and is left alone.
+for name, want in [("english", ("convaiinnovations/laya", None)),
+                   ("laya", ("convaiinnovations/laya", None)),
+                   ("typed-decisions", ("convaiinnovations/laya", "typed-decisions")),
+                   ("typed", ("convaiinnovations/laya", "typed-decisions")),
+                   ("ml", ("convaiinnovations/laya", "multilingual")),
+                   ("MULTI", ("convaiinnovations/laya", "multilingual")),
+                   (" typed-decisions ", ("convaiinnovations/laya", "typed-decisions"))]:
+    check("spec/" + name, resolve_model_spec(name), want)
+check("spec/agrees with normalise_name",
+      resolve_model_spec("decisions"), tuple(_split(DEFAULT_MODELS[normalise_name("decisions")])))
+for unknown in ("convaiinnovations/laya", "test/custom-model", "/tmp/checkpoint", "./local",
+                "nope", "", "convaiinnovations/laya-typed-decisions"):
+    check("spec/not a name: " + (unknown or "<empty>"), resolve_model_spec(unknown), None)
 
 
 # --------------------------------------------------------------------- routing decisions
@@ -714,16 +735,74 @@ check("latin_lang/accented german stays non-english",
       is_english("Grüße aus Köln, wir melden uns wegen der Rechnung"), False)
 check("route/accented german stays multilingual",
       _r_lat.route("Grüße aus Köln, wir melden uns wegen der Rechnung").model, "multilingual")
-# Danish and Swedish hold no list here, and their accented function-word sentences pick up just
-# one or two English-shaped words (`i`, `at`, `for`, `have`), which is not the two-distinct-word
-# English the rescue requires -- a rescue that counted them sent plain Danish to the English
-# checkpoint on the MASSIVE splits.
+# Danish still has no list here, and its accented sentences pick up just one or two English-shaped
+# words (`i`, `at`, `for`, `have`), which is not the two-distinct-word English the rescue requires.
 for text in ["sluk lyset i soveværelset",                          # da
              "kan jeg få en refundering for det dobbelte beløb",   # da
-             "stäng av ljuset i sovrummet",                         # sv
-             "jag vill ha en återbetalning för den dubbla avgiften"]:  # sv
+             "stäng av ljuset i sovrummet"]:                        # sv
     check("latin_lang/nordic accented stays non-english " + text, is_english(text), False)
     check("route/nordic accented stays multilingual " + text, _r_lat.route(text).model, "multilingual")
+
+# Swedish-specific words now identify both normal text and ASCII-normalised support prose. The
+# second sample is the real false-negative shape: `få` alone was too weak to stop its two English-
+# shaped words (`i`, `kan`) from pulling the request onto the English checkpoint.
+for text in ["Om ni inte kan få tillbaka de raderade filerna i dag avslutar jag mitt abonnemang.",
+             "Om ni inte kan fa tillbaka de raderade filerna i dag avslutar jag mitt abonnemang.",
+             "jag vill att ni hjalper mig med detta"]:
+    check("latin_lang/swedish is named " + text, guess_latin_language(text), "sv")
+    check("route/swedish uses multilingual " + text, _r_lat.route(text).model, "multilingual")
+    check("route/swedish detection reports sv " + text, _r_lat.route(text)["detection"]["language"], "sv")
+# Common Swedish support phrasing should identify the language across billing, account, technical
+# and delivery messages, both with and without Swedish diacritics.
+for text in ["Kan ni hjälpa mig?", "Min faktura är fel", "Jag behöver hjälp med betalningen",
+             "Kan ni skicka kvittot igen?", "Jag vill byta lösenord",
+             "Appen kraschar när jag öppnar inställningarna",
+             "Var hittar jag inställningen för tvåfaktorsinloggning?",
+             "Vi har debiterats två gånger för mars",
+             "Var är mitt paket? Spårningen har inte uppdaterats"]:
+    check("latin_lang/swedish support is named " + text, guess_latin_language(text), "sv")
+    check("route/swedish support uses multilingual " + text,
+          _r_lat.route(text).model, "multilingual")
+for text in ["min faktura ar fel", "jag behover hjalp med betalningen",
+             "kan ni skicka kvittot igen", "jag vill byta losenord",
+             "appen kraschar nar jag oppnar installningarna",
+             "var hittar jag installningen for tva faktorsinloggning",
+             "vi har blivit debiterade tva ganger for mars",
+             "var ar mitt paket sparningen har inte uppdaterats"]:
+    check("latin_lang/ascii swedish support is named " + text, guess_latin_language(text), "sv")
+    check("route/ascii swedish support uses multilingual " + text,
+          _r_lat.route(text).model, "multilingual")
+# Short login failures often contain English technical vocabulary and can arrive without Swedish
+# diacritics. Swedish `kan` + `inte` must outweigh the incidental English token `in`.
+for text in ["Kan inte logga in", "kan inte logga in", "Jag kan inte logga in", "Vi kan inte logga in"]:
+    check("latin_lang/short swedish login is named " + text, guess_latin_language(text), "sv")
+    check("route/short swedish login uses multilingual " + text,
+          _r_lat.route(text).model, "multilingual")
+    check("route/short swedish login detection reports sv " + text,
+          _r_lat.route(text)["detection"]["language"], "sv")
+# Two- and three-word Swedish support fragments do not reach the general four-word evidence
+# threshold. Only distinctly Swedish terms should name them; generic words and Nordic controls
+# remain undecided rather than being guessed as Swedish.
+for text in ["Ingen åtkomst", "Ingen atkomst", "Fakturan är fel", "Betalningen nekades",
+             "Behöver hjälp", "Behover hjalp", "Glömt lösenord", "Glomt losenord",
+             "Felmeddelande igen", "Kvitto saknas", "Inloggningen fungerar"]:
+    check("latin_lang/short Swedish support is named " + text, guess_latin_language(text), "sv")
+    check("route/short Swedish support uses multilingual " + text,
+          _r_lat.route(text).model, "multilingual")
+    check("route/short Swedish support detection reports sv " + text,
+          _r_lat.route(text)["detection"]["language"], "sv")
+for text in ["Ingen adgang", "Fakturaen feil", "Glemt passord", "Pakken forsinket",
+             "No account access", "Password forgotten"]:
+    check("latin_lang/short non-Swedish stays undecided " + text,
+          guess_latin_language(text), None)
+check("latin_lang/english login stays english",
+      guess_latin_language("I cannot login to my account"), "en")
+check("route/english login stays english",
+      _r_lat.route("I cannot login to my account").model, "english")
+check("latin_lang/danish login is not called swedish",
+      guess_latin_language("Jeg kan ikke logge inn"), None)
+check("latin_lang/danish account login is not called swedish",
+      guess_latin_language("Jeg kan ikke logge ind på min konto"), None)
 # Two non-English-letter words is a running non-English vocabulary, not one loanword: the rescue
 # does not fire even with English function words present.
 check("latin_lang/two diacritic words are not one loanword",
@@ -744,6 +823,8 @@ check("clamp/none falls back to neutral", clamp_temperature(None), 1.0)
 check("clamp/garbage falls back to neutral", clamp_temperature("x"), 1.0)
 check("clamp/nan falls back to neutral", clamp_temperature(float("nan")), 1.0)
 check("clamp/inf falls back to neutral", clamp_temperature(float("inf")), 1.0)
+check("clamp/bools are not temperatures", clamp_temperature(True), 1.0)
+check("clamp/False is not a sharpening zero", clamp_temperature(False), 1.0)
 check("clamp/bounds are sane", TEMP_MIN <= 1.0 <= TEMP_MAX, True)
 # 13 options is the bucket the reported skill-router landed in
 check("clamp/13 options is the 11+ bucket", temp_bucket(QTYPES["choice"], 13), "choice:11+")

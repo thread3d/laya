@@ -90,7 +90,9 @@ def main():
     handler = Collect()
     logger = logging.getLogger("laya.example-server")
     logger.addHandler(handler)
-    logger.setLevel(logging.ERROR)
+    # WARNING, not ERROR: the parse-path fallback answers the caller and logs at warning level --
+    # a client's bad request is not a server error, but its cause still belongs in the log.
+    logger.setLevel(logging.WARNING)
 
     one = {"a": {"type": "noul", "instructions": "x"}}
 
@@ -128,6 +130,24 @@ def main():
                                       "questions": {"a": {"type": "bogus", "instructions": "x"}}})
     ok("a validation error is still 422 with its reason",
        r.status_code == 422 and "bogus" in r.text, "%s %s" % (r.status_code, r.text[:200]))
+
+    # --- a limit the /gui page reports is built from the request -------------
+    # The page used to read its line back off the raised HTTPException. It names the limit and
+    # the number that broke it either way -- what changed is where the words come from.
+    one_q = {"a": {"type": "noul", "instructions": "x"}}
+    r = client.post("/gui", json={"state": "x" * (demo.MAX_STATE_CHARS + 1), "questions": one_q})
+    ok("an oversized /gui names the limit",
+       r.status_code == 200 and "state too large" in r.text, r.text[:300])
+    ok("the limit page carries no exception text",
+       not any(s in r.text for s in LEAKS), r.text[:300])
+
+    # --- an unclassified failure on the parse path keeps its cause in the log -
+    before = len(handler.records)
+    lines = demo._error_lines(ValueError(SECRET))
+    ok("an unreadable request answers a fixed line",
+       lines == ["The request could not be read."], repr(lines))
+    logged = [rec.exc_info[1] for rec in handler.records[before:] if rec.exc_info]
+    ok("and its cause still reaches the log", [str(c) for c in logged] == [SECRET], str(logged)[:200])
 
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     for f in FAIL:

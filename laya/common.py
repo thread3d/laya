@@ -3,6 +3,7 @@ import json
 import math
 import os
 import threading
+import warnings
 from contextlib import nullcontext
 from contextvars import ContextVar
 from functools import wraps
@@ -165,6 +166,41 @@ def build_sequence(
     the rendered options - so it moves per checkpoint and per question. A caller guessing with a
     fixed character threshold is wrong in both directions: it reports truncation that did not
     happen, and stays silent while evidence is being dropped (issue #174).
+
+    The question half is `build_head`; `state_room` reports how much of `max_len` is left for the
+    state after it, which is what a caller must size a window against.
+    """
+    ids, markers, stats = build_head(tok, q, head_max_len, option_order=option_order)
+    room = max(0, max_len - len(ids) - 1)
+    if state_ids is None:
+        state_ids = encode_text(tok, serialize_state(state).replace(tok.mask_token, " "),
+                                add_special_tokens=False)["input_ids"]
+    # not state_ids[-room:]: with no room left, state_ids[-0:] is the whole state rather than none of it
+    st = state_ids[max(0, len(state_ids) - room):] if truncate_left else state_ids[:room]
+    ids = ids + st + [tok.sep_token_id]
+    ids, markers = ids[:max_len], [m for m in markers if m < max_len]
+    extra = ()
+    if return_truncation_stats:
+        # `room` leaves space for the closing [SEP], so every token in `st` survives the [:max_len] clamp
+        extra = ({
+            "state_tokens": len(state_ids),
+            "state_tokens_used": len(st),
+            "state_tokens_dropped": len(state_ids) - len(st),
+            "truncated": len(st) < len(state_ids),
+        },)
+    if not return_stats:
+        return (ids, markers) + extra
+    return (ids, markers, stats) + extra
+
+
+def build_head(tok, q: Dict, head_max_len: int = 192, option_order: Optional[List[int]] = None):
+    """The question half of a sequence: `[CLS] <type> instructions [SEP] [MASK] opt0 [MASK] opt1 ... [SEP]`.
+
+    `build_sequence` appends the state to this and `state_room` measures what is left over for it,
+    so neither can disagree with the other about what the head costs.
+
+    Returns `(ids, markers, stats)`: the head token ids, the `[MASK]` position of each option in
+    `option_order`, and the stats dict `build_sequence` returns for `return_stats`.
     """
     mask_tok = tok.mask_token
     opts = render_options(q)
@@ -198,37 +234,155 @@ def build_sequence(
         markers.append(len(ids))
         ids.extend(o)
     ids.append(tok.sep_token_id)
-    room = max(0, max_len - len(ids) - 1)
-    if state_ids is None:
-        state_ids = encode_text(tok, serialize_state(state).replace(mask_tok, " "),
-                                add_special_tokens=False)["input_ids"]
-    # not state_ids[-room:]: with no room left, state_ids[-0:] is the whole state rather than none of it
-    st = state_ids[max(0, len(state_ids) - room):] if truncate_left else state_ids[:room]
-    ids = ids + st + [tok.sep_token_id]
-    ids, markers = ids[:max_len], [m for m in markers if m < max_len]
-    extra = ()
-    if return_truncation_stats:
-        # `room` leaves space for the closing [SEP], so every token in `st` survives the [:max_len] clamp
-        extra = ({
-            "state_tokens": len(state_ids),
-            "state_tokens_used": len(st),
-            "state_tokens_dropped": len(state_ids) - len(st),
-            "truncated": len(st) < len(state_ids),
-        },)
-    if not return_stats:
-        return (ids, markers) + extra
     # Two options that share a prefix can come out of the cut as the same token span: the marker
     # count still matches the option count, so the guard in `Agent._encode_state` passes and
     # nothing downstream can tell that the question lost the ability to name them apart. Counted
     # on the capped option ids, before assembly: re-slicing the finished sequence cannot close
     # the last option's span -- it runs on into the serialized state, which differs per request,
     # so the last option always looks distinguishable however it collided (#538).
-    return (ids, markers, {
+    return ids, markers, {
         "options": len(opt_ids),
         "options_distinct": len({tuple(o) for o in opt_ids}),
         "tokens_per_option": per_option,
-    }) + extra
+    }
 
+
+def state_room(tok, q: Dict, max_len: int = 512, head_max_len: int = 192) -> int:
+    """How many state tokens `q` leaves inside `max_len`, which is what `build_sequence` keeps.
+
+    The head is the question's own -- its instructions plus one `[MASK]`-prefixed span per option --
+    so a question with many options leaves less room for the state than one with two, and two
+    questions in the same request do not have to leave the same amount. Anything past the return
+    value is cut off (the start is kept, or the end for a conversation turn list).
+    """
+    head, _, _ = build_head(tok, q, head_max_len)
+    return max(0, max_len - len(head) - 1)          # -1 for the [SEP] that closes the state
+
+
+#: How far the DEFAULT window may be cut before `window_budget` says so. A small clamp is ordinary
+#: and warning about it would be noise; a large one multiplies the number of forward passes by the
+#: same factor, which a caller needs to be told about because nothing in their code implies it. 2x
+#: is the point where the scan costs at least twice what the caller would estimate from `max_len`.
+_WINDOW_CLAMP_WARN_RATIO = 2
+
+# How much capping the window may multiply the window count before `window_batch_cap` starts
+# chunking. Under this, chunking would cost the single-shared-pass property for no real protection.
+_WINDOW_BATCH_BLOWUP = 2
+
+def window_budget(tok, questions, max_len: int = 512, head_max_len: int = 192,
+                  window: Optional[int] = None, stride: Optional[int] = None):
+    """Window size and stride for scanning a state that is longer than one sequence.
+
+    `predict_long` decodes each token window back to text and scores it as an ordinary state, so a
+    window wider than the room the questions leave is re-truncated by `build_sequence` on the way
+    in: the tail of every window reaches no model, while the reported span says it did. The window
+    is therefore capped at `state_room`, and at the *smallest* room of `questions`, because the
+    windows are one list of states scored for every question in shared forward passes -- a window
+    sized for the roomiest question would be cut short for the tightest one, and the offsets
+    reported on its answers would mean something different per question. With no questions there is
+    nothing to fit, so the caller's window (or the checkpoint default) stands.
+
+    `questions` are internal question dicts, as `Agent._to_internal` returns them.
+
+    An explicit `window` wider than the room is clamped to it with a `RuntimeWarning`, since a
+    scan at the requested size cannot read what it claims to. A `stride` past the effective window
+    is refused: the tokens between two windows would be read by neither, which is the failure
+    `predict_long` exists to prevent. The default stride keeps its 50% overlap of the *effective*
+    window, so a span near a boundary still lands whole inside some window; an explicit stride
+    equal to the window still reads every token, with no overlap to catch a span that straddles a
+    boundary.
+
+    Returns `(window, stride, room)`.
+    """
+    rooms = [state_room(tok, q, max_len, head_max_len) for q in questions]
+    requested = window if (window and window > 0) else max(64, max_len - head_max_len - 8)
+    size = requested
+    room = min(rooms) if rooms else size
+    if room <= 0:
+        raise ValueError(
+            "predict_long: the questions' options fill the whole sequence (max_len=%d,"
+            " head_max_len=%d), leaving no room for the state; no window can carry any of it."
+            " A label set this large is what laya.shortlist.predict_shortlist is for"
+            % (max_len, head_max_len))
+    if size > room:
+        if window and window > 0:
+            warnings.warn(
+                "laya: predict_long: window=%d is wider than the %d state tokens these questions"
+                " leave inside max_len=%d, so every window would be truncated to %d on the way to"
+                " the model; scanning with window=%d instead" % (size, room, max_len, room, room),
+                RuntimeWarning, stacklevel=3)
+        elif size >= room * _WINDOW_CLAMP_WARN_RATIO:
+            # The DEFAULT window was cut, and cut hard. Capping it is what stops the tail of every
+            # window reaching no model, but it is not free and it must not be silent: the scan now
+            # needs about `size / room` times as many windows, each one a full forward pass, and
+            # nothing in the caller's code says why. Measured on the English checkpoint with 100
+            # four-word options: room 102 of max_len 512, so the question head alone is 409 tokens,
+            # the window falls 312 -> 102 and the scan goes 11 windows -> 36, a 3.1x wall-clock
+            # increase (1902 ms -> 5858 ms) for the same document.
+            #
+            # The cost is not the capping, it is the shape of the request: 80% of every sequence is
+            # the question, and because the encoder is bidirectional the head cannot be computed
+            # once and reused -- its representations depend on the state it is paired with. So the
+            # warning names the real remedy rather than only reporting the clamp.
+            warnings.warn(
+                "laya: predict_long: these questions leave only %d of max_len=%d for the state"
+                " (their heads take the rest), so the scan window is capped %d -> %d and roughly"
+                " %.1fx as many windows -- each a full forward pass -- are needed to read the"
+                " document. Fewer or shorter options, a larger max_len, or"
+                " laya.shortlist.predict_shortlist for a large label set will all cost less than"
+                " scanning at this width" % (room, max_len, size, room, size / room),
+                RuntimeWarning, stacklevel=3)
+        size = room
+    step = stride if (stride and stride > 0) else max(1, size // 2)
+    if step > size:
+        if size < requested and stride and stride <= requested:
+            # The window the caller asked for was reduced above, and their stride was valid for the
+            # window they asked for -- so this is the library's clamp, not their mistake. Reducing
+            # the stride to match keeps the no-gap guarantee without making a self-consistent pair
+            # of arguments an error. A stride that overshot the *requested* window is still refused
+            # below, because that one really is the caller's.
+            warnings.warn(
+                "laya: predict_long: stride=%d was a 50%% step for the window=%d you asked for, but"
+                " the window was reduced to %d to fit the room these questions leave; scanning with"
+                " stride=%d instead" % (step, requested, size, max(1, size // 2)),
+                RuntimeWarning, stacklevel=3)
+            step = max(1, size // 2)
+        else:
+            raise ValueError(
+                "predict_long: stride=%d steps past the %d-token window%s, so %d tokens between"
+                " every pair of windows would be read by no window at all; pass stride <= %d"
+                % (step, size, " these questions leave room for" if size < requested else "",
+                   step - size, size))
+    return size, step, room
+
+
+
+def window_batch_cap(n_windows: int, window: int, config_budget: int,
+                     batch_size: Optional[int] = None) -> Optional[int]:
+    """Keep one forward pass no wider than the un-capped scan's would have been -- but only when
+    capping the window has multiplied the window count enough to matter.
+
+    Capping the window at the room the questions leave multiplies the number of windows on exactly
+    the inputs it targets: measured, a 4 561-token document at 120 options goes from 29 windows of
+    312 tokens to roughly 413 of 23. `predict_batch` with `batch_size=None` puts every state in one
+    forward pass, so a caller who passed no `batch_size` would go from a 29-row pass to a 413-row one
+    at `max_len` width -- a plausible out-of-memory on an input that used to fit.
+
+    Sending every window in one run is also a deliberate property (`ONNXAgent` asserts it), and a mild
+    cap -- a 64-token budget reduced to 43, say -- multiplies the count by well under two. Chunking
+    those would trade a real property for no real protection. So the cap only applies past
+    `_WINDOW_BATCH_BLOWUP`x, and then bounds the pass at the count the un-capped budget would have
+    produced: peak memory stays at parity with the behaviour before the cap, and the scan still reads
+    the whole document, just in more passes. An explicit `batch_size` is always honoured.
+    """
+    if batch_size and batch_size > 0:
+        return batch_size
+    if window >= config_budget:
+        return None                       # not capped: one pass, exactly as before
+    unclamped = max(1, -(-n_windows * max(1, window // 2) // max(1, config_budget // 2)))
+    if n_windows <= unclamped * _WINDOW_BATCH_BLOWUP:
+        return None                       # a mild cap: keep the single shared pass
+    return unclamped
 
 def collapsed_options(qids, items) -> Dict[str, Dict[str, Optional[int]]]:
     """The questions whose options no longer have a token span each, from per-item stats.
@@ -554,7 +708,14 @@ TEMP_MAX = 5.0
 
 
 def clamp_temperature(t, lo: float = TEMP_MIN, hi: float = TEMP_MAX) -> float:
-    """A usable temperature: `t` confined to [lo, hi], falling back to 1.0 if it is not a number."""
+    """A usable temperature: `t` confined to [lo, hi], falling back to 1.0 if it is not a number.
+
+    A bool is not a number either: `True`/`False` used to float to 1.0/0.0 here and read as
+    fitted/sharpening temperatures, the same class of quiet acceptance `check_min_confidence`
+    already refuses. A custom `lo`/`hi` still bounds either way.
+    """
+    if isinstance(t, bool):
+        return 1.0
     try:
         t = float(t)
     except (TypeError, ValueError):

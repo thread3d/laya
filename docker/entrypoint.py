@@ -16,7 +16,15 @@ def main():
         if not filename:
             continue
         try:
-            value = Path(filename).read_text(encoding="utf-8").strip()
+            # `utf-8-sig`, not `utf-8`: a secret file written by a Windows editor starts
+            # with a UTF-8 byte-order mark (PowerShell 5.1's `utf8` encoding and
+            # Notepad's default both write one -- this file's audience includes the
+            # `os.name == "nt"` path below). Read as plain utf-8 that mark is U+FEFF,
+            # which `.strip()` does not remove because it is not whitespace, so the
+            # token would arrive with one leading character no consumer accepts.
+            # `utf-8-sig` reads a BOM when present and plain UTF-8 otherwise, and a
+            # genuine UTF-8 error still fails into the `UnicodeError` below.
+            value = Path(filename).read_text(encoding="utf-8-sig").strip()
         except (OSError, UnicodeError, ValueError):
             sys.exit(f"Cannot read {name}_FILE")
         if not value or "\0" in value:

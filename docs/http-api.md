@@ -28,6 +28,7 @@ Everything is environment variables, so one image serves a laptop dev run and a 
 | `LAYA_MODELS` | comma list to preload (`english,multilingual,typed-decisions`); empty = all | all |
 | `LAYA_THREADS` | cap torch intra-op threads on CPU; keep it <= physical cores -- oversubscribing logical cores is a large regression | torch default |
 | `LAYA_AUTO_TASK` | auto-route to the typed-decisions checkpoint | `0` |
+| `LAYA_DEFAULT_MODEL` | checkpoint a state with no language evidence falls back to; aliases such as `ml` resolve the way core resolves them, and an unresolvable name stops the server at startup | `english` |
 | `LAYA_API_KEY` | if set, require `Authorization: Bearer <key>` | none |
 | `LAYA_LOG_LEVEL` | uvicorn log level | `info` |
 | `LAYA_MAX_CONCURRENT` | requests admitted past auth at once; excess gets `503` | `16` |
@@ -43,15 +44,43 @@ For containers, including CUDA and ARM64 images, see [Docker quickstart](docker.
 
 ### `GET /health`
 
-Always open (no auth), and stays responsive during inference because the CPU-bound forward pass
-runs on its own worker, not the event loop.
+Liveness is always open (no auth), and stays responsive during inference because the CPU-bound
+forward pass runs on its own worker, not the event loop. The fields below liveness are not open on
+a deployment that set `LAYA_API_KEY`: without the bearer, `/health` answers `{"status": "ok"}` and
+nothing else, because the rest names resident checkpoints, their exact revision SHAs, the device
+state and each checkpoint's last fallback reason, which quotes host hardware. A probe needs only
+the 200, so a healthcheck is unaffected and a wrong bearer is still a 200 rather than a 401. With
+no `LAYA_API_KEY` set, every caller gets the full payload shown here.
 
 ```json
-{"status": "ok", "loaded": ["english", "multilingual"], "revisions": {"english": "..."}, "device": "auto"}
+{"status": "ok", "loaded": ["english", "multilingual"], "revisions": {"english": "...", "multilingual": "..."},
+ "device": "cuda", "device_is_preference": false,
+ "checkpoint_devices": {"english": "cuda", "multilingual": "cuda"},
+ "cpu_fallbacks": {"english": {"count": 0, "last_reason": null}, "multilingual": {"count": 0, "last_reason": null}}}
 ```
 
-`loaded` lists the checkpoints resident in memory and `revisions` the artifact revision each was
-loaded from, so a deployment can confirm what it is actually serving.
+One server's answer, so the blocks agree with each other: every key of `revisions`,
+`checkpoint_devices` and `cpu_fallbacks` is a name in `loaded`. `tests/test_serve.py` holds this
+sample to the handler that produces it, field by field.
+
+- `status` is `ok` whenever the process answers at all. It says nothing about the checkpoints.
+- `loaded` lists the checkpoints resident in memory. It is empty until a request builds one, which is
+  what `LAYA_PRELOAD=0` leaves the process doing.
+- `revisions` is the artifact revision each resident checkpoint was loaded from, keyed by the same
+  names as `loaded`, so a deployment can confirm what it is actually serving.
+- `device` is the device a resident checkpoint really computes on, which is not always what
+  `LAYA_DEVICE` asked for: a checkpoint that wants a GPU it cannot get falls back to CPU silently and
+  still answers correctly. With nothing resident it is the configured preference instead.
+- `device_is_preference` is `true` exactly while nothing is resident, and `false` as soon as the
+  handler can measure. That is the difference between a server reporting its configuration and a
+  server reporting where its work is: one that quietly lost its GPU says `false` with `device`
+  `cpu`, rather than going on answering `cuda`.
+- `checkpoint_devices` gives the measurement per checkpoint, keyed by the names in `loaded`;
+  `device` is the first of those values.
+- `cpu_fallbacks` counts, per resident checkpoint, the requests that exhausted GPU memory and were
+  retried once on CPU: `count` since the process started, and `last_reason` carrying the error text
+  of the latest one. The demotion is scoped to the request that failed, so a checkpoint built on CPU
+  because the GPU was never available is not a fallback and counts `0` here -- that shows in `device`.
 
 ### `POST /v1/systemone`
 
@@ -105,24 +134,28 @@ other value -- including a Jev id like `jev-1` -- means "let the router choose",
   "model": "laya-rl-agent",
   "answers": {
     "queue": {"type": "choice", "choice": "billing",
-              "probabilities": {"billing": 0.9281, "tech": 0.0412, "other": 0.0307},
-              "confidence": 0.4534, "answer_confidence": 0.9281,
+              "probabilities": {"billing": 0.9519, "tech": 0.0327, "other": 0.0154},
+              "confidence": 0.797, "answer_confidence": 0.9519,
               "action": {"act_probability": 1.0}},
-    "urgency": {"type": "score", "score": 2.6389,
+    "urgency": {"type": "score", "score": 1.6994,
                 "legend": {"0": "calm", "1": "firm", "2": "angry", "3": "furious"},
-                "probabilities": {"0": 0.0099, "1": 0.0713, "2": 0.536, "3": 0.3828},
-                "confidence": 0.3542, "answer_confidence": 0.536,
+                "probabilities": {"0": 0.0249, "1": 0.4136, "2": 0.3985, "3": 0.1629},
+                "confidence": 0.1925, "answer_confidence": 0.4136,
                 "action": {"act_probability": 1.0}}
   },
-  "usage": {"input_tokens": 74, "output_tokens": 0},
+  "usage": {"input_tokens": 83, "output_tokens": 0, "state_tokens": 12,
+            "state_tokens_dropped": 0, "truncated": false, "truncated_questions": []},
   "routing": {"model": "english", "repo": "convaiinnovations/laya", "reason": "English Latin text",
-              "detection": {"script": "latin", "language": "en", "is_english": true, "non_latin_fraction": 0.0}}
+              "detection": {"script": "latin", "script_profile": {"latin": 1.0}, "language": "en",
+                            "is_english": true, "language_undecided": false, "diacritic_rate": 0.0,
+                            "non_latin_fraction": 0.0, "mixed_segment": null},
+              "workflow": null}
 }
 ```
 
-`answers` and `usage` are the keys Jev clients decode; `model` is the constant name of the decision
-head, and the checkpoint that answered is in `routing` (`model`, `repo`, `reason`, and the
-`detection` or `lang_guess` evidence behind it).
+The sample is one answer this server gave, verbatim: the request above, the cached `english`
+checkpoint on CPU. `answers` and `usage` are the keys Jev clients decode; `model` is the constant
+name of the decision head, and the checkpoint that answered is in `routing`.
 
 | answer type | keys |
 |---|---|
@@ -130,6 +163,39 @@ head, and the checkpoint that answered is in `routing` (`model`, `repo`, `reason
 | `score` | `score` (expected level index, may fall between levels), `probabilities` keyed `"0".. "k-1"`, `legend` mapping index to the level text |
 | `noul` | `noul`, the probability of the yes option |
 | all | `confidence`, `answer_confidence`, and `action.act_probability` |
+
+`usage` reports what the forward pass was built from. How much of a state the model reads is a token
+budget, not a character count, and the budget moves with `max_len`, `head_max_len` and every
+question's own option prompt (#174), so these keys are the only place that fact is visible:
+
+| `usage` key | meaning |
+|---|---|
+| `input_tokens` | non-pad tokens of the state's rows -- one row per question, so it grows with the questions rather than being a context length |
+| `output_tokens` | always `0` -- the head answers in one pass, it generates nothing |
+| `state_tokens` | tokens the whole serialized state needs |
+| `state_tokens_dropped` | tokens of it at least one question did not get: the worst case over the questions, since each leaves the state a different room |
+| `truncated` | `true` when that worst case dropped anything |
+| `truncated_questions` | the ids of the questions whose own window was cut, `[]` when none |
+| `options` | present only when some question's options no longer have a token span each: keyed by question id, with `total` (the options that question defines), `distinct` (the spans that reached the sequence) and `tokens_per_option` |
+
+A truncated answer is still an answer -- the head decides on the evidence it was given -- but a
+caller sizing states by character count cannot see the cut anywhere else in the response.
+
+`routing` records which checkpoint answered and why:
+
+| `routing` key | meaning |
+|---|---|
+| `model` | the checkpoint that answered: `english`, `multilingual` or `typed-decisions` |
+| `repo` | its public Hugging Face id |
+| `reason` | the sentence for the choice, naming the evidence it acted on |
+| `detection` | `laya.lang.analyse()` on the state -- `script`, `script_profile`, `language`, `is_english`, `language_undecided`, `diacritic_rate`, `non_latin_fraction`, `mixed_segment` -- or `null` when the route decided before reading the text |
+| `workflow` | the typed-decisions workflow the question ids match, or `null` |
+
+`detection` is `null` on every path that decides without reading the state: one forced by `model` or
+`task`, one answered by `lang` or `lang_guess`, or one that matched a typed-decisions workflow from
+the question ids. A `lang_guess` leaves no key of its own -- the hint it acted on is named in
+`reason`. The `model` and `task` branches report `workflow` as `null` too, because they answer
+before the question ids are read.
 
 ### Confidence: two numbers, not interchangeable
 
@@ -170,12 +236,20 @@ requests in-process without the HTTP layer.
 
 | status | when | body `detail` |
 |---|---|---|
-| `400` | body is not valid JSON, not an object, has no `questions`, `state` is missing or `null`, or `questions` is not an object | what is wrong |
+| `400` | body is not valid JSON, not an object, has no `questions`, `state` is missing or `null`, `questions` is not an object, or a string anywhere in the body holds an unpaired `\udXXX` surrogate escape | what is wrong |
 | `401` | `LAYA_API_KEY` is set and the bearer token is missing or wrong | `invalid or missing bearer token` |
 | `413` | any limit above | which limit and by how much |
 | `422` | the question is well-formed JSON but invalid to Laya (unknown type, options over the head budget), or a request control (`lang`, `min_confidence`, a hook argument) is not in the form this endpoint accepts | names the question or the field and what to fix |
 | `500` | inference failed for any other reason | `inference failed` -- always this string, so paths, weights and memory state never leak; the cause is in the server log |
 | `503` | `LAYA_MAX_CONCURRENT` requests are already in flight | `server busy, try again later` |
+
+The unpaired-surrogate `400` is the one that looks unusual. `\udXXX` with no pair is legal JSON, but
+the character it names cannot be UTF-8 encoded, so the tokenizer raises `TypeError` on it -- the
+caller's own string arriving as a server fault, with a traceback per request. Both decision routes
+therefore walk the parsed body for lone surrogates and refuse one before it reaches inference. The
+walk runs after the size checks, so an oversized body is still refused first and the character and
+question limits bound what it can reach. A *paired* surrogate is one ordinary astral character by
+the time the parser is done, so an emoji in a state is unaffected.
 
 Over-cap load is refused, not queued: clients holding an admission slot while streaming a slow body
 cannot starve `/health`, and a retry can take the slot a refused client left.
@@ -191,7 +265,11 @@ admission slot but never an inference slot.
 
 ## Not (yet) here
 
-This server speaks one protocol on purpose. There is no OpenAI-compatible endpoint and no batch
-endpoint; run several questions in one request instead, since they share a single forward pass per
-question set. The `laya` CLI and MCP server cover local use -- see the
+This server speaks one protocol on purpose. There is no OpenAI-compatible endpoint; run several
+questions in one request instead, since they share a single forward pass per question set. The one
+other route is `POST /v1/systemone/batch`, which answers one `questions` set over an array of
+`states`. It has no section on this page yet -- its request shape is in the README's self-hosting
+section -- and every check above applies to it as it does to `POST /v1/systemone`: the same shape
+`400`s, the same unpaired-surrogate refusal, the same auth, admission, size limits, body-control
+validation and `500` mapping. The `laya` CLI and MCP server cover local use -- see the
 [README](https://github.com/NandhaKishorM/laya#readme).

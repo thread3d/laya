@@ -31,6 +31,8 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from .confidence import check_min_confidence
+
 #: The shape of the report this module writes, so a consumer can refuse one it cannot read.
 #: ``research/evals/act_head_eval.py`` publishes a report under its own tag off this prefix.
 REPORT_SCHEMA = "laya-evals-report/1"
@@ -547,9 +549,31 @@ def _takes_sort_by_length(runner: Any) -> bool:
     return any(p.name == "sort_by_length" or p.kind is p.VAR_KEYWORD for p in params)
 
 
+def _takes_min_confidence(runner: Any, fn_name: str = "predict_batch") -> bool:
+    """Whether `runner`'s entry point accepts an abstention threshold on the call.
+
+    The same signature check `_takes_sort_by_length` makes, applied to whichever entry point the
+    harness is about to call: `min_confidence` changes the answer (an abstention overwrites a
+    low-confidence choice), so it is a scoring control, not an optimisation. A runner that predates
+    the gate (#361) must still be scoreable -- silently dropping the threshold and reporting the
+    same run would give a `precision@coverage` number for a policy that never ran -- so when the
+    guard is false the harness raises rather than lies. The CLI catches the raise into a
+    pre-flight message before any checkpoint loads.
+    """
+    fn = getattr(runner, fn_name, None)
+    if fn is None:
+        return False
+    try:
+        params = inspect.signature(fn).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(p.name == "min_confidence" or p.kind is p.VAR_KEYWORD for p in params)
+
+
 def evaluate(runner: Any, dataset: Dataset, evaluators: Optional[Sequence[Evaluator]] = None,
              batch_size: Optional[int] = None, on_error: str = "fail",
-             config: Optional[Dict[str, Any]] = None, sort_by_length: bool = False) -> EvalReport:
+             config: Optional[Dict[str, Any]] = None, sort_by_length: bool = False,
+             min_confidence: Optional[float] = None) -> EvalReport:
     """Run `runner` over `dataset`, aggregating per-answer metrics overall and per slice.
 
     `runner` needs a ``predict(state, questions, model=...)`` method, and for `batch_size` above 1
@@ -565,6 +589,14 @@ def evaluate(runner: Any, dataset: Dataset, evaluators: Optional[Sequence[Evalua
     runner that predates the knob is unaffected by a run that does not ask. Nothing about the
     scored answers changes -- the results come back in chunk order either way.
 
+    `min_confidence` is the abstention threshold `Router` and `ONNXAgent` apply to
+    `answer_confidence` (#361): answers below it come back abstained, so the run scores the
+    policy at that threshold, not the raw argmax. Unlike `sort_by_length` this changes the
+    answers, so a runner whose batch entry point (or whose single ``predict``, on the fallback
+    path) predates the gate is refused rather than silently scored without it -- the report
+    would otherwise publish a `precision@coverage` figure for an abstention policy that never
+    ran.
+
     `on_error` is ``"fail"`` (re-raise a runner error) or ``"skip"`` (record it and continue),
     the latter for evaluating a flaky fleet without aborting the whole run.
 
@@ -578,6 +610,34 @@ def evaluate(runner: Any, dataset: Dataset, evaluators: Optional[Sequence[Evalua
     """
     if on_error not in ("fail", "skip"):
         raise EvalError("on_error must be 'fail' or 'skip', got %r" % on_error)
+    # `min_confidence` is validated here -- and, unlike `sort_by_length`, a run that asks for it
+    # on a runner that does not accept it is refused -- because an abstention threshold changes
+    # which answers score as correct. Silently dropping it would publish a `precision@coverage`
+    # number for a policy that never ran, which is exactly the class of lie a baseline report is
+    # supposed to prevent. `laya.confidence.check_min_confidence` is the same validator the Router
+    # uses, so the accepted range cannot drift from what the gate itself enforces.
+    try:
+        mc = check_min_confidence(min_confidence) if min_confidence is not None else None
+    except ValueError as exc:
+        # Core's validator raises a bare ValueError; the CLI's usage-error handler catches EvalError
+        # and turns it into exit 2 with a printed message. Re-raising here keeps a mistyped
+        # `--min-confidence 1.5` on the same path as a bad tolerance, instead of a traceback.
+        raise EvalError(str(exc)) from exc
+    if mc is not None:
+        # Whichever entry points this run can actually reach all have to take the threshold. A
+        # batched run still sends a chunk of one through `predict`, so requiring only
+        # ``predict_batch`` would let the runner silently score those rows without the gate --
+        # the exact class of lie the guard exists to prevent.
+        targets = ["predict"]
+        if batch_size is not None and batch_size > 1 and _batch_form(runner):
+            targets.append("predict_batch")
+        for target in targets:
+            if not _takes_min_confidence(runner, target):
+                raise EvalError(
+                    "evaluate(min_confidence=%r) refused: this runner's %s does not accept the "
+                    "abstention threshold. Either use a Router/ONNXAgent that gates on "
+                    "answer_confidence (#361), or drop the threshold -- the report would "
+                    "otherwise score a policy that never ran." % (min_confidence, target))
     evaluators = list(evaluators) if evaluators is not None else default_evaluators()
     cases: List[Dict[str, Any]] = []
     waits: List[float] = []          # what each request actually waited: its chunk's whole call
@@ -591,6 +651,13 @@ def evaluate(runner: Any, dataset: Dataset, evaluators: Optional[Sequence[Evalua
     # `predict`, which has no batch to reorder, and an off control is not sent at all.
     shape = ({"sort_by_length": True}
              if sort_by_length and batch_form and _takes_sort_by_length(runner) else {})
+    # `min_confidence` joins the batch shape whenever a chunk can go through `predict_batch`, and
+    # the single-`predict` path picks it up below. The pre-flight refusal above has already
+    # proven every entry point this run can reach accepts it, so no re-check sits here: a run
+    # that reaches this line either asked for the gate and will get it on every call, or asked
+    # for nothing.
+    if mc is not None and batch_form:
+        shape = dict(shape, min_confidence=mc)
 
     index = 0
     while index < len(examples):
@@ -631,7 +698,11 @@ def evaluate(runner: Any, dataset: Dataset, evaluators: Optional[Sequence[Evalua
                                                    model=chunk[0].model, batch_size=batch_size,
                                                    **shape)
             else:
-                results = [runner.predict(chunk[0].state, chunk[0].questions, model=chunk[0].model)]
+                # A chunk of one still sees the gate: the pre-flight refusal proved `predict`
+                # accepts it whenever `mc` is set, so nothing here has to re-check the signature.
+                single_kwargs = {"min_confidence": mc} if mc is not None else {}
+                results = [runner.predict(chunk[0].state, chunk[0].questions,
+                                          model=chunk[0].model, **single_kwargs)]
         except Exception as exc:  # noqa: BLE001 -- honoured by on_error
             if on_error == "fail":
                 raise
@@ -654,7 +725,7 @@ def evaluate(runner: Any, dataset: Dataset, evaluators: Optional[Sequence[Evalua
                         raise EvalError("runner returned no answer for question %r" % qid)
                     errors.append({"index": index + offset, "question": qid, "error": "missing answer"})
                     continue
-                cases.append({
+                case = {
                     "qid": qid,
                     "language": example.language,
                     "model": example.model or _answered_model(result),
@@ -665,7 +736,13 @@ def evaluate(runner: Any, dataset: Dataset, evaluators: Optional[Sequence[Evalua
                     "correct": _correct(answer, expected),
                     "scores": {evaluator.name: evaluator.score(answer, expected)
                                for evaluator in evaluators},
-                })
+                }
+                # Shortlist metadata describes the retrieval stage, not the answer. Keep it
+                # beside the case so opt-in evaluations can attribute the source of an error.
+                shortlist = (result or {}).get("shortlist")
+                if isinstance(shortlist, dict) and qid in shortlist:
+                    case["shortlist"] = shortlist[qid]
+                cases.append(case)
         index += len(chunk)
 
     report = EvalReport(config=dict(config or {}), cases=cases)
@@ -686,7 +763,18 @@ def evaluate(runner: Any, dataset: Dataset, evaluators: Optional[Sequence[Evalua
         "sort_by_length": sort_by_length,
         # Requested and sent are different claims: `sort_by_length` needs a chunk to reorder, so a
         # run with no batch form asked for something this harness cannot do.
-        "sort_by_length_sent": bool(shape),
+        "sort_by_length_sent": bool(shape.get("sort_by_length")),
+        # Same shape for `min_confidence`: a run that asked for a threshold and landed on a
+        # chunked path where the runner accepted it gets a different report from one that was
+        # refused at the guard, and the report should say which. The `_sent` value reflects
+        # whether at least one call actually carried the threshold, not whether it was requested.
+        "min_confidence": min_confidence,
+        "min_confidence_sent": (
+            # The pre-flight refusal proved the entry points this run reaches accept the
+            # threshold, so a non-None `mc` on a run that made at least one call is exactly the
+            # claim "the threshold was on every call". An empty dataset sends nothing.
+            mc is not None and chunks > 0
+        ),
         "chunks": chunks,
         "rows_grouped": rows_grouped,
         "rows_alone": rows_alone,

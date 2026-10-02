@@ -19,6 +19,13 @@ pydantic-side claims -- `Literal[...]` renders to `enum`, `Optional[...]` to `an
 `model_json_schema()` putting a `title` on every field -- are prose rationale here, checked locally
 against pydantic in the PR's witness log.
 
+The same page also hands a reader `result.usage` as a shape, and `examples/03_reading_the_result.py`
+is where beginners are pointed for it. Both showed two keys, which is what a call with *no*
+questions returns, while every answered result carries six (#174) and a seventh when the head budget
+collapses a question's options (#538). So the shapes are compared against the one `usage = {...}`
+literal in each agent -- `README.md`'s two-key sentence, which is genuinely about the empty-questions
+path, is kept as the control that this is per-path and not one blanket rule.
+
 Run: `python tests/test_structured_docs.py`
 """
 from __future__ import annotations
@@ -29,7 +36,7 @@ import json
 import os
 import re
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 PASS: List[str] = []
 FAIL: List[str] = []
@@ -102,6 +109,95 @@ def run_cell(text: str, extra: Optional[Dict[str, Any]] = None) -> Any:
     ns = dict(SAFE)
     ns.update(extra or {})
     return eval(text, ns)                                 # noqa: S307 - the text is this repo's own docs
+
+
+# ------------------------------------------------------------- what an answered `usage` really is
+#
+# `docs/structured.md` hands a reader `result.usage` as a shape, and `examples/03_reading_the_result.py`
+# is the page beginners are sent to for that shape. Both said two keys -- the shape of a call with no
+# questions -- while the agents put six in every answered result (#174's truncation report) and a
+# seventh only when the head budget collapsed a question's options (#538). So the shapes are compared
+# against the code that builds them, per path, and the true two-key sentence in `README.md` (empty
+# questions) is kept as the control that proves this is not one blanket rule.
+
+AGENT_PY = os.path.join("laya", "agent.py")
+ONNX_PY = os.path.join("laya", "onnx_agent.py")
+EXAMPLE03 = os.path.join("examples", "03_reading_the_result.py")
+README = "README.md"
+
+
+def _own_nodes(func: ast.AST) -> List[ast.AST]:
+    """Every node of `func`, but not the body of a function nested inside it."""
+    skip = set()
+    for child in (n for n in ast.walk(func) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                  and n is not func):
+        skip.update(id(x) for x in ast.walk(child))
+    return [n for n in ast.walk(func) if id(n) not in skip]
+
+
+def usage_shape(path: str) -> Tuple[str, List[str], List[str], List[str]]:
+    """(keys always built, keys added only sometimes, keys with no questions).
+
+    All three from the one function holding the `usage = {...}` literal: `predict_long` also builds
+    a result whose `answers` is empty and whose usage carries `windows`, in its own body, and
+    `decide` can only ever return the single-call shape the pages document. The empty-questions
+    shape is found by structure -- the result literal whose `answers` is `{}` -- because pinning its
+    keys here would make the `README.md` control tautological: an undocumented key added to that
+    literal would just redefine what this returns, and the gate would stay green.
+    """
+    tree = ast.parse(read(path))
+    hits = []
+    for func in (n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))):
+        nodes = _own_nodes(func)
+        literal = [n.value for n in nodes if isinstance(n, ast.Assign) and isinstance(n.value, ast.Dict)
+                   and any(isinstance(t, ast.Name) and t.id == "usage" for t in n.targets)]
+        if not literal:
+            continue
+        always = sorted({k.value for k in literal[0].keys})
+        added = sorted({n.targets[0].slice.value for n in nodes
+                        if isinstance(n, ast.Assign) and len(n.targets) == 1
+                        and isinstance(n.targets[0], ast.Subscript)
+                        and isinstance(n.targets[0].value, ast.Name)
+                        and n.targets[0].value.id == "usage"
+                        and isinstance(n.targets[0].slice, ast.Constant)})
+        empty = []
+        for node in nodes:
+            if not (isinstance(node, ast.Dict)
+                    and all(isinstance(k, ast.Constant) and isinstance(k.value, str) for k in node.keys)):
+                continue
+            pairs = dict(zip([k.value for k in node.keys], node.values))
+            usage = pairs.get("usage")
+            if {"model", "answers"} <= set(pairs) and isinstance(pairs["answers"], ast.Dict) \
+                    and not pairs["answers"].keys and isinstance(usage, ast.Dict):
+                empty.append(sorted({k.value for k in usage.keys if k is not None}))
+        if len(set(map(tuple, empty))) != 1:
+            raise AssertionError("%s: %s has %d empty-answers shapes: %r" % (path, func.name, len(empty), empty))
+        hits.append((func.name, always, added, empty[0]))
+    if len(hits) != 1:
+        raise AssertionError("expected one `usage = {...}` in %s, found %r" % (path, hits))
+    return hits[0][1:]
+
+
+def documented_shape(text: str, anchor: str, start: int = 0) -> List[str]:
+    """The keys of the first `{...}` literal written after `anchor`, as the reader sees them."""
+    i = text.index(anchor, start)
+    j = text.index("{", i)
+    depth, k = 0, j
+    while True:
+        if text[k] == "{":
+            depth += 1
+        elif text[k] == "}":
+            depth -= 1
+            if depth == 0:
+                break
+        k += 1
+    return sorted(set(re.findall(r'"([a-z_]+)"\s*:', text[j:k + 1])))
+
+
+def mentions_only_conditionally(text: str, key: str) -> bool:
+    """Whether some sentence names `key` and bounds it with "only", i.e. calls it conditional."""
+    sentence = re.search(r"[^.]*`%s`[^.]*\." % re.escape(key), text)
+    return sentence is not None and " only " in " %s " % sentence.group(0)
 
 
 # ------------------------------------------------------------------- what the compiler really does
@@ -411,6 +507,54 @@ def main() -> int:
                "documented subset" in doc, repr(doc[:80]))
     check_true("module docstring/does not promise `title`", "`title`" not in doc and " title " not in doc,
                "the docstring names title; the compiler does not read it")
+
+    # ------------------------------------------------------- the `usage` shape, one check per path
+    always, added, empty_t = usage_shape(AGENT_PY)
+    onnx_always, onnx_added, empty_o = usage_shape(ONNX_PY)
+    check("usage/onnx_agent builds the same keys as agent", onnx_always, always)
+    check("usage/onnx_agent adds the same keys as agent", onnx_added, added)
+    check("usage/the only sometimes key is options", added, ["options"])
+    check_true("usage/options is not also always built", "options" not in always,
+               "`options` is also in the always keys %s" % (always,))
+    check_true("usage/an answer carries the truncation report",
+               {"state_tokens", "state_tokens_dropped", "truncated", "truncated_questions"}
+               <= set(always), "got %s" % (always,))
+
+    check("usage/no-questions shape matches between agents", empty_o, empty_t)
+    check_true("usage/no-questions is a different shape from an answer",
+               set(empty_t) < set(always), "empty %s answered %s" % (empty_t, always))
+
+    # `decide` may only show the page this block, so it has to forward the dict whole.
+    forwards = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+                and any(k.arg == "usage" for k in n.keywords)]
+    check_true("structured/decide passes usage through", len(forwards) == 1, "%d call(s)" % len(forwards))
+    value = next(k.value for k in forwards[0].keywords if k.arg == "usage")
+    check_true("structured/decide forwards it whole, not a subset",
+               isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute)
+               and value.func.attr == "get"
+               and isinstance(value.args[0], ast.Constant) and value.args[0].value == "usage",
+               ast.dump(value)[:120])
+
+    page_shape = documented_shape(text, "result.usage")
+    check("docs/structured.md's usage shape is what an answer builds", page_shape, always)
+    example_text = read(EXAMPLE03)
+    check("examples/03's usage shape is what an answer builds",
+          documented_shape(example_text, '"usage":'), always)
+
+    # A shape is not documentation: every key has to be named in prose the reader can act on.
+    for key in always:
+        check_true("docs/structured.md explains `%s`" % key, "`%s`" % key in text, "no sentence names it")
+        check_true("examples/03 explains `%s`" % key, "`%s`" % key in example_text, "no sentence names it")
+    check_true("docs/structured.md calls `options` conditional",
+               mentions_only_conditionally(text, "options"), "the page names it without bounding it")
+    check_true("examples/03 calls `options` conditional",
+               mentions_only_conditionally(example_text, "options"), "named without bounding")
+
+    # The control: README's two-key sentence is about a call with no questions, and is correct.
+    # A gate that only ever compared against `always` would have "fixed" it into a false claim.
+    readme = read(README)
+    readme_shape = documented_shape(readme, '"usage":', readme.index("Passing an empty question"))
+    check("README's empty-questions shape stays the empty one", readme_shape, empty_t)
 
     return report()
 

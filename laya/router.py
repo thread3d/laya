@@ -34,9 +34,9 @@ import os
 import threading
 import time
 from collections.abc import Sequence as SequenceABC
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
-from .confidence import check_min_confidence, flag_low_confidence
+from .confidence import apply_confidence_gate, check_min_confidence
 from .hooks import (
     HookRegistry, PredictContext, aggregate_usage, compose_hooks, dispatch, normalise_hooks,
     validate_timeout,
@@ -116,6 +116,22 @@ def normalise_name(name: str) -> str:
         raise ValueError("unknown model %r; choose one of %s (or an alias: %s)"
                          % (name, sorted(DEFAULT_MODELS), sorted(_ALIASES)))
     return key
+
+
+def resolve_model_spec(name: str) -> Optional[Tuple[str, Optional[str]]]:
+    """Registry spec for a checkpoint name or alias, or None when it is not one.
+
+    The non-raising sibling of :func:`normalise_name`, for callers that also accept
+    things the registry knows nothing about -- a Hub repo id, a local directory, an
+    ONNX export. Those pass through untouched; a name or alias the registry does know
+    resolves to its ``(repo, subfolder)`` pair, so ``load("typed-decisions")`` and
+    ``Router(model="typed-decisions")`` name the same checkpoint from one table.
+    """
+    try:
+        key = normalise_name(name)
+    except ValueError:
+        return None
+    return tuple(_split(DEFAULT_MODELS[key]))
 
 
 def match_typed_decisions_workflow(questions: Dict[str, Any]) -> Optional[str]:
@@ -255,12 +271,14 @@ def _digests_from_env(models: Dict[str, Any]) -> Dict[str, Optional[Dict[str, st
     the bundled repository ships a separate `model.safetensors` per checkpoint, so one flat
     map can only ever match one of them and refuses the rest at startup.
 
-    A checkpoint the nested map does not name is returned as `{}`, meaning deliberately
-    unpinned: `Agent` falls back to the environment when given `None`, and reading a
-    model-keyed map as an artifact map fails with `cannot verify 'english': no such file`.
+    A checkpoint the nested map does not name is returned as `{}`, meaning "not covered by this
+    variable, and do not let `verify_digests` read this nested map as an artifact map either" -- it
+    would fail with `cannot verify 'english': no such file` on a checkpoint the variable never
+    named. It needs no distinguishing from a `{}` somebody wrote: both name no files, and
+    `_merge_expected_digests` merges them identically.
     Keys are normalised exactly as `Router(sha256_digests=...)` normalises them, so `en`
     names `english` and a name core does not know raises here rather than quietly leaving
-    that checkpoint unverified. Unset, empty or unparseable input returns `{}`:
+    that checkpoint unverified. Unset, empty or unparseable input names nothing:
     `laya.revisions` reports a malformed value in its own words.
     """
     raw = os.environ.get("LAYA_SHA256_DIGESTS", "").strip()
@@ -279,10 +297,81 @@ def _digests_from_env(models: Dict[str, Any]) -> Dict[str, Optional[Dict[str, st
         raise ValueError("LAYA_SHA256_DIGESTS must be either {artifact: digest} for every "
                          "checkpoint or {model: {artifact: digest}} per checkpoint; %s mixes "
                          "the two or holds a value that is neither" % sorted(data))
-    per_model = {normalise_name(k): v for k, v in data.items()}
+    per_model = {normalise_name(k): dict(v) for k, v in data.items()}
     for name in models:
         per_model.setdefault(normalise_name(name), {})
     return per_model
+
+
+def _revision_pin(value: Optional[str]) -> Optional[str]:
+    """The revision `value` asks for, or None when it asks for nothing.
+
+    Unset and blank are the same answer, because both are what a configuration line that did not
+    get filled in leaves behind, and neither is a commit anything can be pinned to.
+    """
+    return value if value is not None and str(value).strip() else None
+
+
+def _digest_entry(
+    digests: Dict[str, Optional[Dict[str, str]]],
+    key: str,
+) -> Optional[Dict[str, str]]:
+    """One checkpoint's own digest entry, as `Router.sha256_digests` holds it right now.
+
+    None when the checkpoint has no entry at all, which is what leaves `verify_digests` its own
+    environment fallback; `{}` for an entry that names no files, whether that is the placeholder a
+    nested `LAYA_SHA256_DIGESTS` left or a `None` a caller wrote.
+
+    Read here rather than decided once at construction, because `sha256_digests` is a public mutable
+    attribute: a per-checkpoint pin assigned to it -- or added to an existing entry in place -- after
+    `Router(...)` has to count, and deciding from a key set frozen at construction dropped exactly
+    that.
+    """
+    if key not in digests:
+        return None
+    entry = digests[key]
+    return {} if entry is None else entry
+
+
+def _merge_expected_digests(
+    shared: Optional[Dict[str, str]],
+    per_model: Optional[Dict[str, str]],
+) -> Optional[Dict[str, str]]:
+    """The `expected_sha256` one checkpoint is built with, out of the two channels that pin it.
+
+    `shared` is `agent_kwargs["expected_sha256"]`, which the class docstring advertises and which
+    reaches every checkpoint the Router builds. `per_model` is this checkpoint's own entry: None when
+    it has none at all, and `{}` for the placeholder a nested `LAYA_SHA256_DIGESTS` leaves for a
+    checkpoint it does not name.
+
+    None -- both channels silent -- means "pass no `expected_sha256`", which leaves `verify_digests`
+    its own `LAYA_SHA256_DIGESTS` fallback and keeps an unconfigured load byte for byte what it was.
+    An empty `{}` is **not** the same thing and must still reach `Agent`: it masks that fallback,
+    which for a *nested* variable would otherwise be read as an artifact map and raise
+    `cannot verify 'english': no such file` on a checkpoint the variable never named.
+
+    A value that is not a mapping is handed on untouched, so `verify_digests` keeps ownership of the
+    "expected_sha256 must be a mapping" message rather than this layer growing a second copy.
+
+    The two channels are merged file by file, because each names files and a digest is a claim about
+    one file -- dropping either half would verify less than the caller asked for. **For a file both
+    name, the per-checkpoint entry wins.** They are not equally specific: `shared` reaches every
+    checkpoint, and `model.safetensors` is the one name every checkpoint uses for a *different* file,
+    so a shared entry for it cannot be a correct claim about all of them at once. Refusing that
+    overlap as a contradiction broke the ordinary shape it appears in -- a shared pin plus a
+    per-checkpoint override, which loaded correctly before this function existed.
+
+    An empty placeholder therefore needs no special case: merging it changes nothing.
+    """
+    if per_model is not None and not isinstance(per_model, dict):
+        return per_model
+    if shared is not None and not isinstance(shared, dict):
+        return shared
+    if shared is None and per_model is None:
+        return None
+    merged = dict(shared or {})
+    merged.update(per_model or {})
+    return merged
 
 
 class Router(HookRegistry):
@@ -318,12 +407,67 @@ class Router(HookRegistry):
     which is useful when standalone repositories were reviewed at different commits.
     Without either, huggingface_hub's normal default and existing offline cache are used.
 
+    A `revisions` entry that is `None` or blank is "no override for this model", so the model
+    inherits `revision` -- the shape `{"english": os.environ.get("EN_SHA")}` writes when the
+    variable is unset, which must not cost the caller the pin it did ask for. Nothing in
+    `revisions` can unpin one model while `revision` pins the rest; leave `revision` unset and
+    name the models you want pinned instead.
+
+    A blank `revision` is read the same way, which is a deliberate change in what the Router
+    passes on: `Router(revision="   ")` used to reach `resolve_revision`, where a truthy but blank
+    string suppressed the `LAYA_REVISION` fallback and left huggingface_hub's default, and is now
+    dropped before it gets there, so a Router configured with whitespace behaves like one
+    configured with nothing and `$LAYA_REVISION` applies. That is what "this configuration line was
+    never filled in" has to mean if `revision` and a `revisions` entry are to be read the same way.
+
+    It is one of two places a weaker source ends up ahead of an explicit argument. The other is a
+    per-checkpoint digest entry from `LAYA_SHA256_DIGESTS`, which wins over an `expected_sha256`
+    passed through `agent_kwargs`; see the class docstring.
+
     Anything else `laya.Agent` accepts is reachable through `agent_kwargs`, which is merged into
     every checkpoint the Router builds:
 
         Router(agent_kwargs={"lang_temperatures": {"de": {"temperature": [1.0, 1.4, 2.0]}}})
         Router(agent_kwargs={"expected_sha256": {"model.safetensors": "a3f1..."}})
         Router(agent_kwargs={"fast": True})
+
+    `expected_sha256` there pins the same files on every checkpoint, which is what a single
+    resident checkpoint or a shared `tokenizer.json` wants. It is never discarded wholesale by a
+    checkpoint's own digests: where one also has an entry, from `sha256_digests` or from a
+    **per-checkpoint** `LAYA_SHA256_DIGESTS`, the two maps are merged **file by file**, so a file
+    only one of them names is still verified.
+
+    Two exceptions, both deliberate and both tested, because "merged file by file" is not the whole
+    story and the difference is a supply-chain control:
+
+    * A **flat** `LAYA_SHA256_DIGESTS` -- `{artifact: digest}` rather than `{model: {...}}` -- is
+      not a layer here at all. `verify_digests` applies it itself, but only when nothing else pins
+      (`if expected is None`), so ANY `expected_sha256` reaching `Agent`, from here or from a
+      checkpoint entry, means the flat variable is not consulted for that load. Verified on real
+      files: a flat variable pinning `model.safetensors` plus an `agent_kwargs` map pinning
+      `tokenizer.json` loads a tampered `model.safetensors`. Use the per-checkpoint shape, or name
+      every file you care about in one map, if you need both. This is unchanged from `main`.
+    * An explicit `{}` or `None` entry MASKS what would otherwise apply -- that is what "load this
+      one unverified" has to mean, and `test_an_explicit_none_entry_masks_a_flat_environment_map`
+      pins it.
+
+    And the precedence is per-checkpoint over shared regardless of where each came from, so a
+    per-checkpoint entry synthesised from `LAYA_SHA256_DIGESTS` wins over an `expected_sha256`
+    passed here in code. An environment variable beating an explicit argument is worth stating
+    plainly on a control like this; `test_an_environment_pin_overrides_the_shared_one_per_checkpoint`
+    is where that is pinned.
+
+    For a file both name, the per-checkpoint entry wins. The two are not equally specific: the
+    `agent_kwargs` map reaches every checkpoint the Router builds, and `model.safetensors` is the one
+    name every checkpoint uses for a *different* file, so a shared entry for it cannot be a correct
+    claim about all of them at once. **Nothing raises over that overlap** -- refusing it would reject
+    a shared pin plus a per-checkpoint override, which is the ordinary shape and which loaded
+    correctly before any of this existed. If you need to know which digest a checkpoint was verified
+    against, read it back: the map handed to each `Agent` is the merge described above.
+
+    Both `agent_kwargs` and `sha256_digests` are public and mutable, and a checkpoint's entry is read
+    on the load rather than at construction, so a pin assigned in afterwards -- or added to an
+    existing entry in place -- counts.
 
     The names the Router sets for itself -- `model_id_or_path`, `device`, `token`, `subfolder`,
     `revision` and the hook arguments -- are refused here rather than silently shadowed, and the
@@ -336,7 +480,9 @@ class Router(HookRegistry):
     is no Router-wide equivalent of `revision` because digests, unlike a commit SHA, are not
     shareable: the bundled repository ships a separate `model.safetensors` for each of
     `english`, `multilingual` and `typed-decisions`, so one flat map can only ever match one
-    of them. A model listed with `None` or `{}` is loaded unverified.
+    of them. A model listed with `None` or `{}` adds no files of its own, which loads it
+    unverified unless `agent_kwargs["expected_sha256"]` pins it; it still masks a flat
+    `LAYA_SHA256_DIGESTS`, which is what listing it that way is for.
 
     The same split is available to a process configured only by environment: when
     `LAYA_SHA256_DIGESTS` holds a model-keyed map (`{"english": {...}, "multilingual": {...}}`)
@@ -344,7 +490,10 @@ class Router(HookRegistry):
     own digests instead of refusing to start on the second one. A flat `LAYA_SHA256_DIGESTS`
     keeps its existing meaning, applied by `laya.revisions` to every checkpoint the process
     loads, which is right for a single-checkpoint one. An argument entry wins over the
-    environment for the model it names.
+    environment for the model it names. A nested variable that names some checkpoints and not
+    others says nothing about the others: they keep whatever `agent_kwargs["expected_sha256"]`
+    pins them with, because pinning one checkpoint from the environment is not a request to stop
+    verifying the rest.
 
     Hooks are opt-in and run at the Router level: `on_route` sees the routing decision,
     `on_load` / `on_evict` see model lifecycle, and `on_predict_start` / `on_predict_end`
@@ -409,9 +558,8 @@ class Router(HookRegistry):
         # `revisions`, so a misspelled model name fails here rather than leaving that checkpoint
         # unverified.
         self.sha256_digests: Dict[str, Optional[Dict[str, str]]] = _digests_from_env(self.models)
-        self.sha256_digests.update({
-            normalise_name(k): v for k, v in (sha256_digests or {}).items()
-        })
+        argument = {normalise_name(k): v for k, v in (sha256_digests or {}).items()}
+        self.sha256_digests.update(argument)
         self.max_loaded = max(1, int(max_loaded))
         self.default = normalise_name(default)
         self.auto_task_detection = bool(auto_task_detection)
@@ -449,15 +597,21 @@ class Router(HookRegistry):
             from .agent import Agent
             repo, sub = _split(self.models[key])
             kwargs = {"device": self.device, "token": self.token, "subfolder": sub}
-            model_revision = self.revisions.get(key, self.revision)
+            # A None or blank entry in `revisions` is "no pin of its own", so the checkpoint
+            # inherits `revision`. Reading it as a pin of nothing dropped the caller's `revision`
+            # and handed that one checkpoint to `$LAYA_REVISION` instead, which is the opposite of
+            # what asking for a pin means.
+            model_revision = _revision_pin(self.revisions.get(key)) or _revision_pin(self.revision)
             if model_revision is not None:
                 kwargs["revision"] = model_revision
-            # Safe to merge last: the names this method just set are refused in `agent_kwargs`.
+            # Safe to merge last for the names above, which `agent_kwargs` refuses -- but not for
+            # `expected_sha256`, which is deliberately reachable through `agent_kwargs` and is
+            # therefore merged with this checkpoint's entry rather than replaced by it.
             kwargs.update(self.agent_kwargs)
-            if key in self.sha256_digests:
-                # `or {}` is deliberate: an explicit None still has to reach Agent as a map, or
-                # `verify_digests` would fall back to the environment default it is masking.
-                kwargs["expected_sha256"] = self.sha256_digests[key] or {}
+            expected = _merge_expected_digests(kwargs.pop("expected_sha256", None),
+                                               _digest_entry(self.sha256_digests, key))
+            if expected is not None:
+                kwargs["expected_sha256"] = expected
             agent = Agent(repo, **kwargs)
             self._agents[key] = agent
             self._order.append(key)
@@ -814,8 +968,7 @@ class Router(HookRegistry):
             ctx.elapsed_ms = (time.perf_counter() - ctx.started_at) * 1000.0
             if ctx.results is not None:
                 ctx.usage = aggregate_usage(ctx.results)
-                if mc is not None:
-                    flag_low_confidence(ctx.results, mc)
+                apply_confidence_gate(ctx.results, mc)
             try:
                 dispatch(active, "on_predict_end", ctx, raise_errors=raise_errors, lock=self._hooks_lock, timeout=timeout)
             except BaseException as hook_exc:
@@ -851,8 +1004,12 @@ class Router(HookRegistry):
 
         Args:
             window: state tokens per window. Defaults to the routed checkpoint's budget
-                    (`max_len - head_max_len - 8`); a smaller window isolates a localized span.
-            stride: token step between windows; defaults to `window // 2` (50% overlap).
+                    (`max_len - head_max_len - 8`), capped at the room the questions leave for the
+                    state so no window is truncated again on the way in; a smaller window isolates
+                    a localized span.
+            stride: token step between windows; defaults to half the effective window (50%
+                    overlap). A stride past that window is a `ValueError`, since the tokens between
+                    windows would reach no model.
             aggregate: "auto" (the per-type rules above) is the only mode.
             batch_size: cap on windows per forward pass, to bound memory on very long states.
 
@@ -1164,14 +1321,14 @@ class Router(HookRegistry):
                 # had already run. Each is still ended, so a hook that opens something in start
                 # (a span, an in-flight count) always sees the matching end.
                 for ctx in started:
-                    if mc is not None and ctx.results:
-                        flag_low_confidence(ctx.results, mc)
+                    if ctx.results:
+                        apply_confidence_gate(ctx.results, mc)
                 self._end_contexts(active, started, raise_errors, timeout, error=exc)
                 raise
 
             for ctx in started:
-                if mc is not None and ctx.results:
-                    flag_low_confidence(ctx.results, mc)
+                if ctx.results:
+                    apply_confidence_gate(ctx.results, mc)
             self._end_contexts(active, started, raise_errors, timeout)
             for i, ctx in zip(indices, started):
                 results[i] = ctx.results[0]

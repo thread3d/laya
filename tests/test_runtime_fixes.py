@@ -17,7 +17,8 @@ import torch.nn as nn
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from laya.agent import (  # noqa: E402
-    MPS_AMP_MIN_ROWS_DEFAULT, Agent, _BATCH_AUTOCAST_CACHE, _amp_context, _cuda_amp_dtype, _mps_amp_min_rows,
+    MPS_AMP_MIN_ROWS_DEFAULT, Agent, _BATCH_AUTOCAST_CACHE, _amp_context, _cpu_amp_dtype,
+    _cuda_amp_dtype, _mps_amp_min_rows,
 )
 from laya.common import DecisionModel, build_sequence, serialize_state  # noqa: E402
 
@@ -263,7 +264,30 @@ os.environ["LAYA_CUDA_AMP"] = "BF16"
 check("cuda-amp/env bf16 overrides an fp16 checkpoint", _cuda_amp_dtype("fp16"), torch.bfloat16)
 os.environ["LAYA_CUDA_AMP"] = "int8"
 check("cuda-amp/env invalid falls back to the checkpoint", _cuda_amp_dtype("bf16"), torch.bfloat16)
+# `agent.dtype` reports float16 and bfloat16, so those are the spellings a caller can read off one
+# response and ask for on the next. laya/agent.py has accepted both from the start; both prose
+# sites that listed the vocabulary described them as inert, and tests/test_env_docs.py now holds
+# every page that names a dtype to the tuples above.
+os.environ["LAYA_CUDA_AMP"] = "float16"
+check("cuda-amp/env float16 is the same ask as fp16", _cuda_amp_dtype("bf16"), torch.float16)
+os.environ["LAYA_CUDA_AMP"] = "BFloat16"
+check("cuda-amp/env bfloat16 is the same ask as bf16", _cuda_amp_dtype("fp16"), torch.bfloat16)
 del os.environ["LAYA_CUDA_AMP"]
+
+# CPU has its own vocabulary and it is the narrower one: bf16 only. No arm reached this comparison
+# before -- the agents in this file hand-set `dtype` and `amp_enabled` through `_bare_agent`, so
+# the value the documentation promises was never the value anything checked.
+os.environ.pop("LAYA_CPU_AMP", None)
+check("cpu-amp/unset leaves the forward fp32", _cpu_amp_dtype(), None)
+os.environ["LAYA_CPU_AMP"] = "bf16"
+check("cpu-amp/env bf16 opts in", _cpu_amp_dtype(), torch.bfloat16)
+os.environ["LAYA_CPU_AMP"] = "BFloat16"
+check("cpu-amp/env bfloat16 opts in", _cpu_amp_dtype(), torch.bfloat16)
+os.environ["LAYA_CPU_AMP"] = "fp16"
+check("cpu-amp/env fp16 is not offered on this device", _cpu_amp_dtype(), None)
+os.environ["LAYA_CPU_AMP"] = "int8"
+check("cpu-amp/env invalid leaves the forward fp32", _cpu_amp_dtype(), None)
+del os.environ["LAYA_CPU_AMP"]
 
 
 # ------------------------------------------------------------------ amp context shape

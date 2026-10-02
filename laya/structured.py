@@ -20,7 +20,7 @@ from collections.abc import Sequence as SequenceABC
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from .confidence import answer_confidence_value, check_min_confidence, flag_low_confidence
+from .confidence import answer_confidence_value, apply_confidence_gate, check_min_confidence
 
 MAX_PROPERTIES = 32
 MAX_OPTIONS = 32
@@ -310,8 +310,8 @@ def decide(runner, state: Any, schema: Any = None, *, questions: Optional[Dict[s
         else:
             raise
 
-    if mc is not None and isinstance(result, dict):
-        flag_low_confidence([result], mc)
+    if isinstance(result, dict):
+        apply_confidence_gate([result], mc)
 
     answers = result.get("answers", {}) or {}
     values = _project(answers, fields) if fields is not None else dict(answers)
@@ -372,10 +372,9 @@ def decide_batch(runner, states: Sequence[Any], schema: Any = None, *,
         # Agent convention: a list of states evaluated against one question set.
         results = predict_batch(list(states), questions, **predict_kwargs)
 
-    if mc is not None:
-        # Flagged here rather than passed down, so a runner whose predict_batch predates the
-        # keyword still gets the same projection.
-        flag_low_confidence([r for r in results if isinstance(r, dict)], mc)
+    # Applied here rather than passed down, so a runner whose predict_batch predates the
+    # keyword still gets the same projection and the same reported state.
+    apply_confidence_gate([r for r in results if isinstance(r, dict)], mc)
 
     def _one(r: Dict[str, Any]) -> Any:
         answers = r.get("answers", {}) or {}

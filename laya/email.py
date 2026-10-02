@@ -1,10 +1,12 @@
 """Email utilities for cleaning and structuring email inputs in laya.
 
-The markers below cover English, Portuguese and Spanish mail clients. The Router already sends
+The markers below cover English, Portuguese, Spanish and French mail clients. The Router already sends
 Portuguese and Spanish states to the multilingual checkpoint, but with English-only markers their
 cleaning was a no-op: Gmail's `Em ... escreveu:`, Outlook's `-----Mensagem original-----`, the
 `Atenciosamente` sign-off and the confidentiality footer all reached the model, and the quoted
 history (often a *different* request) weighed on the answer as much as the new message did.
+French mail reads the same way through an English-only cleaner: Gmail's `Le ... a écrit :`,
+Outlook's `-----Message d'origine-----`, `Cordialement` and `Envoyé depuis mon iPhone` all survived.
 """
 import re
 import unicodedata
@@ -19,8 +21,12 @@ _QUOTE_HEADERS = [
     # "Em resposta ao que você escreveu:" is body text; a client's attribution always carries a date
     re.compile(r"^\s*Em (?=.*\d).{0,300}escreveu:\s*$", re.I),
     re.compile(r"^\s*El (?=.*\d).{0,300}escribi[óo]:\s*$", re.I),
+    # Gmail's French attribution always carries a date too ("Le lun. ... a écrit :"); a bare
+    # "Le rapport que vous avez écrit :" is body text, the same rule as above. French typography
+    # puts a space before the colon, so the verb allows one (`a écrit :`, never `a écrit:`).
+    re.compile(r"^\s*Le (?=.*\d).{0,300}a [eé]crit\s*:\s*$", re.I),
     re.compile(r"^\s*-{2,}\s*(Original|Forwarded) Message\s*-{2,}", re.I),
-    re.compile(r"^\s*-{2,}\s*(Mensagem (original|encaminhada)|Mensaje (original|reenviado))\s*-{2,}", re.I),
+    re.compile(r"^\s*-{2,}\s*(Mensagem (original|encaminhada)|Mensaje (original|reenviado)|Message d'origine)\s*-{2,}", re.I),
     re.compile(r"^\s*_{8,}\s*$"),
     # `From:` opens ordinary prose too ("From: my side the integration works, but please
     # refund..."), and a reply header always carries the sender, so the header is only
@@ -29,13 +35,15 @@ _QUOTE_HEADERS = [
     # header's own `Sent:`/`Date:` line to tell it apart from a sentence.
     re.compile(r"^\s*From:\s.*[@<]", re.I),
     # `De:` also opens ordinary Portuguese/Spanish lines ("De: 10/09 a 15/09"), so the Outlook
-    # header is only recognised when it carries an address
-    re.compile(r"^\s*De:\s.*[@<]", re.I),
+    # header is only recognised when it carries an address. French Outlook writes `De :` with a
+    # space, so the marker allows one; the address rule is unchanged
+    re.compile(r"^\s*De\s*:\s.*[@<]", re.I),
 ]
 # Gmail wraps a long attribution line, leaving `fulano@x.com> escreveu:` alone on the next line.
-# That tail cuts too, and takes the `On/Em/El ...` head it belongs to with it.
-_ATTRIBUTION_TAIL = re.compile(r"^.{0,120}\S@\S+\s+(wrote|escreveu|escribi[óo]):\s*$", re.I)
-_ATTRIBUTION_HEAD = re.compile(r"^\s*(On|Em|El) (?=.*\d)", re.I)
+# That tail cuts too, and takes the `On/Em/El/Le ...` head it belongs to with it. The French tail
+# keeps its spaced colon (`support@x.com> a écrit :`).
+_ATTRIBUTION_TAIL = re.compile(r"^.{0,120}\S@\S+\s+(wrote|escreveu|escribi[óo]|a [eé]crit)\s*:\s*$", re.I)
+_ATTRIBUTION_HEAD = re.compile(r"^\s*(On|Em|El|Le) (?=.*\d)", re.I)
 # Exchange often leaves the address out of Outlook's reply header ("De: Maria Souza"), so a bare `De:`
 # only cuts when the header's own `Enviado:` line, or a dated `Data:`/`Fecha:` line, follows it.
 # `Para:` is not enough: "De: 10/09 / Para: 15/09" is how a leave request reads.
@@ -43,9 +51,11 @@ _ATTRIBUTION_HEAD = re.compile(r"^\s*(On|Em|El) (?=.*\d)", re.I)
 # The same is true of a bare English `From: Maria Souza`, which is why the marker above needs
 # this rule: the English client lines are the translations of the two `De:` neighbours. A line
 # that only looks like prose still has to be told apart from a header by its neighbours, so the
-# English pair is "From: <name>" followed by "Sent:"/"Date:".
-_HEADER_FROM_NAME = re.compile(r"^\s*(De|From):\s+\S", re.I)
-_HEADER_NEXT = re.compile(r"^\s*(Enviad[oa]( em| el)?:\s|Sent:\s|(Data|Fecha|Date):\s.*\d{4})", re.I)
+# English pair is "From: <name>" followed by "Sent:"/"Date:". French Outlook writes the same
+# header as `De : Marie Dupont` with `Envoyé :` underneath, so the pair gains that translation too.
+# Both allow the French spaced colon (`De :`, `Envoyé :`); the neighbours still do the telling apart.
+_HEADER_FROM_NAME = re.compile(r"^\s*(De|From)\s*:\s+\S", re.I)
+_HEADER_NEXT = re.compile(r"^\s*(Enviad[oa]( em| el)?:\s|Envoy[ée]( le)?\s*:\s|Sent:\s|(Data|Fecha|Date):\s.*\d{4})", re.I)
 # A closing's name starts with a letter that is not lowercase: capitalised in any script
 # (`Łukasz`, `Дмитрий`) or caseless (`山田`). `re` cannot say "not a lowercase letter in any
 # script" -- a class has to list ranges, and `[^\W\d_a-zß-öø-ÿ]` stops at Latin-1, so
@@ -109,21 +119,27 @@ _SIGNATURE_MARKERS = [
     # rule. `Regards, Łukasz` is a sign-off, `Thanks for the reply` is not.
     _is_english_signoff,
     # Portuguese/Spanish sign-offs match only on their own: "Obrigado pelo retorno, mas ..." is a
-    # request, not a signature, so unlike the English marker no trailing words are allowed
+    # request, not a signature, so unlike the English marker no trailing words are allowed.
+    # French closings keep the same rule: "Merci pour votre aide, mais ..." stays, while a bare
+    # "Cordialement," or "Merci," goes with the name underneath it.
     re.compile(
         r"^\s*(atenciosamente|att|abraços?|abs|um abraço|cordialmente|grat[oa]|(muito )?obrigad[oa]s?"
         r"( desde já| pela atenção)?|(com os melhores )?cumprimentos|saudações|"
-        r"(un )?saludos?( cordiales)?|atentamente|(muchas )?gracias( de antemano)?)[\s,!.]*$",
+        r"(un )?saludos?( cordiales)?|atentamente|(muchas )?gracias( de antemano)?|"
+        r"(bien )?cordialement|salutations( distinguées)?|bien à vous|merci( d'avance)?|"
+        r"bonne journée)[\s,!.]*$",
         re.I,
     ),
 ]
 # Mobile and mail-app footers. Only a line that is nothing *but* the footer matches -- "Enviado do meu
 # celular o comprovante ontem." is a request -- and such a line may run to 60 characters, since
 # Samsung's default ("Enviado do meu smartphone Samsung Galaxy.") is longer than a sign-off's 40.
+# Apple's French default ("Envoyé depuis mon iPhone") reads the same way.
 _DEVICE = (r"iphone|ipad|android|ios|mobile|celular|telemóvel|móvil|galaxy|smartphone|samsung|tablet|"
            r"outlook|yahoo|mail|e-?mail|gmail|windows")
 _DEVICE_FOOTER = re.compile(
-    r"^\s*((enviad[oa] (do|pelo|pela|via|desde|a partir do)( meu| minha| mi)?|sent from( my)?)"
+    r"^\s*((enviad[oa] (do|pelo|pela|via|desde|a partir do)( meu| minha| mi)?|sent from( my)?|"
+    r"envoy[ée] (depuis|de) (mon |ma |mes )?)"
     r" (%s)( (%s|para|for|no|na|\d+|phone|device|pro|max|mini|plus|using [a-z][a-z0-9_.+-]*))*"
     r"|(obter o|get) outlook (para|for) (ios|android))[\s.!]*$"
     % (_DEVICE, _DEVICE),
@@ -149,7 +165,12 @@ _DISCLAIMER = re.compile(
     # the "think before printing" footer, tied to its environmental ending rather than to
     # `antes de imprimir`, which a request uses too ("antes de imprimir o boleto, confira o valor")
     r"\bantes de imprimir\b[^.]{0,100}(meio ambiente|medio ambiente|natureza|planeta|realmente necess)|"
-    r"\b(meio|medio) ambiente\b[^.]{0,30}antes de imprimir)",
+    r"\b(meio|medio) ambiente\b[^.]{0,30}antes de imprimir|"
+    # French: tied to "ce message/cet e-mail" rather than the bare word `confidentiel`,
+    # which a sender's own request ("le contrat confidentiel") uses just as often
+    r"\b(ce|cet|cette) (message|e-?mail|mail|courriel)\b[^.]{0,80}(confidentiel|privil[eé]gi)|"
+    r"\bavez re[çc]u (ce|cet|cette) (message|e-?mail|mail)\b[^.]{0,20} par erreur|"
+    r"\b(usage exclusif|exclusivement|uniquement)\b[^.]{0,30}destinataire)",
     re.I,
 )
 _SENTENCE = re.compile(r"(?<=[.!?])\s+")

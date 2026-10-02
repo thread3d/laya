@@ -325,6 +325,18 @@ check("batch -: reads stdin", code == 0
       and len(stub.predict_batch_calls[0][0]) == 2
       and len([l for l in out.splitlines() if l.strip()]) == 2, "code %r err %r" % (code, err))
 
+# A pipe arrives in the locale's codec unless told otherwise, and FILE is read as utf-8, so `-`
+# has to be too or a non-Latin request reaches the router as mojibake.
+_hindi = "मुझसे दो बार"
+sys.stdin = io.TextIOWrapper(io.BytesIO(_hindi.encode("utf-8")), encoding="latin-1")
+try:
+    code, out, err, stub = run_batch_cli(["--batch", "-", "--predict", "--json"])
+finally:
+    sys.stdin = _original_stdin
+_states = [list(r["state"].values()) for r in stub.predict_batch_calls[0][0]]
+check("batch -: stdin is decoded as utf-8, like FILE", code == 0 and _states == [[_hindi]],
+      "code %r states %r" % (code, _states))
+
 # ------------------------------------------------------------- --sort-by-length (#294 knob)
 #
 # `Agent.predict_batch` and `Router.predict_batch` have grouped similarly sized states into one
@@ -530,6 +542,169 @@ for value in ("abc", ""):
                                    router=QuestionRecorder())
     check("budget %r: rejected by argparse" % value, code == 2 and "invalid int value" in err,
           "code %r, err %r" % (code, err))
+
+# --------------------------------------------------------------- --min-confidence (#361's gate)
+# The gate itself is core's: `Router.predict` and `Router.predict_batch` both run the argument
+# through `laya.confidence.check_min_confidence` and then `flag_low_confidence`, which marks an
+# answer and keeps it. What this section covers is the CLI's half -- the flag reaches the call, an
+# unset flag is not sent as `None`, a value outside core's range is refused in core's words,
+# routing refuses the flag instead of exiting 0 having ignored it, and the mark a gated run
+# produces is printed to a terminal rather than only reachable through --json.
+import inspect  # noqa: E402
+
+from laya import Router as _Router  # noqa: E402
+from laya.confidence import check_min_confidence as _core_check  # noqa: E402
+
+
+class GatedRouter(QuestionRecorder):
+    """Returns one answer, optionally with the mark `flag_low_confidence` adds."""
+
+    def __init__(self, mark=True, kind="choice"):
+        super().__init__()
+        self.mark = mark
+        self.kind = kind
+
+    def predict(self, state, questions, **kwargs):
+        self.kwargs = kwargs
+        answer = {"probabilities": {"refund": 0.31, "billing": 0.4}}
+        if self.kind == "choice":
+            answer["choice"] = "refund"
+        else:
+            answer["score"] = 1.0
+        answer["answer_confidence"] = 0.31
+        if self.mark:
+            answer["low_confidence"] = True
+        return {"answers": {"intent": answer}, "routing": dict(StubDecision())}
+
+
+code, out, err, stub = run_cli(["--predict", "--min-confidence", "0.5", "hello"],
+                               router=GatedRouter(mark=False))
+check("threshold: forwarded to predict", stub.kwargs.get("min_confidence") == 0.5, str(stub.kwargs))
+check("threshold: exit code", code == 0, "got %r %s" % (code, err))
+
+code, out, err, stub = run_cli(["--predict", "hello"], router=GatedRouter(mark=False))
+check("threshold: unset is not sent as None", "min_confidence" not in stub.kwargs, str(stub.kwargs))
+
+# `0.0` is the one threshold core itself treats as a no-op (`flag_low_confidence` returns early on
+# it), but it is still a value a caller chose rather than an absence; `0` and `1` are core's
+# inclusive bounds.
+for raw, want in (("0", 0.0), ("0.0", 0.0), ("1", 1.0)):
+    code, out, err, stub = run_cli(["--predict", "--min-confidence", raw, "hello"],
+                                   router=GatedRouter(mark=False))
+    check("threshold %r: still a threshold, not an absence" % raw,
+          code == 0 and stub.kwargs.get("min_confidence") == want,
+          "code %r, got %r" % (code, stub.kwargs.get("min_confidence", "<absent>")))
+
+# The accepted range is core's, so the CLI's verdict on a value has to match core's own -- the
+# same check `predict` runs, not a copy of its bounds.
+for raw in ("0", "0.5", "1", "0.9", "1.5", "-0.1", "nan", "inf", "1e999", "true", "abc", ""):
+    try:
+        _core_check(float(raw))
+        accepted_by_core = True
+    except (TypeError, ValueError):
+        accepted_by_core = False
+    code, out, err, stub = run_cli(["--predict", "--min-confidence", raw, "hello"],
+                                   router=GatedRouter(mark=False))
+    check("threshold %r: same verdict as core" % raw,
+          (code == 0) == accepted_by_core,
+          "code %r, core accepts %r, err %r" % (code, accepted_by_core, err))
+    check("threshold %r: never a traceback" % raw, "Traceback" not in err, err)
+
+code, out, err, stub = run_cli(["--predict", "--min-confidence", "1.5", "hello"],
+                               router=GatedRouter(mark=False))
+check("threshold: an out-of-range value is refused in core's words",
+      code == 2 and "min_confidence must be a float in [0.0, 1.0], got 1.5" in err, err)
+code, out, err, stub = run_cli(["--predict", "--min-confidence", "inf", "hello"],
+                               router=GatedRouter(mark=False))
+check("threshold: infinity is refused, not accepted as a gate",
+      code == 2 and "min_confidence must be a float in [0.0, 1.0]" in err, err)
+
+# Routing answers nothing, so there is no confidence to gate: `route` does not take the argument.
+# Exiting 0 here would be the silent-ignore this flag exists to avoid.
+code, out, err, stub = run_cli(["--min-confidence", "0.5", "hello"], router=GatedRouter())
+check("threshold: routing mode refuses it", code == 2, "got %r" % code)
+check("threshold: the refusal names the flag and an answering mode",
+      "--min-confidence" in err and "--predict" in err, err)
+check("threshold: nothing was routed", stub.route_calls == [] and stub.kwargs == {}, str(stub.kwargs))
+
+# The refusal is about routing, not about the flag being unwelcome: every answering mode takes it,
+# including the two that reach answering by implying `--predict` rather than being told.
+for argv, label in ((["--predict", "hello"], "--predict"),
+                    (["--preset", "triage", "hello"], "--preset"),
+                    (["--questions", INTENTS_PATH, "hello"], "--questions")):
+    code, out, err, stub = run_cli(argv + ["--min-confidence", "0.5"], router=GatedRouter(mark=False))
+    check("threshold: %s mode takes it" % label,
+          code == 0 and stub.kwargs.get("min_confidence") == 0.5,
+          "code %r, kwargs %r, err %r" % (code, stub.kwargs, err))
+
+code, out, err, stub = run_batch_cli(["--batch", path, "--min-confidence", "0.5"])
+check("threshold: batch routing refuses it too", code == 2 and stub.predict_batch_calls == [],
+      "code %r, calls %r" % (code, stub.predict_batch_calls))
+
+
+class ThresholdBatchRouter(BatchRouter):
+    """Records the call-level keyword arguments of `predict_batch` separately from the requests."""
+
+    def __init__(self):
+        super().__init__()
+        self.call_kwargs = []
+
+    def predict_batch(self, requests, batch_size=None, **call_kwargs):
+        self.call_kwargs.append(call_kwargs)
+        return super().predict_batch(requests, batch_size=batch_size)
+
+
+code, out, err, stub = run_batch_cli(["--batch", path, "--predict", "--min-confidence", "0.5"],
+                                     router=ThresholdBatchRouter())
+requests = stub.predict_batch_calls[0][0]
+check("threshold batch: sent to predict_batch as a call argument",
+      code == 0 and stub.call_kwargs == [{"min_confidence": 0.5}],
+      "code %r, kwargs %r" % (code, stub.call_kwargs))
+# `predict_batch` validates one threshold for the whole batch and has no per-request form, so a
+# key inside the request dicts would be read by nothing.
+check("threshold batch: not stuffed into each request",
+      all("min_confidence" not in r for r in requests), str(requests))
+
+code, out, err, stub = run_batch_cli(["--batch", path, "--predict"], router=ThresholdBatchRouter())
+check("threshold batch: unset sends nothing", stub.call_kwargs == [{}], str(stub.call_kwargs))
+
+# Rendering: the mark has to reach the terminal, or --json is the only way to learn the model was
+# unsure -- which is how the gate reads as a no-op to anyone not parsing JSON.
+code, out, err, stub = run_cli(["--predict", "--min-confidence", "0.5", "hello"],
+                               router=GatedRouter(mark=True))
+check("threshold: the printed line carries the mark", "[low-confidence]" in out, out)
+check("threshold: the answer itself is still printed", "refund" in out, out)
+code, out, err, stub = run_cli(["--predict", "hello"], router=GatedRouter(mark=False))
+check("threshold: an unmarked answer prints no mark", "[low-confidence]" not in out, out)
+code, out, err, stub = run_cli(["--predict", "--min-confidence", "0.5", "hello"],
+                               router=GatedRouter(mark=True, kind="score"))
+check("threshold: a score answer is marked too", "[low-confidence]" in out and "1.00" in out, out)
+code, out, err, stub = run_cli(["--predict", "--min-confidence", "0.5", "--json", "hello"],
+                               router=GatedRouter(mark=True))
+check("threshold: --json still carries the raw key",
+      '"low_confidence": true' in out, out)
+
+# Drift pin, the other direction: every control `predict` takes that the parser can name must
+# arrive in the call, and the ones it cannot name must be the accepted three. A control added to
+# `predict` lands in the second check and has to be placed -- flagged and forwarded, or written
+# down as something this command cannot mean -- before the suite passes again.
+PREDICT_CONTROLS = {p for p in inspect.signature(_Router.predict).parameters
+                    if p not in ("self", "state", "questions")}
+NAMED = set(vars(cli.build_parser().parse_args(["hi"])))
+code, out, err, stub = run_cli(["--predict", "--model", "english", "--task", "multi",
+                                "--lang", "de", "--max-len", "1024", "--head-max-len", "512",
+                                "--min-confidence", "0.5", "hello"], router=GatedRouter(mark=False))
+check("drift: every control the parser names a flag for arrives in the call",
+      all(control in stub.kwargs for control in (PREDICT_CONTROLS & NAMED)),
+      "missing %s" % sorted((PREDICT_CONTROLS & NAMED) - set(stub.kwargs)))
+# `lang_guess` has had its own flag since #795, so what is left is the hook arguments:
+# `hooks_raise` / `hooks_timeout` govern hooks and `make_router` installs none, so there is
+# nothing in this process for them to change, and the three callables cannot come off a shell.
+check("drift: the controls with no flag are exactly the accepted five",
+      sorted(PREDICT_CONTROLS - NAMED)
+      == ["hooks", "hooks_raise", "hooks_timeout",
+          "on_predict_end", "on_predict_start"],
+      sorted(PREDICT_CONTROLS - NAMED))
 
 # --------------------------------------------------------------------- report
 print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))

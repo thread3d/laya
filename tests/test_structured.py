@@ -172,6 +172,8 @@ check("decide/details routing", details.routing, {"model": "english"})
 
 runner = FakeRunner({"a": {"type": "noul", "noul": 0.9, "confidence": 0.9}})
 out = decide(runner, "s", questions={"a": {"type": "noul", "instructions": "?"}})
+# The pass-through is the raw answer, and no `min_confidence` was passed, so it comes back exactly
+# as the runner produced it -- the gate adds nothing to a call it was not asked to gate.
 check("decide/questions pass-through returns answers", out,
       {"a": {"type": "noul", "noul": 0.9, "confidence": 0.9}})
 
@@ -348,7 +350,8 @@ check("batch/details routing", details[0].routing, {"model": "english"})
 # questions= is the raw-answers pass-through, exactly like decide()
 raw = decide_batch(FakeBatchRunner({"a": {"x": {"type": "noul", "noul": 0.9, "confidence": 0.9}}}),
                    ["a"], questions={"x": {"type": "noul", "instructions": "?"}})
-check("batch/questions pass-through", raw, [{"x": {"type": "noul", "noul": 0.9, "confidence": 0.9}}])
+check("batch/questions pass-through", raw,
+      [{"x": {"type": "noul", "noul": 0.9, "confidence": 0.9}}])
 
 
 class FakeRouterLike:

@@ -15,7 +15,7 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from laya._compile import compile_model, independent_dims  # noqa: E402
-from laya.agent import Agent  # noqa: E402
+from laya.agent import Agent, _pad_cuda_compile_batch  # noqa: E402
 from laya.common import DecisionModel  # noqa: E402
 
 fx_config = torch.fx.experimental._config
@@ -32,7 +32,11 @@ def tiny_model():
                            num_attention_heads=2, global_attn_every_n_layers=2, local_attention=16,
                            max_position_embeddings=512, pad_token_id=0, bos_token_id=1, eos_token_id=2,
                            cls_token_id=1, sep_token_id=2)
-    return DecisionModel(AutoModel.from_config(cfg, attn_implementation="sdpa"), 1, 2).eval()
+    encoder = AutoModel.from_config(cfg, attn_implementation="sdpa")
+    # The CPU fixture checks Laya's dynamic dimensions, not ModernBERT's own
+    # first-forward mutation of reference_compile ("auto" -> False on CPU).
+    encoder.config.reference_compile = False
+    return DecisionModel(encoder, 1, 2).eval()
 
 
 def batch(rows, tokens, markers):
@@ -58,6 +62,22 @@ def compiled_agent(model):
 def graphs():
     from torch._dynamo.utils import counters
     return counters["stats"]["unique_graphs"]
+
+
+def test_cuda_compile_padding_masks_only_the_new_tail():
+    b = batch(2, 49, 3)
+    padded = _pad_cuda_compile_batch(b, 7)
+    assert padded["input_ids"].shape == (2, 56)
+    assert padded["attention_mask"].shape == (2, 56)
+    assert torch.equal(padded["input_ids"][:, :49], b["input_ids"])
+    assert torch.equal(padded["attention_mask"][:, :49], b["attention_mask"])
+    assert torch.all(padded["input_ids"][:, 49:] == 7)
+    assert not padded["attention_mask"][:, 49:].any()
+    assert padded["marker_pos"] is b["marker_pos"]
+    assert padded["marker_mask"] is b["marker_mask"]
+    assert padded["qtype"] is b["qtype"]
+    assert b["input_ids"].shape == (2, 49)
+    assert _pad_cuda_compile_batch(padded, 0) is padded
 
 
 def test_one_graph_across_shapes_and_same_outputs():

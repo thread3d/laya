@@ -13,9 +13,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from laya.common import render_options  # noqa: E402
 from research.eval.presentation_checks import (  # noqa: E402
-    CHECKS, FIRST_SLOT_MIN, IDENTICAL_KS, IDENTICAL_TEXTS, INSTRUCTIONS, LANGUAGES, LEVELS, PARITY_TOL,
-    SLOT0_MIN, STATES, check_score_first_slot_permuted, check_score_slot0_identical, exit_code,
-    identical_question, leave_one_out, main, parse_langs, passes, permuted_questions, routes, run_checks,
+    ALL_CHECKS, CHECKS, CHOICE_KS, FIRST_SLOT_MIN, IDENTICAL_KS, IDENTICAL_TEXTS, INSTRUCTIONS, LANGUAGES,
+    LEVELS, PARITY_TOL, SLOT0_MIN, STATES, check_choice_slot0_identical, check_score_first_slot_permuted,
+    check_score_slot0_identical, choice_identical_question, exit_code, identical_question, leave_one_out,
+    main, parse_langs, passes, permuted_questions, routes, run_checks,
 )
 
 PASS, FAIL = [], []
@@ -237,6 +238,56 @@ for bad in (["xx"], ["ja,xx"], [","]):
     except ValueError as exc:
         check_true("langs/%r raises naming the known codes" % bad, "ja, ko, hi, tr" in str(exc), str(exc))
 check("langs/unknown code exits 2 before loading a checkpoint", main(["--lang", "xx"]), 2)
+
+
+# ------------------------------------------------ choice identical-option control (#602 a)
+check("choice/option counts, gated first", CHOICE_KS, (4, 3))
+check("choice/kept out of the default run", sorted(CHECKS), ["score_first_slot_permuted", "score_slot0_identical"])
+check("choice/registered beside it", sorted(ALL_CHECKS),
+      ["choice_slot0_identical", "score_first_slot_permuted", "score_slot0_identical"])
+for lang, spec in LANGUAGES.items():
+    for text in spec["identical_texts"]:
+        for k in CHOICE_KS:
+            q = choice_identical_question(text, k, spec["instructions"])
+            check("choice/%s %s K=%d numbered keys" % (lang, text, k), list(q["criteria"]),
+                  [str(i + 1) for i in range(k)])
+            rendered = render_options({"t": q["type"], "ins": q["instructions"], "crit": q["criteria"]})
+            check("choice/%s %s K=%d renders numbered key + shared description" % (lang, text, k),
+                  rendered, ["%d: %s" % (i + 1, text) for i in range(k)])
+
+r = check_choice_slot0_identical(FLAT)
+check("choice/flat logits sit at zero and pass", (r["metric"], r["passed"]), (0.0, True))
+r = check_choice_slot0_identical(NO_SLOT0)
+# slot 0 at -2, the rest at +0.5: K=4 -2 - (-0.5/4) = -1.875, K=3 -2 - (-1/3) = -5/3
+check("choice/suppressed slot 0 gated at K=4", r["metric"], -1.875)
+check("choice/K=3 reported beside it", r["by_k"], {"4": -1.875, "3": round(-5 / 3, 4)})
+check("choice/suppressed slot 0 fails", (r["k"], r["passed"]), (4, False))
+r = check_choice_slot0_identical(scripted([-0.1, 0.0, 0.0, 0.0, 0.0]))
+check("choice/a slight deficit above the gate passes", (r["metric"], r["passed"]), (-0.075, True))
+r = check_choice_slot0_identical(scripted([-0.3, 0.0, 0.0, 0.0, 0.0]))
+check("choice/a deficit below the gate fails", (r["metric"], r["passed"]), (-0.225, False))
+r = check_choice_slot0_identical(EARLY)
+check_true("choice/one-sided: early-slot preference passes", r["metric"] > 0 and r["passed"], str(r))
+check("choice/one row per state", len(r["per_state"]), len(STATES))
+check("choice/one entry per (text, K)", len(r["per_config"]), len(IDENTICAL_TEXTS) * len(CHOICE_KS))
+for lang, spec in LANGUAGES.items():
+    seen = []
+
+    def recording(state, questions, _seen=seen):
+        _seen.extend(q["instructions"] for q in questions)
+        return FLAT(state, questions)
+
+    r = check_choice_slot0_identical(recording, lang=lang)
+    check_true("choice/%s asks in its own language" % lang, set(seen) == {spec["instructions"]})
+    check("choice/%s per-config keys use its texts" % lang, sorted(r["per_config"]),
+          sorted("%s/K=%d" % (t, k) for t in spec["identical_texts"] for k in CHOICE_KS))
+
+calls = []
+run_checks(lambda s, q: calls.append(len(q)) or FLAT(s, q), list(ALL_CHECKS), lang="ja")
+check("choice/all three checks: one forward per state per check", len(calls), 3 * 10)
+check("choice/default run_checks still runs the two score checks only", sorted(run_checks(FLAT)["checks"]),
+      ["score_first_slot_permuted", "score_slot0_identical"])
+check("choice/unknown check name exits 2", main(["--checks", "nope"]), 2)
 
 
 print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))

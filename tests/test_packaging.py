@@ -3,6 +3,7 @@
 Text parsing, not tomllib: the floor is 3.10 and tomllib arrives in 3.11.
 """
 import ast
+import fnmatch
 import os
 import re
 import shlex
@@ -160,6 +161,15 @@ def _invoked_workflow_tests(yaml_text):
                 invoked.update(re.findall(r"\btests/(test_[a-zA-Z0-9_]+\.py)\b", part))
             elif re.search(r"\bpython(?:\d+(?:\.\d+)?)?\s+.*?tests/(test_[a-zA-Z0-9_]+\.py)\b", part):
                 invoked.update(re.findall(r"\btests/(test_[a-zA-Z0-9_]+\.py)\b", part))
+            else:
+                # `unittest discover` runs a whole glob rather than naming files, so expand it
+                # against the tree. A lane that discovers `test_zh_*.py` has wired every suite
+                # the glob matches, and naming them again in the workflow would only drift.
+                found = re.search(r"\bunittest\s+discover\b.*?-s\s+tests\b"
+                                  r".*?-p\s+'?\"?([^'\" ]+)", part)
+                if found:
+                    invoked.update(fnmatch.filter(os.listdir(os.path.join(ROOT, "tests")),
+                                                  found.group(1)))
     return invoked
 
 
@@ -305,8 +315,48 @@ check_true("compose.cuda/no stale reference to a missing file",
 
 # Every file the Docker workflow validates must exist.
 for name in ("compose.yaml", "compose.example.yml", "compose.cuda.yaml", "compose.http.yaml",
-             "compose.spark.yaml"):
+             "compose.spark.yaml", "compose.modelscope.yaml"):
     check_true("compose/%s exists" % name, os.path.exists(name))
+
+# The ModelScope bake is a build argument, so a deployment that wants it has to carry the
+# arguments into *both* services -- `laya-serve` is its own service and an override for `laya`
+# never reaches it, which is the same trap compose.cuda.yaml documents. And the image has to stay
+# offline: a baked snapshot is keyed by a ModelScope commit the Hub cannot confirm, so going online
+# downloads the same weights again instead of serving the baked copy.
+ms = read("compose.modelscope.yaml")
+check_true("compose.modelscope/covers laya-serve too",
+           re.search(r"^\s{2}laya-serve:", ms, re.M) is not None,
+           "compose.modelscope.yaml does not mention laya-serve, so served checkpoints come from "
+           "the Hub and a host without Hugging Face access cannot serve at all")
+# One argument selects the checkpoint, and it defaults to the multilingual one, the checkpoint
+# every Laya caller routes to without being asked.
+check("compose.modelscope/repeats the prefetch args for both services",
+      len(re.findall(r'MODELSCOPE_MODEL: "\$\{MODELSCOPE_MODEL:-multilingual\}"', ms)), 2)
+check("compose.modelscope/repeats the revision for both services",
+      len(re.findall(r'MODELSCOPE_REVISION: "\$\{MODELSCOPE_REVISION:-master\}"', ms)), 2)
+check("compose.modelscope/keeps every service on the baked cache",
+      len(re.findall(r'HF_HUB_OFFLINE: "\$\{HF_HUB_OFFLINE:-1\}"', ms)), 2)
+check_true("compose.modelscope/preloads only what can load offline",
+           'LAYA_MODELS: "${LAYA_MODELS:-multilingual}"' in ms,
+           "LAYA_PRELOAD=1 with the family-wide default would fail on the first checkpoint that "
+           "was not baked")
+
+# The default build must stay exactly what it was: no prefetch, so a plain
+# `docker build .` hits the Hub as before, and the RUN is a no-op for the empty argument.
+dockerfile_runtime = dockerfile.partition("AS runtime")[2]
+check_true("Dockerfile/prefetch args default to off",
+           re.search(r'^ARG MODELSCOPE_MODEL=""', dockerfile_runtime, re.M) is not None,
+           "a non-empty default would change every existing build")
+check_true("Dockerfile/copies the prefetch script",
+           "docker/prefetch_modelscope.py" in dockerfile, "the RUN below references a missing file")
+check_true("Dockerfile/prefetch step is conditional",
+           re.search(r'^\s*RUN if \[ -n "\$MODELSCOPE_MODEL" \]; then', dockerfile_runtime, re.M) is not None,
+           "an unconditional RUN would make every build depend on modelscope.cn")
+check_true("Dockerfile/prefetch hands the cache to the runtime user",
+           "chown -R laya:laya /home/laya/.cache" in dockerfile_runtime,
+           "the tokenizer-compatibility fix writes into the snapshot on first load, and the image "
+           "runs as UID 10001")
+check_true("docker/prefetch_modelscope.py exists", os.path.exists("docker/prefetch_modelscope.py"))
 
 
 # --------------------------------------------------------------- nix: the deployment layer
@@ -475,7 +525,7 @@ def option_type(opt):
 # Every new knob is opt-in: unset means the unit exports nothing and the runtime's own default
 # applies, so a host that ignores them gets today's behaviour byte for byte.
 for opt in ("rootPath", "logLevel", "maxConcurrent", "cudaAmp", "cpuAmp", "mpsAmpMinRows",
-            "maxLoaded", "maxTokenBudget", "revision"):
+            "maxLoaded", "maxTokenBudget", "revision", "defaultModel"):
     _t = option_text(opt)
     check_true("nix/module declares %s" % opt, _t != "", "option not found")
     check_true("nix/%s is opt-in (nullOr, default null)" % opt,
@@ -612,6 +662,39 @@ for _wf in _concurrency_workflows:
         _block != "" and _BARE_REF_GROUP.search(_block) is None,
         "a ref-only group collapses every push to main into one run",
     )
+
+# ------------------------------------------------- the eval gate is not cancelled mid-run
+# Scoped to evals.yml on purpose. A general "cancel-in-progress may only be false or name
+# pull_request" rule would also have to be right about every workflow a future change adds, and
+# nothing in the repository establishes it; the workflows that run on pull requests are already
+# covered by the per-commit group checks above.
+#
+# What is true here, and only here: no evals trigger makes an in-flight run obsolete.
+# `github.ref` is the default branch for `schedule` and for a `workflow_dispatch` on it, so the
+# weekly baseline shared a group with a manual re-run, as do two dispatches on one ref, and
+# `cancel-in-progress: true` made whichever started second kill the first. `release: published`
+# never collided: its ref is the tag (`refs/tags/<tag_name>`), so each release had its own group.
+# The job spends 60 minutes downloading weights and the dataset, and a cancelled run uploads no
+# report, so a cancellation reads as a clean gate.
+_EVALS_WORKFLOW = read(os.path.join(".github", "workflows", "evals.yml"))
+# Non-vacuity, independent of the concurrency block: if evals.yml is renamed or its triggers
+# change, this reports instead of the check below passing on a file it did not understand.
+check_true("evals.yml still declares its three triggers",
+           "schedule:" in _EVALS_WORKFLOW
+           and "release:" in _EVALS_WORKFLOW
+           and "workflow_dispatch:" in _EVALS_WORKFLOW)
+
+_EVALS_CANCEL = re.search(
+    r"(?m)^[ \t]*cancel-in-progress:\s*(.+?)\s*$", _concurrency_block(_EVALS_WORKFLOW))
+# An absent key means the Actions default, which is false, so nothing is cancelled. A bare `true`
+# is the only value that discards a run in flight.
+check_true(
+    "evals.yml/cancels no in-flight run",
+    _EVALS_CANCEL is None or _EVALS_CANCEL.group(1).strip().lower() in ("false", "no", "off"),
+    "cancel-in-progress: %s discards a 60-minute run that has already started; a cancelled run "
+    "uploads no report, so it reads as a clean gate"
+    % (_EVALS_CANCEL.group(1) if _EVALS_CANCEL else "true"),
+)
 
 # --------------------------------------------------------------- the API reference
 # `laya.__all__` is what `from laya import *` ships and what the README tells people to call, so

@@ -145,7 +145,8 @@ The remote client uses Python's standard library `urllib` with zero heavy depend
 ## 6. Per-call decision controls
 
 `LayaSingleSelector`, `LayaMultiSelector` and `LayaQueryRouter` take the same per-call arguments the
-core API does: the two token budgets (`max_len`, `head_max_len`) and the five prediction-hook
+core API does: the two token budgets (`max_len`, `head_max_len`), the language and abstention
+controls (`lang`, `min_confidence`), and the five prediction-hook
 arguments (`hooks`, `on_predict_start`, `on_predict_end`, `hooks_raise`, `hooks_timeout`). They are
 per selector, so a wide routing step can be given room while the rest of the pipeline keeps the
 checkpoint's defaults.
@@ -185,3 +186,21 @@ integration](langchain.md#7-widening-the-token-budget-for-many-options) for that
 that runs inside `predict`, and no wire format carries it. Install hooks in the process that runs
 inference. The two budgets do travel to a remote node, in the request body, up to its
 `LAYA_MAX_TOKEN_BUDGET` ceiling; a larger value comes back as a 422.
+
+### Language and abstention
+
+`lang` pins the language the query is routed and answered in -- selecting the answering
+checkpoint's per-language calibration instead of relying on built-in detection -- and
+`min_confidence` is core's abstention gate: a decision under it comes back as an abstention rather
+than a forced selection. Both are read by `Agent.predict` and `Router.predict` alike and accepted by
+`laya-serve` in the request body, so a selector forwards them on the local and the remote path. An
+unset one is omitted, not sent as `None`, so it cannot shadow the deployment's own default;
+`min_confidence=0.0` and `lang=""` are real values and are forwarded as given.
+
+```python
+selector = LayaSingleSelector(
+    instructions="Which tool or query engine is best suited to answer this query?",
+    lang="de",             # answer German queries in German
+    min_confidence=0.3,    # abstain when no tool clears a 0.3 confidence
+)
+```

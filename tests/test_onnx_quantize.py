@@ -1,8 +1,8 @@
 """INT8 export: `scripts/export_onnx.py --quantize` writes a weight-only quantized copy.
 
 `ONNXAgent` loads any graph that keeps the fp32 export's input/output names, so the whole
-feature is one function: `quantize_model` (dynamic per-channel INT8 MatMul weights via
-onnxruntime) plus
+feature is one function: `quantize_model` (dynamic per-tensor INT8 MatMul weights via
+onnxruntime; per-channel is an opt-in) plus
 `int8_output_path` (the sidecar naming) and the CLI flag. No checkpoint and no torch model is
 downloaded here: the quantizer is exercised on a tiny hand-built MatMul graph, which is exactly
 the shape it targets in the real export, and the CLI is checked through `--help`.
@@ -87,9 +87,19 @@ int8_tensors = [t for t in q_model.graph.initializer if t.data_type == TensorPro
 check_true("quantize/MatMul weight is stored as INT8", len(int8_tensors) >= 1,
            [(t.name, t.data_type) for t in q_model.graph.initializer])
 scales = [t for t in q_model.graph.initializer if t.name.endswith("_scale")]
-check_true("quantize/scales are per output channel (per-tensor flips decisions on the real model)",
-           scales and all(numpy_helper.to_array(t).size > 1 for t in scales),
+# Default is per-tensor (one scale per weight). Per-channel is off by default because on the
+# dynamic MatMulInteger path it collapses the real decision model -- see issue #790.
+check_true("quantize/default scales are per-tensor",
+           scales and all(numpy_helper.to_array(t).size == 1 for t in scales),
            [(t.name, list(t.dims)) for t in scales])
+
+# the opt-in still produces per-channel scales (one per output channel of the 8x8 weight)
+pc_path = os.path.join(tmp, "mini.pc.int8.onnx")
+export_onnx.quantize_model(fp32_path, pc_path, per_channel=True)
+pc_scales = [t for t in onnx.load(pc_path).graph.initializer if t.name.endswith("_scale")]
+check_true("quantize/per_channel=True opts into per-channel scales",
+           pc_scales and any(numpy_helper.to_array(t).size > 1 for t in pc_scales),
+           [(t.name, list(t.dims)) for t in pc_scales])
 check("quantize/graph keeps the I/O names ONNXAgent binds to",
       ([i.name for i in q_model.graph.input], [o.name for o in q_model.graph.output]),
       (["input_ids"], ["logits"]))
@@ -127,6 +137,8 @@ help_text = subprocess.run(
 ).stdout
 check_true("cli/--quantize is documented in --help", "--quantize" in help_text,
            [ln for ln in help_text.splitlines() if "quantize" in ln])
+check_true("cli/--per-channel opt-in is documented in --help", "--per-channel" in help_text,
+           [ln for ln in help_text.splitlines() if "per-channel" in ln])
 check_true("cli/help names the sidecar output", ".int8.onnx" in help_text)
 
 

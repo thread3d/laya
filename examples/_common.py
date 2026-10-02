@@ -141,21 +141,37 @@ def top(probabilities, n=3):
     return "  ".join("%s=%.3f" % (k, v) for k, v in items)
 
 
+def _answer_conf(a):
+    """The gate number as text, or `n/a` for a payload that predates `answer_confidence`."""
+    value = a.get("answer_confidence")
+    return "%.3f" % value if isinstance(value, (int, float)) else "n/a"
+
+
 def describe(answers, indent="   "):
-    """One readable line per question, whatever primitive it used."""
+    """One readable line per question, whatever primitive it used.
+
+    Both confidence fields are printed: `conf` is `confidence`, the entropy value, and
+    `answer_conf` is `answer_confidence`, max(p) -- the number to gate on (see the
+    README's threshold section and example 18). Printing only the first made every
+    example that uses this helper show a number the README warns against carrying a
+    threshold over from.
+    """
     for qid, a in answers.items():
         if a["type"] == "choice":
             best = max(a["probabilities"].items(), key=lambda kv: kv[1])
-            detail = "%s (p=%.3f, conf=%.3f)" % (best[0], best[1], a["confidence"])
+            detail = "%s (p=%.3f, conf=%.3f, answer_conf=%s)" % (
+                best[0], best[1], a["confidence"], _answer_conf(a))
             if len(a["probabilities"]) > 2:
                 detail += "   next: %s" % top({k: v for k, v in a["probabilities"].items()
                                                if k != best[0]}, 2)
         elif a["type"] == "score":
             levels = len(a["probabilities"]) - 1
-            detail = "%.2f / %d (conf=%.3f)" % (a["score"], levels, a["confidence"])
+            detail = "%.2f / %d (conf=%.3f, answer_conf=%s)" % (
+                a["score"], levels, a["confidence"], _answer_conf(a))
         else:
-            detail = "%.3f (%s)  conf=%.3f" % (a["noul"], "true" if a["noul"] > 0.5 else "false",
-                                               a["confidence"])
+            detail = "%.3f (%s)  conf=%.3f, answer_conf=%s" % (
+                a["noul"], "true" if a["noul"] > 0.5 else "false",
+                a["confidence"], _answer_conf(a))
         print("%s%-18s %-7s %s" % (indent, qid, a["type"], detail))
 
 

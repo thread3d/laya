@@ -44,6 +44,10 @@
 
 ::: laya.confidence.flag_low_confidence
 
+::: laya.confidence.apply_confidence_gate
+
+::: laya.confidence.GATE_STATES
+
 ## Calibration and training
 
 ::: laya.common.answer_confidence

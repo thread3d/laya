@@ -7,7 +7,8 @@ Skips cleanly (exit 0) when the mcp package is not installed, so the core
 install keeps working.
 
 Device and preload-list tests follow the laya.serve environment contract
-(LAYA_DEVICE / LAYA_PRELOAD / LAYA_MODELS / LAYA_THREADS / LAYA_AUTO_TASK).
+(LAYA_DEVICE / LAYA_PRELOAD / LAYA_MODELS / LAYA_THREADS / LAYA_AUTO_TASK /
+LAYA_DEFAULT_MODEL).
 """
 import asyncio
 import os
@@ -47,6 +48,7 @@ from laya.mcp.tools import (  # noqa: E402
     validate_batch_requests,
     validate_budget,
     validate_lang,
+    validate_lang_guess,
     validate_min_confidence,
     validate_model,
     validate_preset,
@@ -842,12 +844,12 @@ class BatchRouter(FakeRouter):
                 "routing": {"model": request.get("model") or "english",
                             "repo": "fake/laya", "reason": "batch route"}}
 
-    def predict_batch(self, requests, batch_size=None):
-        self.predict_batch_calls.append((list(requests), batch_size))
+    def predict_batch(self, requests, batch_size=None, **kwargs):
+        self.predict_batch_calls.append((list(requests), batch_size, kwargs))
         return [self._answer_for(request) for request in requests]
 
-    def route_batch(self, requests):
-        self.route_batch_calls.append(list(requests))
+    def route_batch(self, requests, hooks_timeout=None):
+        self.route_batch_calls.append((list(requests), hooks_timeout))
         return [{"model": request.get("model") or "english", "repo": "fake/laya",
                  "reason": "batch route"} for request in requests]
 
@@ -858,8 +860,22 @@ class ShortRouter:
     def predict_batch(self, requests, batch_size=None):
         return []
 
-    def route_batch(self, requests):
+    def route_batch(self, requests, hooks_timeout=None):
         return []
+
+
+class StrictRouteRouter:
+    """A Router stub that predates the hooks_timeout kwarg on route_batch.
+
+    laya_route_batch must send `route_batch(items)` when the caller did not
+    ask for a hook deadline -- sending `route_batch(items, hooks_timeout=None)`
+    would break every caller that attached a pre-#577 Router (or a stub like
+    this one). This is the witness for M2 in the PR's mutation harness.
+    """
+
+    def route_batch(self, requests):
+        return [{"model": "english", "repo": "fake/laya",
+                 "reason": "strict route"} for _ in requests]
 
 
 BATCH_REQUESTS = [
@@ -965,7 +981,7 @@ def test_batch_predict():
     out = laya_predict_batch(BATCH_REQUESTS, batch_size=8, router=router)
     ok("batch/predict_one_call", len(router.predict_batch_calls) == 1,
        repr(len(router.predict_batch_calls)))
-    forwarded, size = router.predict_batch_calls[0]
+    forwarded, size, kwargs = router.predict_batch_calls[0]
     ok("batch/predict_size_forwarded", size == 8, repr(size))
     ok("batch/predict_items_forwarded", [item["state"] for item in forwarded]
        == [request["state"] for request in BATCH_REQUESTS])
@@ -1002,8 +1018,34 @@ def test_batch_predict():
     # batch_size unset must not be forwarded as None (strict old stubs included).
     router = BatchRouter()
     laya_predict_batch(BATCH_REQUESTS, router=router)
-    ok("batch/predict_size_default", router.predict_batch_calls[0][1] is None)
+    _, size, _ = router.predict_batch_calls[0]
+    ok("batch/predict_size_default", size is None)
 
+    # Test that hooks_timeout parameter is forwarded correctly
+    router = BatchRouter()
+    out = laya_predict_batch(BATCH_REQUESTS, hooks_timeout=5.5, router=router)
+    _, kwargs = router.predict_batch_calls[0][1], router.predict_batch_calls[0][2]
+    ok("batch/hooks_timeout_forwarded", kwargs.get("hooks_timeout") == 5.5, repr(kwargs))
+    
+    # Test that min_confidence parameter is forwarded correctly  
+    router = BatchRouter()
+    out = laya_predict_batch(BATCH_REQUESTS, min_confidence=0.75, router=router)
+    _, kwargs = router.predict_batch_calls[0][1], router.predict_batch_calls[0][2]
+    ok("batch/min_confidence_forwarded", kwargs.get("min_confidence") == 0.75, repr(kwargs))
+    
+    # Test that sort_by_length parameter is forwarded correctly
+    router = BatchRouter()
+    out = laya_predict_batch(BATCH_REQUESTS, sort_by_length=True, router=router)
+    _, kwargs = router.predict_batch_calls[0][1], router.predict_batch_calls[0][2]
+    ok("batch/sort_by_length_forwarded", kwargs.get("sort_by_length") is True, repr(kwargs))
+    
+    # Test that defaults don't pollute kwargs
+    router = BatchRouter()
+    out = laya_predict_batch(BATCH_REQUESTS, router=router)
+    _, kwargs = router.predict_batch_calls[0][1], router.predict_batch_calls[0][2]
+    ok("batch/defaults_not_in_kwargs", "hooks_timeout" not in kwargs and 
+       "min_confidence" not in kwargs and "sort_by_length" not in kwargs, repr(kwargs))
+    
     expect_tool_error("batch/predict_count_mismatch",
                       lambda: laya_predict_batch(BATCH_REQUESTS, router=ShortRouter()),
                       "internal_error")
@@ -1023,6 +1065,50 @@ def test_batch_route():
     ok("batch/route_counts", out["model_counts"] == {"english": 3}, repr(out["model_counts"]))
     # Route-only never predicts.
     ok("batch/route_no_forward", router.predict_batch_calls == [])
+    # Unset must not shadow the Router's own timeout: the tool layer only
+    # forwards when the caller actually asked for one.
+    ok("batch/route_hooks_timeout_default_none",
+       router.route_batch_calls[0][1] is None, repr(router.route_batch_calls[0]))
+    # The unset case must ALSO work against a Router that has never heard of
+    # hooks_timeout: sending `route_batch(items, hooks_timeout=None)` would
+    # break every caller with an older or hand-rolled router. Wrapped so the
+    # TypeError shows as a NAMED FAIL rather than crashing the whole suite.
+    try:
+        strict_out = laya_route_batch(BATCH_REQUESTS, router=StrictRouteRouter())
+        strict_ok = (len(strict_out["decisions"]) == 3
+                     and strict_out["model_counts"] == {"english": 3})
+        detail = repr(strict_out)
+    except TypeError as exc:
+        strict_ok = False
+        detail = "TypeError: %s" % exc
+    ok("batch/route_strict_router_no_kwarg", strict_ok, detail)
+    # hooks_timeout is forwarded verbatim (post-validate_timeout) to
+    # Router.route_batch's per-call override of the operator-installed hook
+    # deadline. Same shape as laya_predict_batch (see #766).
+    router = BatchRouter()
+    laya_route_batch(BATCH_REQUESTS, hooks_timeout=2.5, router=router)
+    _, timeout = router.route_batch_calls[0]
+    ok("batch/route_hooks_timeout_forwarded", timeout == 2.5, repr(timeout))
+    # An int is a valid timeout -- validate_timeout coerces to float.
+    router = BatchRouter()
+    laya_route_batch(BATCH_REQUESTS, hooks_timeout=1, router=router)
+    _, timeout = router.route_batch_calls[0]
+    ok("batch/route_hooks_timeout_int_coerced", timeout == 1.0 and isinstance(timeout, float),
+       repr(timeout))
+    # Bad values become invalid_hooks_timeout, not internal_error: the
+    # boundary check exists so a caller gets a real code back over MCP.
+    for bad in (0, -1, -0.5, "soon", True, [1.0]):
+        expect_tool_error("batch/route_bad_hooks_timeout_%r" % (bad,),
+                          lambda b=bad: laya_route_batch(
+                              BATCH_REQUESTS, hooks_timeout=b, router=BatchRouter()),
+                          "invalid_hooks_timeout")
+    # Validation happens before the router is touched: one bad timeout, no
+    # partial dispatch.
+    router = BatchRouter()
+    expect_tool_error("batch/route_bad_hooks_timeout_zero_router_untouched",
+                      lambda: laya_route_batch(BATCH_REQUESTS, hooks_timeout=0, router=router),
+                      "invalid_hooks_timeout")
+    ok("batch/route_no_dispatch_on_bad_timeout", router.route_batch_calls == [])
     expect_tool_error("batch/route_count_mismatch",
                       lambda: laya_route_batch(BATCH_REQUESTS, router=ShortRouter()),
                       "internal_error")
@@ -1629,9 +1715,9 @@ def test_controls_signature_and_schema():
     """
     import inspect
 
-    controls = ["task", "lang", "max_len", "head_max_len"]
+    controls = ["task", "lang", "lang_guess", "max_len", "head_max_len"]
     for fn, want in ((laya_predict, controls), (laya_shortlist, controls),
-                     (laya_preset, controls), (laya_route, ["model", "task", "lang"])):
+                     (laya_preset, controls), (laya_route, ["model", "task", "lang", "lang_guess"])):
         params = inspect.signature(fn).parameters
         for name in want:
             ok("signature/%s_has_%s" % (fn.__name__, name), name in params, repr(sorted(params)))
@@ -1662,6 +1748,132 @@ def test_controls_signature_and_schema():
         ok("schema/%s_required_unchanged" % name,
            required == (["preset", "state"] if name == "laya_preset" else ["state", "questions"]),
            repr(required))
+
+
+def test_lang_guess_control():
+    """`lang_guess` -- core's soft routing hint (#489 family) -- reaches the single-request tools.
+
+    The batch surface already forwards it (``BATCH_ITEM_OVERRIDES`` advertises the key, and
+    ``laya_predict_batch``/``laya_route_batch`` hand it to ``Router.*_batch``), and ``laya-serve`` and
+    the CLI forward it, so a client scoring one state over MCP could ask for a probable language to
+    nudge the checkpoint only by sending a batch of one. `lang_guess` is routing-only, so it is
+    treated like ``task``: forwarded to a router call, refused on a pinned model (a pinned call has
+    nothing to route), and stripped on a direct agent (``Agent.predict`` does not accept it).
+    """
+    import inspect
+
+    # The validator mirrors validate_lang: a code passes through verbatim, a non-string is refused in
+    # this layer's words. A callable is core's other accepted form but an MCP client carries JSON.
+    ok("langguess/none_is_unset", validate_lang_guess(None) is None)
+    for code in ("de", "en-US", "pt", "", "  ", "DE"):
+        ok("langguess/verbatim_%r" % code, validate_lang_guess(code) == code)
+    for bad in (5, ["de"], {"lang": "de"}, True):
+        expect_tool_error("langguess/rejected_%r" % (bad,),
+                          lambda b=bad: validate_lang_guess(b), "invalid_lang_guess")
+    # A callable is legal in core but not expressible over the wire; the MCP boundary refuses it
+    # rather than silently dropping the hint.
+    expect_tool_error("langguess/callable_rejected",
+                      lambda: validate_lang_guess(lambda state: "de"), "invalid_lang_guess")
+
+    # laya_predict forwards lang_guess to core's predict, and only when set: a call with no hint
+    # reaches core exactly as before the keyword was exposed here.
+    router = ControlRouter()
+    laya_predict(STATE, QUESTIONS, router=router)
+    ok("predict/langguess_unset_absent", router.predict_calls == [{}], repr(router.predict_calls))
+    router = ControlRouter()
+    laya_predict(STATE, QUESTIONS, lang_guess="de", router=router)
+    ok("predict/langguess_forwarded", router.predict_calls == [{"lang_guess": "de"}],
+       repr(router.predict_calls))
+    router = ControlRouter()
+    laya_predict(STATE, QUESTIONS, lang_guess="de", task="typed_decisions", router=router)
+    ok("predict/langguess_alongside_task",
+       router.predict_calls == [{"task": "typed_decisions", "lang_guess": "de"}],
+       repr(router.predict_calls))
+    # An explicit lang and a soft hint are distinct keywords: both reach core, and core orders them.
+    router = ControlRouter()
+    laya_predict(STATE, QUESTIONS, lang="fr", lang_guess="de", router=router)
+    ok("predict/lang_and_langguess_distinct",
+       router.predict_calls == [{"lang": "fr", "lang_guess": "de"}], repr(router.predict_calls))
+
+    # Pinned: refused before core, exactly like task -- there is nothing to route.
+    for model in ("english", "laya", "ML"):
+        router = ControlRouter()
+        expect_tool_error("predict/model_plus_langguess_%s" % model,
+                          lambda m=model: laya_predict(STATE, QUESTIONS, model=m,
+                                                       lang_guess="de", router=router),
+                          "invalid_lang_guess")
+        ok("predict/model_plus_langguess_no_call_%s" % model, router.predict_calls == [],
+           repr(router.predict_calls))
+    router = ControlRouter()
+    expect_tool_error("predict/bad_langguess_before_core",
+                      lambda: laya_predict(STATE, QUESTIONS, lang_guess=["de"], router=router),
+                      "invalid_lang_guess")
+    ok("predict/bad_langguess_no_call", router.predict_calls == [], repr(router.predict_calls))
+
+    # The direct-agent branch: Agent.predict does not accept lang_guess, so it is stripped -- a
+    # no-router auto call answers through the agent without ever naming the hint to core.
+    agent = ControlAgent()
+    laya_predict(STATE, QUESTIONS, lang_guess="de", agent=agent)
+    ok("predict/agent_langguess_stripped", agent.calls == [{}], repr(agent.calls))
+    agent = ControlAgent()
+    laya_predict(STATE, QUESTIONS, lang="de", lang_guess="en", agent=agent)
+    ok("predict/agent_keeps_lang_drops_langguess", agent.calls == [{"lang": "de"}],
+       repr(agent.calls))
+
+    # laya_route: a routing tool, so lang_guess reaches route and is refused on a pin.
+    router = ControlRouter(routed="multilingual")
+    out = laya_route(STATE, QUESTIONS, lang_guess="de", router=router)
+    ok("route/langguess_forwarded", router.route_calls == [{"lang_guess": "de"}],
+       repr(router.route_calls))
+    ok("route/langguess_decision_shape", set(out) == {"model", "repo", "reason"}, repr(out))
+    router = ControlRouter()
+    expect_tool_error("route/model_plus_langguess",
+                      lambda: laya_route(STATE, QUESTIONS, model="english",
+                                         lang_guess="de", router=router),
+                      "invalid_lang_guess")
+    ok("route/refused_langguess_before_core", router.route_calls == [], repr(router.route_calls))
+
+    # laya_shortlist: lang_guess reaches the route that chose the checkpoint, and is stripped from
+    # the answering pass (which pins the routed model, so the hint has nothing left to decide).
+    small = {"dept": {"type": "choice", "instructions": "pick",
+                      "criteria": {"a": "A", "b": "B", "c": "C", "d": "D", "e": "E"}}}
+    router = ControlRouter(routed="multilingual")
+    laya_shortlist(STATE, small, k=2, lang_guess="de", router=router, embed_fn=_tie_embed)
+    ok("shortlist/route_sees_langguess", router.route_calls == [{"lang_guess": "de"}],
+       repr(router.route_calls))
+    ok("shortlist/predict_drops_langguess",
+       router.predict_calls == [{"model": "multilingual"}], repr(router.predict_calls))
+    router = ControlRouter()
+    expect_tool_error("shortlist/pinned_plus_langguess",
+                      lambda: laya_shortlist(STATE, small, k=2, model="english",
+                                             lang_guess="de", router=router,
+                                             embed_fn=_tie_embed),
+                      "invalid_lang_guess")
+    ok("shortlist/pinned_plus_langguess_no_call", router.predict_calls == [],
+       repr(router.predict_calls))
+
+    # laya_preset threads it through laya_predict (always auto, so never refused).
+    def builder(attr):
+        return {"probe": {"type": "noul", "instructions": "Does the `body` need a human?"}}
+    router = ControlRouter()
+    laya_preset("guard", STATE, lang_guess="de", router=router, preset_builder=builder)
+    ok("preset/langguess_forwarded", router.predict_calls == [{"lang_guess": "de"}],
+       repr(router.predict_calls))
+
+    # Cross-surface drift guard: lang_guess is a real core routing control (serve forwards it as a
+    # body control; the batch item overrides already name it) and Router.route/predict accept it, so
+    # this layer can never advertise a keyword core would reject.
+    from laya import serve as serve_mod
+
+    ok("drift/langguess_in_body_controls", "lang_guess" in serve_mod.BODY_CONTROLS,
+       repr(serve_mod.BODY_CONTROLS))
+    ok("drift/langguess_in_batch_overrides", "lang_guess" in BATCH_ITEM_OVERRIDES,
+       repr(BATCH_ITEM_OVERRIDES))
+    for method in ("route", "predict"):
+        params = inspect.signature(getattr(__import__("laya.router", fromlist=["Router"]).Router,
+                                           method)).parameters
+        ok("drift/router_%s_accepts_langguess" % method, "lang_guess" in params,
+           repr(sorted(params)))
 
 
 def test_min_confidence_control():
@@ -2065,6 +2277,119 @@ def test_auto_task_env():
                 os.environ[key] = value
 
 
+def test_default_model_env():
+    """LAYA_DEFAULT_MODEL has to reach both servers' Routers, with one meaning.
+
+    README's MCP section says these variables follow the contract at the top of laya.serve, so
+    both halves are built through the real builders -- `laya.mcp.server._ensure_router()` and
+    `laya.serve.build_router()` -- and read off the Router each one actually returns. The
+    variable itself is the routing fallback README prescribes for a mostly-non-English deployment
+    (`Router(default="multilingual")`), which until now only examples/server.py could be told.
+    The one place the two surfaces part is what an unresolvable name costs: serve refuses to
+    start, a stdio server has no startup to refuse, so MCP has to carry the same words in a
+    tool error.
+    """
+    import laya.mcp.server as mcp_mod  # the module, not the MCPServer instance
+    from laya.serve import build_router
+
+    saved = {k: os.environ.get(k)
+             for k in ("LAYA_DEFAULT_MODEL", "LAYA_PRELOAD", "LAYA_AUTO_TASK")}
+    saved_router = mcp_mod._ROUTER
+    try:
+        os.environ["LAYA_PRELOAD"] = "0"    # neither surface may build a checkpoint here
+        os.environ["LAYA_AUTO_TASK"] = "0"  # leaves the fallback the only thing moving
+
+        def build(value):
+            if value is None:
+                os.environ.pop("LAYA_DEFAULT_MODEL", None)
+            else:
+                os.environ["LAYA_DEFAULT_MODEL"] = value
+            mcp_mod._ROUTER = None  # the server caches the Router it built
+            return mcp_mod._ensure_router(), build_router()
+
+        for label, value, want in (
+                ("unset", None, "english"),
+                ("empty", "", "english"),
+                ("blank", "   ", "english"),
+                ("canonical", "multilingual", "multilingual"),
+                ("alias", "ml", "multilingual"),
+                ("padded_upper", " MULTI ", "multilingual"),
+                ("typed", "typed-decisions", "typed-decisions")):
+            try:
+                mcp_router, serve_router = build(value)
+            except (Exception, SystemExit) as exc:  # noqa: BLE001 -- every value here is valid
+                # Named rather than fatal: a surface that raises for a name core accepts is the
+                # bug, and a suite that dies on the way to reporting it leaves the cause unsaid.
+                ok("default_model/%s_builds" % label, False,
+                   "raised %r: %s" % (type(exc).__name__, exc))
+                continue
+            ok("default_model/%s_mcp" % label, mcp_router.default == want,
+               repr(mcp_router.default))
+            # The parity the README claims: one variable, one meaning on both surfaces.
+            ok("default_model/%s_matches_serve" % label,
+               mcp_router.default == serve_router.default,
+               "mcp=%r serve=%r" % (mcp_router.default, serve_router.default))
+
+        # What the setting decides, at `route()` rather than at the attribute. `route` is
+        # documented as deciding "without loading or running anything", so nothing is downloaded.
+        stock_mcp, stock_serve = build(None)
+        nonenglish_mcp, nonenglish_serve = build("multilingual")
+        for index, state in enumerate(("12345 !!!", "Quero cancelar")):
+            ok("default_model/stock_english_%d" % index,
+               stock_mcp.route(state).model == "english" == stock_serve.route(state).model,
+               "mcp=%r serve=%r" % (stock_mcp.route(state).model, stock_serve.route(state).model))
+            ok("default_model/fallback_multilingual_%d" % index,
+               nonenglish_mcp.route(state).model == "multilingual"
+               == nonenglish_serve.route(state).model,
+               "mcp=%r serve=%r" % (nonenglish_mcp.route(state).model,
+                                    nonenglish_serve.route(state).model))
+        # A fallback, not a pin, on both surfaces.
+        ok("default_model/placed_text_unaffected",
+           nonenglish_mcp.route({"body": "Please refund the duplicate charge"}).model == "english"
+           == nonenglish_serve.route({"body": "Please refund the duplicate charge"}).model)
+
+        serve_message = mcp_message = ""
+        os.environ["LAYA_DEFAULT_MODEL"] = "mutli-lingual"
+        try:
+            build_router()
+            ok("default_model/serve_refuses_to_start", False, "build_router() returned a Router")
+        except SystemExit as exc:
+            serve_message = str(exc)
+            ok("default_model/serve_refuses_to_start", True)
+        except Exception as exc:  # noqa: BLE001 -- a traceback is not "exits with a message"
+            ok("default_model/serve_refuses_to_start", False,
+               "raised %r instead of exiting: %s" % (type(exc).__name__, exc))
+        mcp_mod._ROUTER = None
+        try:
+            mcp_mod._ensure_router()
+            ok("default_model/mcp_refuses", False, "_ensure_router() returned a Router")
+        except ToolError as exc:
+            mcp_message = exc.message
+            ok("default_model/mcp_refuses_with_a_tool_error",
+               exc.code == "internal_error", repr(exc.code))
+        except Exception as exc:  # noqa: BLE001 -- anything else escapes the tool wrapper
+            ok("default_model/mcp_refuses_with_a_tool_error", False,
+               "raised %r instead of a ToolError, so the client gets a server crash" % type(exc).__name__)
+        # One message, both surfaces: the operator fixes the typo from what they were told,
+        # whether or not the server came up.
+        ok("default_model/both_surfaces_name_the_variable_and_the_value",
+           all("invalid LAYA_DEFAULT_MODEL 'mutli-lingual'" in m for m in (serve_message, mcp_message)),
+           "serve=%r mcp=%r" % (serve_message, mcp_message))
+        ok("default_model/both_surfaces_carry_core_s_words",
+           all("unknown model" in m for m in (serve_message, mcp_message)),
+           "serve=%r mcp=%r" % (serve_message, mcp_message))
+        # The docstring promises a failed build is retriable rather than cached.
+        ok("default_model/failed_build_is_not_cached", mcp_mod._ROUTER is None,
+           repr(mcp_mod._ROUTER))
+    finally:
+        mcp_mod._ROUTER = saved_router
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 def test_server_registration():
     tools = asyncio.run(mcp_server.list_tools())
     names = sorted(t.name for t in tools)
@@ -2139,6 +2464,7 @@ test_controls_route()
 test_controls_shortlist()
 test_controls_preset()
 test_controls_signature_and_schema()
+test_lang_guess_control()
 test_min_confidence_control()
 test_question_validation_matches_the_agent()
 test_a_bad_question_is_a_caller_error_not_a_server_fault()
@@ -2146,6 +2472,7 @@ test_timeout_removed()
 test_models_from_env()
 test_batch_item_shape_as_documented()
 test_auto_task_env()
+test_default_model_env()
 test_server_registration()
 test_server_shortlist_k_default()
 

@@ -226,6 +226,7 @@ def mock_router_response(state, questions):
                 "choice": choice,
                 "probabilities": {"billing": conf, "technical": 1.0 - conf},
                 "confidence": conf,
+                "answer_confidence": conf,
             }
         },
     }
@@ -822,6 +823,86 @@ try:
 finally:
     langchain_module._get_default_router = _real_default_router
 
+# --------------------------------------------------------------- 6b. LayaDecision per-call controls
+#
+# The other four nodes route through `_execute_decision`, which has forwarded the two token
+# budgets (#530) and the five hook arguments (#532) since they landed. `LayaDecision` bypasses
+# that executor and calls `decide` directly, so it historically forwarded only `model`: a schema
+# decision could not widen its own window or attach the cache/audit hook its siblings can. These
+# checks drive the whole control family through the bypass and read it back off the runner.
+import inspect  # noqa: E402
+from laya.agent import Agent  # noqa: E402
+from laya.integrations import _controls  # noqa: E402
+from laya.router import Router  # noqa: E402
+
+DECISION_ALL_CONTROLS = {"max_len": 1024, "head_max_len": 512, "hooks": ["H"],
+                         "on_predict_start": "S", "on_predict_end": "E",
+                         "hooks_raise": True, "hooks_timeout": 0.5}
+
+_dplain = RecordingAgent()
+LayaDecision(DECISION_SCHEMA, agent=_dplain).invoke("x")
+check("decision/controls default sends nothing", _dplain.calls[0]["kwargs"], {})
+
+_devery = RecordingAgent()
+LayaDecision(DECISION_SCHEMA, agent=_devery, **DECISION_ALL_CONTROLS).invoke("x")
+check("decision/controls forwards every control", _devery.calls[0]["kwargs"],
+      DECISION_ALL_CONTROLS)
+
+_dbudget = RecordingAgent()
+LayaDecision(DECISION_SCHEMA, agent=_dbudget, head_max_len=256).invoke("x")
+check("decision/controls forwards one budget alone", _dbudget.calls[0]["kwargs"],
+      {"head_max_len": 256})
+
+# 0 and [] are decisions, not absences: a truthiness test would silently drop them.
+_dfalsy = RecordingAgent()
+LayaDecision(DECISION_SCHEMA, agent=_dfalsy, head_max_len=0, hooks=[], hooks_raise=False).invoke("x")
+check("decision/controls keeps falsy values", _dfalsy.calls[0]["kwargs"],
+      {"head_max_len": 0, "hooks": [], "hooks_raise": False})
+
+_dmixed = RecordingAgent()
+LayaDecision(DECISION_SCHEMA, agent=_dmixed, model="laya-multilingual", max_len=1024).invoke("x")
+check("decision/controls alongside model", _dmixed.calls[0]["kwargs"],
+      {"model": "laya-multilingual", "max_len": 1024})
+
+# The names it reads out of the shared module are the names it actually forwards -- a control
+# added to `._controls` without reaching this bypass fails here rather than being dropped silently.
+check("decision/controls reads both budgets", set(_controls.PREDICT_CONTROLS),
+      {"max_len", "head_max_len"})
+_dag = set(inspect.signature(Agent.system_one).parameters)
+_dr = set(inspect.signature(Router.predict).parameters)
+for _c in DECISION_ALL_CONTROLS:
+    check_true("decision/controls/%s accepted by Agent" % _c, _c in _dag)
+    check_true("decision/controls/%s accepted by Router.predict" % _c, _c in _dr)
+
+# Remote mode: the two budgets travel in the request body; a hook is a Python callable that runs
+# inside `predict` and no wire format carries it, so refuse rather than report a success that
+# never called it.
+_dremote = []
+
+
+def _dspy_remote(base_url, state, questions, api_key=None, model=None, **extras):
+    _dremote.append(dict({"model": model}, **extras))
+    return {"model": "mock", "answers": dict(DECISION_ANSWERS)}
+
+
+_dreal = langchain_module._call_remote
+langchain_module._call_remote = _dspy_remote
+try:
+    LayaDecision(DECISION_SCHEMA, base_url="http://laya:8000",
+                 max_len=1024, head_max_len=384).invoke("x")
+    check("decision/remote forwards both budgets", _dremote[-1],
+          {"model": None, "max_len": 1024, "head_max_len": 384})
+    LayaDecision(DECISION_SCHEMA, base_url="http://laya:8000").invoke("x")
+    check("decision/remote omits an unset budget", _dremote[-1], {"model": None})
+    _drefused = False
+    try:
+        LayaDecision(DECISION_SCHEMA, base_url="http://laya:8000", hooks=[object()]).invoke("x")
+    except ValueError as exc:
+        _drefused = "hooks" in str(exc) and "laya-serve" in str(exc)
+    check_true("decision/remote refuses a hook", _drefused)
+finally:
+    langchain_module._call_remote = _dreal
+
 # A pydantic model is a schema too, so the same class can type a chain and a call site. Note
 # `Literal[0, 1, 2]` plans as an enum choice rather than a score scale, so the answer carries a
 # label and the value comes back as the schema's own int.
@@ -990,6 +1071,120 @@ try:
                "max_len" not in _sent["body"] and "head_max_len" not in _sent["body"])
 finally:
     langchain_module.urllib.request.build_opener = _real_build_opener
+
+
+# --------------------------------------------------------------- 7b. Per-request lang / abstention
+#
+# `lang` and `min_confidence` are core's language routing and abstention gate (#361). Both are
+# read by `Agent.predict`/`system_one` AND `Router.predict`, and both are laya-serve
+# `BODY_CONTROLS`, so they are safe to forward on the local and the remote path alike -- unlike
+# `task` / `lang_guess`, which are Router-only. A wrapper that drops them cannot route a
+# non-English state or measure the abstention gate it is supposed to honor.
+from laya.integrations import _controls  # noqa: E402
+import inspect  # noqa: E402
+from laya.agent import Agent  # noqa: E402
+from laya.router import Router  # noqa: E402
+
+DECISION_CRITERIA = {"billing": "invoices", "tech": "bugs"}
+DECISION_NODES = (
+    ("router", lambda a, **kw: LayaRouter(DECISION_CRITERIA, agent=a, **kw)),
+    ("guardrail", lambda a, **kw: LayaGuardrail(
+        questions={"jailbreak": {"type": "noul", "instructions": "jailbreak?"}}, agent=a, **kw)),
+    ("triage", lambda a, **kw: LayaTriage(agent=a, **kw)),
+    ("evaluator", lambda a, **kw: LayaEvaluator(
+        questions={"faithful": {"type": "noul", "instructions": "faithful?"}}, agent=a, **kw)),
+)
+
+check("decision/_controls names the tuple", _controls.DECISION_CONTROLS, ("lang", "min_confidence"))
+for _c in _controls.DECISION_CONTROLS:
+    check_true("decision/%s accepted by Agent.system_one" % _c,
+               _c in set(inspect.signature(Agent.system_one).parameters))
+    check_true("decision/%s accepted by Router.predict" % _c,
+               _c in set(inspect.signature(Router.predict).parameters))
+
+for name, build in DECISION_NODES:
+    plain = BudgetAgent()
+    build(plain).invoke("some state")
+    check("decision/%s default sends nothing" % name, plain.kwargs[0], {})
+
+    both = BudgetAgent()
+    build(both, lang="fr", min_confidence=0.4).invoke("some state")
+    check("decision/%s forwards both" % name, both.kwargs[0],
+          {"lang": "fr", "min_confidence": 0.4})
+
+    # Each knob works alone; an override built from one must not carry the other.
+    one = BudgetAgent()
+    build(one, lang="es").invoke("some state")
+    check("decision/%s forwards lang alone" % name, one.kwargs[0], {"lang": "es"})
+
+    # A 0.0 abstention gate is a real decision ("abstain over nothing"), not an absence.
+    zero = BudgetAgent()
+    build(zero, min_confidence=0.0).invoke("some state")
+    check("decision/%s keeps min_confidence=0.0" % name, zero.kwargs[0], {"min_confidence": 0.0})
+
+    mixed = BudgetAgent()
+    build(mixed, model="laya-multilingual", lang="de").invoke("some state")
+    check("decision/%s with model" % name, mixed.kwargs[0],
+          {"model": "laya-multilingual", "lang": "de"})
+
+
+# A remote node forwards them in the request body instead of dropping them.
+decision_remote_calls = []
+_decision_real_call_remote = langchain_module._call_remote
+
+
+def decision_spy_call_remote(base_url, state, questions, api_key=None, model=None, **extras):
+    decision_remote_calls.append(dict({"model": model}, **extras))
+    return {"answers": {"route": {"type": "choice", "choice": "billing", "confidence": 0.9}}}
+
+
+langchain_module._call_remote = decision_spy_call_remote
+try:
+    for field, value in (("lang", "it"), ("min_confidence", 0.25), ("min_confidence", 0.0)):
+        LayaRouter(DECISION_CRITERIA, base_url="http://laya:8000", **{field: value}).invoke("x")
+        check("decision/remote forwards %s=%r" % (field, value), decision_remote_calls[-1],
+              {"model": None, field: value})
+    # Nothing set sends nothing.
+    LayaRouter(DECISION_CRITERIA, base_url="http://laya:8000").invoke("x")
+    check_true("decision/remote omits unset decision controls",
+               not any(k in decision_remote_calls[-1] for k in _controls.DECISION_CONTROLS),
+               repr(decision_remote_calls[-1]))
+finally:
+    langchain_module._call_remote = _decision_real_call_remote
+
+# ...and the real `_call_remote` writes them into the JSON body.
+_decision_sent = {}
+
+
+class _DecisionFakeResponse:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return b'{"answers": {}}'
+
+
+class _DecisionFakeOpener:
+    def open(self, req, timeout=None):
+        _decision_sent["body"] = json.loads(req.data.decode("utf-8"))
+        return _DecisionFakeResponse()
+
+
+_decision_real_build_opener = langchain_module.urllib.request.build_opener
+langchain_module.urllib.request.build_opener = lambda *a, **k: _DecisionFakeOpener()
+try:
+    langchain_module._call_remote("http://laya:8000", "x", {}, lang="fr", min_confidence=0.0)
+    check("decision/_call_remote sends lang", _decision_sent["body"].get("lang"), "fr")
+    check("decision/_call_remote keeps min_confidence=0.0",
+          _decision_sent["body"].get("min_confidence"), 0.0)
+    langchain_module._call_remote("http://laya:8000", "x", {})
+    check_true("decision/_call_remote omits unset decision controls",
+               "lang" not in _decision_sent["body"] and "min_confidence" not in _decision_sent["body"])
+finally:
+    langchain_module.urllib.request.build_opener = _decision_real_build_opener
 
 
 # --------------------------------------------------------------- 7. Prediction hooks

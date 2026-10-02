@@ -43,6 +43,7 @@ class _FakeAgent:
     def __init__(self, model_id_or_path, onnx_path=None, **kw):
         self.model_id = model_id_or_path
         self.onnx_path = onnx_path
+        self.calibration = kw.get("calibration")
         self.calls = []
 
     def _answer(self, questions):
@@ -122,6 +123,10 @@ args = evals_cli._build_parser().parse_args(["run", "d.jsonl", "--onnx", "m.onnx
 check("cli/--onnx parses on the run subcommand", args.onnx, "m.onnx")
 args = evals_cli._build_parser().parse_args(["run", "d.jsonl"])
 check("cli/--onnx defaults to None (torch Router path unchanged)", args.onnx, None)
+args = evals_cli._build_parser().parse_args(["run", "d.jsonl", "--onnx", "m.onnx", "--calibration", "c.json"])
+check("cli/--calibration parses on the run subcommand", args.calibration, "c.json")
+args = evals_cli._build_parser().parse_args(["run", "d.jsonl"])
+check("cli/--calibration defaults to None", args.calibration, None)
 
 tmp = tempfile.mkdtemp(prefix="laya_evals_onnx_")
 dataset = os.path.join(tmp, "data.jsonl")
@@ -144,9 +149,26 @@ try:
         report = json.load(f)
     check("cli/report records the onnx export path",
           report["config"]["onnx"], os.path.join(tmp, "laya.onnx"))
+    check("cli/report omits calibration when unset", "calibration" not in report["config"], True)
     check("cli/report keeps the forced checkpoint", report["config"]["model"], "english-ckpt")
     check("cli/metrics are computed from the ONNX answers",
           report["overall"]["choice_accuracy"], 1.0)
+
+    # --calibration without --onnx is rejected before model load
+    rc_no_onnx = evals_cli.main(["run", dataset, "--calibration", "calib.json"])
+    check("cli/--calibration without --onnx exits 2", rc_no_onnx, 2)
+
+    # --calibration with --onnx is forwarded to ONNXAgent and recorded in report config
+    calib_file = os.path.join(tmp, "calib.json")
+    calib_report_path = os.path.join(tmp, "report_calib.json")
+    rc = evals_cli.main(["run", dataset, "--onnx", os.path.join(tmp, "laya.onnx"),
+                         "--model", "english-ckpt", "--calibration", calib_file,
+                         "--json", calib_report_path])
+    check("cli/run --onnx --calibration exits 0", rc, 0)
+    with open(calib_report_path) as f:
+        calib_report = json.load(f)
+    check("cli/report records the calibration path",
+          calib_report["config"]["calibration"], calib_file)
 
     # --model omitted: the export's checkpoint defaults to the english bundle repo.
     rc = evals_cli.main(["run", dataset, "--onnx", "laya.onnx"])

@@ -432,6 +432,207 @@ def test_a_pass_through_wrapper_is_given_the_knob():
     assert report.config["timing"]["sort_by_length_sent"] is True
 
 
+# ------------------------------------------------------- abstention gate (#361 knob)
+#
+# `Router.predict` / `Router.predict_batch` and `ONNXAgent.predict` gate on `answer_confidence`
+# and mark answers below `min_confidence` with `low_confidence: True` (#361). That is a scoring
+# control: an answer below the threshold is not the same decision as one above. A `laya-evals run`
+# that could not pass it through had no way to measure `precision@coverage` at any threshold
+# except by wrapping a Router by hand -- the exact class of thing this harness exists to be.
+
+UNSET = object()   # no caller sends it, so `mc is UNSET` distinguishes "absent" from 0.0 or None
+
+
+class GatedRunner(RequestsRunner):
+    """A `Router`-shaped runner that has the gate and records exactly what each call carried."""
+
+    def __init__(self, by_state):
+        super().__init__(by_state)
+        self.thresholds = []
+
+    def predict(self, state, questions, model=None, min_confidence=UNSET):
+        self.thresholds.append({"path": "predict", "min_confidence": min_confidence})
+        return {"model": model or "m", "answers": self.by_state[state]}
+
+    def predict_batch(self, requests, batch_size=None, min_confidence=UNSET):
+        self.thresholds.append({"path": "predict_batch", "min_confidence": min_confidence})
+        return [{"model": r.get("model") or "m", "answers": self.by_state[r["state"]]}
+                for r in requests]
+
+
+class GatedStatesRunner(StubRunner):
+    """The positional batch shape, same gate + same recording."""
+
+    def __init__(self, by_state):
+        super().__init__(by_state)
+        self.thresholds = []
+
+    def predict(self, state, questions, model=None, min_confidence=UNSET):
+        self.thresholds.append({"path": "predict", "min_confidence": min_confidence})
+        return {"model": model or "m", "answers": self.by_state[state]}
+
+    def predict_batch(self, states, questions, model=None, batch_size=None,
+                      min_confidence=UNSET):
+        self.thresholds.append({"path": "predict_batch", "min_confidence": min_confidence})
+        return [{"model": model or "m", "answers": self.by_state[s]} for s in states]
+
+
+def test_min_confidence_reaches_a_requests_shaped_runner_when_asked():
+    runner = GatedRunner(ANSWERS3)
+    report = evaluate(runner, _three(), evaluators=[ChoiceAccuracy()], batch_size=2,
+                      min_confidence=0.7)
+    assert runner.thresholds[0] == {"path": "predict_batch", "min_confidence": 0.7}
+    assert report.config["timing"]["min_confidence"] == 0.7
+    assert report.config["timing"]["min_confidence_sent"] is True
+
+
+def test_min_confidence_reaches_a_states_shaped_runner_too():
+    runner = GatedStatesRunner(ANSWERS3)
+    report = evaluate(runner, _three(), evaluators=[ChoiceAccuracy()], batch_size=2,
+                      min_confidence=0.7)
+    # The first two rows share a batch; the third stands alone because batch_size=2.
+    assert runner.thresholds[0] == {"path": "predict_batch", "min_confidence": 0.7}
+    assert runner.thresholds[1] == {"path": "predict", "min_confidence": 0.7}
+    assert report.config["timing"]["min_confidence_sent"] is True
+
+
+def test_min_confidence_reaches_the_single_predict_fallback():
+    """A run with no `batch_size` still has to see the gate; the abstention path is per-decision."""
+    runner = GatedRunner(ANSWERS3)
+    report = evaluate(runner, _three(), evaluators=[ChoiceAccuracy()], min_confidence=0.7)
+    assert all(t["path"] == "predict" and t["min_confidence"] == 0.7 for t in runner.thresholds)
+    assert report.config["timing"]["min_confidence_sent"] is True
+
+
+def test_min_confidence_is_not_invented_for_a_run_that_did_not_ask():
+    """The kwarg is dropped when unset, so an older runner sees the call it always saw."""
+    runner = GatedRunner(ANSWERS3)
+    evaluate(runner, _three(), evaluators=[ChoiceAccuracy()], batch_size=2)
+    # chunk 1 shares a batch (rows s1, s2), row s3 falls to `predict`. Neither sees the threshold.
+    assert runner.thresholds == [{"path": "predict_batch", "min_confidence": UNSET},
+                                  {"path": "predict", "min_confidence": UNSET}]
+
+
+def test_min_confidence_zero_is_still_a_threshold():
+    """`if min_confidence:` would drop 0.0; a gate at zero is a legal, meaningful ask."""
+    runner = GatedRunner(ANSWERS3)
+    evaluate(runner, _three(), evaluators=[ChoiceAccuracy()], batch_size=2, min_confidence=0.0)
+    assert runner.thresholds[0] == {"path": "predict_batch", "min_confidence": 0.0}
+
+
+def test_a_runner_without_the_gate_is_refused_not_silently_scored():
+    """Silently dropping a scoring control would report `precision@coverage` for a policy that
+    never ran. `RequestsRunner`'s `predict_batch(requests, batch_size=None)` is exactly what a
+    pre-#361 runner looks like, so a run that asks for a threshold on it must fail loudly."""
+    with pytest.raises(EvalError) as exc:
+        evaluate(RequestsRunner(ANSWERS3), _three(), evaluators=[ChoiceAccuracy()],
+                 batch_size=2, min_confidence=0.7)
+    assert "min_confidence" in str(exc.value)
+    assert "does not accept the abstention threshold" in str(exc.value)
+
+
+def test_the_single_predict_path_refuses_too_when_only_predict_lacks_the_gate():
+    """Batching on a gate-aware `predict_batch` does not excuse a gate-blind `predict`: a chunk
+    of one still goes through that entry point, and would be scored without the threshold."""
+    class OnlyBatchGated(GatedRunner):
+        def predict(self, state, questions, model=None):        # predates #361
+            return {"model": model or "m", "answers": self.by_state[state]}
+
+    # batch_size=2 on a three-row dataset leaves the third row to `predict`; the guard sees that
+    # before issuing anything.
+    with pytest.raises(EvalError) as exc:
+        evaluate(OnlyBatchGated(ANSWERS3), _three(), evaluators=[ChoiceAccuracy()],
+                 batch_size=2, min_confidence=0.7)
+    assert "predict" in str(exc.value)
+
+
+def test_min_confidence_validated_by_core():
+    """The accepted range is core's validator, so the harness cannot drift from the gate itself."""
+    for bad in (1.5, -0.1, "high", True, float("nan")):
+        with pytest.raises(EvalError) as exc:
+            evaluate(GatedRunner(ANSWERS3), _three(), evaluators=[ChoiceAccuracy()],
+                     min_confidence=bad)
+        assert "min_confidence must be a float in [0.0, 1.0]" in str(exc.value)
+
+
+def test_min_confidence_changes_the_call_not_the_score_of_a_stub():
+    """The stub ignores the threshold, so the answers match. This is the parity check on the
+    control-flow side -- the answer-shape witness is `flag_low_confidence`'s own suite (#361)."""
+    asked = GatedRunner(ANSWERS3)
+    gated = evaluate(asked, _three(), evaluators=[ChoiceAccuracy()], batch_size=2,
+                     min_confidence=0.7)
+    plain = GatedRunner(ANSWERS3)
+    ungated = evaluate(plain, _three(), evaluators=[ChoiceAccuracy()], batch_size=2)
+    assert _labels(gated) == _labels(ungated)
+    # The calls really differed: one carried the threshold, one did not.
+    assert asked.thresholds != plain.thresholds
+
+
+def test_min_confidence_and_sort_by_length_are_independent_controls():
+    """A run can ask for both: the sort is dropped for a runner that predates #294 while the
+    gate is honoured for the same runner's #361 support, and vice versa."""
+    class OnlyGated(GatedRunner):
+        def predict_batch(self, requests, batch_size=None, min_confidence=UNSET):
+            # No `sort_by_length` in the signature, but the threshold is real.
+            self.thresholds.append({"path": "predict_batch", "min_confidence": min_confidence})
+            return [{"model": r.get("model") or "m", "answers": self.by_state[r["state"]]}
+                    for r in requests]
+
+    runner = OnlyGated(ANSWERS3)
+    report = evaluate(runner, _three(), evaluators=[ChoiceAccuracy()], batch_size=2,
+                      sort_by_length=True, min_confidence=0.7)
+    assert report.config["timing"]["sort_by_length_sent"] is False
+    assert report.config["timing"]["min_confidence_sent"] is True
+
+
+def test_cli_min_confidence_forwards_through_evaluate(monkeypatch, tmp_path):
+    """The flag has to actually reach `evaluate`, not sit in the parser."""
+    from laya import evals_cli
+
+    seen = {}
+    real_evaluate = evals_cli.evals.evaluate
+
+    def spy(runner, dataset, **kwargs):
+        seen.update(kwargs)
+        return real_evaluate(runner, dataset, **kwargs)
+
+    monkeypatch.setattr(evals_cli.evals, "evaluate", spy)
+    _fake_router(monkeypatch, {})
+    dataset = _write_dataset(tmp_path, [{"state": "s", "questions": Q, "expected": {"intent": "a"}}])
+    assert evals_cli.main(["run", dataset, "--min-confidence", "0.7"]) == 0
+    assert seen["min_confidence"] == 0.7
+
+
+def test_cli_min_confidence_out_of_range_is_a_usage_error(monkeypatch, tmp_path, capsys):
+    """A mistyped `--min-confidence 1.5` must exit 2 with core's message, not traceback."""
+    from laya import evals_cli
+
+    _fake_router(monkeypatch, {})
+    dataset = _write_dataset(tmp_path, [{"state": "s", "questions": Q, "expected": {"intent": "a"}}])
+    assert evals_cli.main(["run", dataset, "--min-confidence", "1.5"]) == 2
+    err = capsys.readouterr().err
+    assert "min_confidence must be a float" in err
+    assert "Traceback" not in err
+
+
+def test_cli_min_confidence_zero_is_accepted(monkeypatch, tmp_path):
+    """A gate at zero is a legal ask; `if args.min_confidence` would drop it before the call."""
+    from laya import evals_cli
+
+    seen = {}
+    real_evaluate = evals_cli.evals.evaluate
+
+    def spy(runner, dataset, **kwargs):
+        seen.update(kwargs)
+        return real_evaluate(runner, dataset, **kwargs)
+
+    monkeypatch.setattr(evals_cli.evals, "evaluate", spy)
+    _fake_router(monkeypatch, {})
+    dataset = _write_dataset(tmp_path, [{"state": "s", "questions": Q, "expected": {"intent": "a"}}])
+    assert evals_cli.main(["run", dataset, "--min-confidence", "0.0"]) == 0
+    assert seen["min_confidence"] == 0.0
+
+
 # --------------------------------------------------------------- timing (#585)
 FORWARD_MS = 100.0
 SHARED = 0.6                      # a batch of n costs SHARED * n * FORWARD_MS, as one call
@@ -943,7 +1144,7 @@ def test_docs_document_the_run_identity_and_the_refusal():
         if key != "timing":
             assert "`%s`" % key in page, key
     # The keys the CLI adds, and the programmatic entry points, are part of the same contract.
-    for key in ("dataset_sha256", "thresholds", "revisions"):
+    for key in ("dataset_sha256", "thresholds", "gate_policy", "revisions"):
         assert "`%s`" % key in page, key
     for name in ("REPORT_SCHEMA", "questions_fingerprint", "file_fingerprint", "comparable_to"):
         assert name in page, name
@@ -1360,9 +1561,10 @@ def test_docs_and_the_cli_name_the_same_flags():
     assert taught <= registered, "the page teaches %s, which no subcommand registers" % sorted(
         taught - registered)
     # The other half of parity: a registered flag nobody documents is unreachable in practice. The
-    # page that teaches `--batch-size` has to teach the grouping that makes a bounded pass cheaper.
-    assert {"--batch-size", "--sort-by-length"} <= taught, \
-        "the evals page teaches the batch size but not the grouping knob"
+    # page that teaches `--batch-size` has to teach the grouping that makes a bounded pass cheaper,
+    # and the abstention threshold that changes which answers score at all.
+    assert {"--batch-size", "--sort-by-length", "--min-confidence"} <= taught, \
+        "the evals page teaches the batch size but not the grouping or abstention knobs"
     assert "--score-within" in quickstart, "the tolerance metric has to be reachable from the quickstart"
     metrics = page.split("## Metrics", 1)[1].split("\n## ", 1)[0]
     assert "score_within" in metrics and "--score-within" in metrics, \
@@ -1370,6 +1572,10 @@ def test_docs_and_the_cli_name_the_same_flags():
     grouping = page.split("### Grouping the rows inside a batch", 1)[1].split("\n#", 1)[0]
     assert "--sort-by-length" in grouping and "sort_by_length_sent" in grouping, \
         "the subsection that explains the grouping has to name the flag and what it reports"
+    gate = page.split("### The abstention gate at a threshold", 1)[1].split("\n#", 1)[0]
+    assert "--min-confidence" in gate and "min_confidence_sent" in gate, \
+        "the subsection that explains the gate has to name the flag and what it reports"
+    assert "refused" in gate, "the docs have to teach that a gate-blind runner is refused, not silently scored"
 
 
 # --------------------------------------------------------------- --revision pinning
@@ -1390,7 +1596,10 @@ def _fake_router(monkeypatch, recorded):
             recorded.update(device=device, preload=preload, revision=revision,
                             revisions={normalise_name(k): v for k, v in (revisions or {}).items()})
 
-        def predict(self, state, questions, model=None):
+        def predict(self, state, questions, model=None, min_confidence=None):
+            # The gate is a real part of the Router interface since #361; a stub without it would
+            # turn a `--min-confidence` run into a TypeError and hide whether the CLI really
+            # forwarded, rather than only parsing, the flag.
             return {"model": model or "english", "answers": {"intent": choice_answer("a")}}
 
         loaded_revisions = {"english": SHA}
@@ -1463,6 +1672,261 @@ def test_cli_accepts_a_checkpoint_alias_in_a_pin(tmp_path, monkeypatch):
     dataset = _write_dataset(tmp_path, [{"state": "s", "questions": Q, "expected": {"intent": "a"}}])
     assert evals_cli.main(["run", dataset, "--revision", "en=" + SHA]) == 0
     assert recorded["revisions"] == {"english": SHA}
+
+
+# --------------------------------------------------------------- opt-in slice gates
+def _slice_gate_report(en_correct, zh_correct):
+    cases = [{"language": language, "scores": {"choice_accuracy": float(i < correct)},
+              "confidence": 0.8, "correct": i < correct}
+             for language, size, correct in (("en", 180, en_correct), ("zh", 20, zh_correct))
+             for i in range(size)]
+    return {"config": {"schema": evals.REPORT_SCHEMA, "dataset_sha256": "a" * 64,
+                       "questions_sha256": "b" * 64},
+            "overall": {"choice_accuracy": (en_correct + zh_correct) / 200},
+            "slices": {"language": {"en": {"choice_accuracy": en_correct / 180},
+                                    "zh": {"choice_accuracy": zh_correct / 20}}},
+            "cases": cases}
+
+
+def _write_gate_policy(tmp_path, rule):
+    path = tmp_path / "gates.json"
+    path.write_text(json.dumps({"version": 1, "rules": [rule]}), encoding="utf-8")
+    return str(path)
+
+
+def test_cli_slice_gate_catches_regression_hidden_by_overall_gain(tmp_path, capsys):
+    from laya import evals_cli
+
+    baseline = tmp_path / "baseline.json"
+    candidate = tmp_path / "candidate.json"
+    baseline.write_text(json.dumps(_slice_gate_report(162, 18)), encoding="utf-8")
+    candidate.write_text(json.dumps(_slice_gate_report(171, 12)), encoding="utf-8")
+    policy = _write_gate_policy(tmp_path, {"slice": {"language": "zh"},
+                                          "metric": "choice_accuracy", "min_count": 20,
+                                          "max_drop": 0.05})
+    args = ["compare", str(candidate), "--baseline", str(baseline),
+            "--tolerance", "choice_accuracy=0.02"]
+    assert evals_cli.main(args) == 0, "90% -> 91.5% overall passes the existing gate"
+    capsys.readouterr()
+    assert evals_cli.main(args + ["--gate-policy", policy]) == 1
+    error = capsys.readouterr().err
+    assert "language=zh" in error and "candidate=0.6000 (n=20)" in error
+    assert "baseline=0.9000 (n=20)" in error and "max_drop=0.0500" in error
+
+
+def test_slice_gate_requires_scored_evidence_on_both_sides(tmp_path):
+    from laya import _eval_policy
+
+    policy = _eval_policy.load_policy(_write_gate_policy(
+        tmp_path, {"slice": {"language": "zh"}, "metric": "choice_accuracy",
+                   "min_count": 20, "max_drop": 0.05}))
+    base = _slice_gate_report(162, 18)
+    candidate = _slice_gate_report(171, 12)
+    report = EvalReport(**candidate)
+    assert not any("count" in f for f in _eval_policy.check_policy(report, policy, base))
+    policy["rules"][0]["max_drop"] = 0.3
+    assert _eval_policy.check_policy(report, policy, base) == [], "the exact drift boundary passes"
+    policy["rules"][0]["max_drop"] = 0.05
+    report.cases = [c for c in report.cases if c["language"] != "zh"] + report.cases[-19:]
+    assert any("candidate count 19" in f for f in _eval_policy.check_policy(report, policy, base))
+    report = EvalReport(**candidate)
+    base["cases"] = [c for c in base["cases"] if c["language"] != "zh"] + base["cases"][-19:]
+    assert any("baseline count 19" in f for f in _eval_policy.check_policy(report, policy, base))
+    del base["slices"]["language"]["zh"]
+    assert any("baseline metric or slice is missing" in f
+               for f in _eval_policy.check_policy(report, policy, base))
+
+
+def test_slice_gate_absolute_and_increase_direction(tmp_path):
+    from laya import _eval_policy
+
+    candidate = _slice_gate_report(171, 12)
+    report = EvalReport(**candidate)
+    absolute = _eval_policy.load_policy(_write_gate_policy(
+        tmp_path, {"slice": {"language": "zh"}, "metric": "choice_accuracy",
+                   "min_count": 20, "min": 0.7}))
+    assert any("min=0.7000 failed" in f for f in _eval_policy.check_policy(report, absolute))
+    candidate["slices"]["language"]["zh"].pop("choice_accuracy")
+    assert any("metric or slice is missing" in f for f in _eval_policy.check_policy(report, absolute))
+    candidate = _slice_gate_report(171, 12)
+    candidate["slices"]["language"]["zh"]["ece"] = 0.3
+    for case in candidate["cases"]:
+        if case["language"] == "zh":
+            case["confidence"] = 0.8
+    base = _slice_gate_report(162, 18)
+    base["slices"]["language"]["zh"]["ece"] = 0.1
+    increase = _eval_policy.load_policy(_write_gate_policy(
+        tmp_path, {"slice": {"language": "zh"}, "metric": "ece",
+                   "min_count": 20, "max_increase": 0.05}))
+    assert any("max_increase=0.0500" in f
+               for f in _eval_policy.check_policy(EvalReport(**candidate), increase, base))
+
+
+def test_slice_gate_ece_requires_boolean_correct_evidence(tmp_path):
+    from laya import _eval_policy
+
+    candidate = _slice_gate_report(171, 12)
+    candidate["slices"]["language"]["zh"]["ece"] = 0.2
+    for case in candidate["cases"]:
+        if case["language"] == "zh":
+            case["correct"] = int(case["correct"])
+    policy = _eval_policy.load_policy(_write_gate_policy(
+        tmp_path, {"slice": {"language": "zh"}, "metric": "ece",
+                   "min_count": 20, "max": 0.3}))
+    assert any("candidate count 0 is below min_count 20" in failure
+               for failure in _eval_policy.check_policy(EvalReport(**candidate), policy))
+    for case in candidate["cases"]:
+        if case["language"] == "zh":
+            case["correct"] = bool(case["correct"])
+    assert _eval_policy.check_policy(EvalReport(**candidate), policy) == []
+
+
+def test_slice_gate_counts_each_tagged_answer_once_and_accepts_boundary(tmp_path):
+    from laya import _eval_policy
+
+    candidate = _slice_gate_report(171, 12)
+    for case in candidate["cases"]:
+        case.update(qid="intent", model="stub", tags=["critical", "critical"])
+    candidate["slices"].update({
+        "tag": {"critical": {"choice_accuracy": 183 / 200}},
+        "qid": {"intent": {"choice_accuracy": 183 / 200}},
+        "model": {"stub": {"choice_accuracy": 183 / 200}},
+    })
+    policy = _eval_policy.load_policy(_write_gate_policy(
+        tmp_path, {"slice": {"tag": "critical"}, "metric": "choice_accuracy",
+                   "min_count": 200, "min": 0.915}))
+    report = EvalReport(**candidate)
+    policy["rules"][0]["min_count"] = 201
+    assert any("candidate count 200 is below min_count 201" in failure
+               for failure in _eval_policy.check_policy(report, policy))
+    policy["rules"][0]["min_count"] = 200
+    assert _eval_policy.check_policy(report, policy) == []
+    for dimension, value in (("qid", "intent"), ("model", "stub")):
+        policy["rules"][0]["slice"] = {dimension: value}
+        assert _eval_policy.check_policy(report, policy) == []
+
+
+@pytest.mark.parametrize("rule", [
+    {"slice": {"language": "zh"}, "metric": "choice_accuracy", "min_count": 20,
+     "min": 0.6, "max_drop": 0.1},
+    {"slice": {"language": "zh", "tag": "critical"}, "metric": "choice_accuracy",
+     "min_count": 20, "min": 0.6},
+    {"slice": {"region": "cn"}, "metric": "choice_accuracy", "min_count": 20,
+     "min": 0.6},
+    {"slice": {"language": "zh"}, "metric": "choice_accuracy", "min_count": 0,
+     "min": 0.6},
+    {"slice": {"language": "zh"}, "metric": "choice_accuracy", "min_count": 20,
+     "max_drop": -0.1},
+])
+def test_cli_rejects_malformed_slice_policy_before_loading(monkeypatch, tmp_path, rule):
+    from laya import evals_cli
+
+    built = _patch_router(monkeypatch)
+    dataset = _write_dataset(tmp_path, RUN_ROWS)
+    policy = _write_gate_policy(tmp_path, rule)
+    assert evals_cli.main(["run", dataset, "--gate-policy", policy]) == 2
+    assert not built
+
+
+def test_cli_relative_slice_rule_requires_baseline_before_loading(monkeypatch, tmp_path):
+    from laya import evals_cli
+
+    built = _patch_router(monkeypatch)
+    dataset = _write_dataset(tmp_path, RUN_ROWS)
+    policy = _write_gate_policy(tmp_path, {"slice": {"language": "zh"},
+                                          "metric": "choice_accuracy", "min_count": 1,
+                                          "max_drop": 0.1})
+    assert evals_cli.main(["run", dataset, "--gate-policy", policy]) == 2
+    assert not built
+
+
+def test_cli_rejects_invalid_policy_json_and_version(monkeypatch, tmp_path):
+    from laya import evals_cli
+
+    built = _patch_router(monkeypatch)
+    dataset = _write_dataset(tmp_path, RUN_ROWS)
+    path = tmp_path / "gates.json"
+    for content in ("{not json", json.dumps({"version": 2, "rules": [
+            {"slice": {"language": "zh"}, "metric": "choice_accuracy",
+             "min_count": 1, "min": 0.5}]})):
+        path.write_text(content, encoding="utf-8")
+        assert evals_cli.main(["run", dataset, "--gate-policy", str(path)]) == 2
+    assert not built
+
+
+def test_cli_run_slice_gate_and_saved_compare_share_policy(monkeypatch, tmp_path, capsys):
+    from laya import evals_cli
+
+    # Choice answers without confidence keep this gate-wiring test weight-free.
+    def answer(label):
+        return {"type": "choice", "choice": label}
+    rows = [{"state": language, "questions": Q, "expected": {"intent": "a"},
+             "language": language} for language in ("en", "zh")]
+    dataset = _write_dataset(tmp_path, rows)
+    baseline = tmp_path / "baseline.json"
+    candidate = tmp_path / "candidate.json"
+    _patch_router(monkeypatch, {"en": {"intent": answer("a")},
+                              "zh": {"intent": answer("a")}})
+    assert evals_cli.main(["run", dataset, "--json", str(baseline)]) == 0
+    _patch_router(monkeypatch, {"en": {"intent": answer("a")},
+                              "zh": {"intent": answer("b")}})
+    policy = _write_gate_policy(tmp_path, {"slice": {"language": "zh"},
+                                          "metric": "choice_accuracy", "min_count": 1,
+                                          "max_drop": 0.1})
+    flags = ["--baseline", str(baseline), "--tolerance", "choice_accuracy=1",
+             "--gate-policy", policy]
+    assert evals_cli.main(["run", dataset, *flags, "--json", str(candidate)]) == 1
+    assert json.loads(candidate.read_text())["config"]["gate_policy"]["rules"][0]["max_drop"] == 0.1
+    assert evals_cli.main(["compare", str(candidate), *flags]) == 1
+    assert "language=zh" in capsys.readouterr().err
+
+
+def test_cli_compare_reports_a_different_recorded_gate_policy(tmp_path, capsys):
+    from laya import evals_cli
+
+    baseline = tmp_path / "baseline.json"
+    candidate = tmp_path / "candidate.json"
+    policy_path = tmp_path / "policy.json"
+    strict = {"version": 1, "rules": [{"slice": {"language": "zh"},
+                                       "metric": "choice_accuracy", "min_count": 20,
+                                       "min": 0.99}]}
+    lax = {"version": 1, "rules": [{"slice": {"language": "zh"},
+                                    "metric": "choice_accuracy", "min_count": 20,
+                                    "min": 0.0}]}
+    baseline.write_text(json.dumps(_slice_gate_report(162, 18)), encoding="utf-8")
+    document = _slice_gate_report(171, 12)
+    document["config"]["gate_policy"] = strict
+    candidate.write_text(json.dumps(document), encoding="utf-8")
+    args = ["compare", str(candidate), "--baseline", str(baseline),
+            "--tolerance", "choice_accuracy=0.02"]
+    policy_path.write_text(json.dumps(lax), encoding="utf-8")
+    assert evals_cli.main(args + ["--gate-policy", str(policy_path)]) == 0
+    assert "warning: --gate-policy differs from the report's recorded gate_policy" in capsys.readouterr().err
+    policy_path.write_text(json.dumps(strict), encoding="utf-8")
+    assert evals_cli.main(args + ["--gate-policy", str(policy_path)]) == 1
+    assert "warning: --gate-policy differs" not in capsys.readouterr().err
+    assert evals_cli.main(args) == 0
+    assert capsys.readouterr().err == ""
+
+
+def test_slice_gate_fails_closed_on_identity_or_skipped_cases(tmp_path):
+    from laya import _eval_policy
+
+    candidate = _slice_gate_report(171, 12)
+    base = _slice_gate_report(162, 18)
+    policy = _eval_policy.load_policy(_write_gate_policy(
+        tmp_path, {"slice": {"language": "zh"}, "metric": "choice_accuracy",
+                   "min_count": 20, "max_drop": 1.0}))
+    base["config"].pop("dataset_sha256")
+    assert any("need dataset_sha256 identity" in f
+               for f in _eval_policy.check_policy(EvalReport(**candidate), policy, base))
+    base["config"]["dataset_sha256"] = "c" * 64
+    assert any("not comparable" in f
+               for f in _eval_policy.check_policy(EvalReport(**candidate), policy, base))
+    base["config"]["dataset_sha256"] = "a" * 64
+    candidate["config"]["errored"] = [{"index": 1, "error": "missing answer"}]
+    assert any("skipped/errored" in f
+               for f in _eval_policy.check_policy(EvalReport(**candidate), policy, base))
 
 
 @pytest.mark.parametrize("pairs, expected", [

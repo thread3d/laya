@@ -5,7 +5,7 @@ Laya provides sub-35ms, non-autoregressive decision components for **CrewAI** mu
 * **`LayaCrewRouter`**: Sub-35ms task delegation router replacing LLM managers in hierarchical crews.
 * **`LayaTaskGuard`**: Pre-execution task guardrail screening prompts and instructions for jailbreaks, injections, and policy violations.
 
-Both take core's per-call decision controls -- the two token budgets (`max_len`, `head_max_len`) and the five prediction-hook arguments (`hooks`, `on_predict_start`, `on_predict_end`, `hooks_raise`, `hooks_timeout`) -- see [Per-call decision controls](#5-per-call-decision-controls).
+Both take core's per-call decision controls -- the two token budgets (`max_len`, `head_max_len`), the language and abstention controls (`lang`, `min_confidence`) and the five prediction-hook arguments (`hooks`, `on_predict_start`, `on_predict_end`, `hooks_raise`, `hooks_timeout`) -- see [Per-call decision controls](#5-per-call-decision-controls).
 
 Supports both **local in-process inference** (`Agent` or `Router`) and **remote HTTP inference** against your own `laya-serve` instance without requiring PyTorch on edge clients.
 
@@ -129,7 +129,8 @@ The remote client uses Python's standard library `urllib` with zero heavy depend
 ## 5. Per-call decision controls
 
 `LayaCrewRouter` and `LayaTaskGuard` take the same per-call arguments the core API does: the two
-token budgets (`max_len`, `head_max_len`) and the five prediction-hook arguments (`hooks`,
+token budgets (`max_len`, `head_max_len`), the language and abstention controls (`lang`,
+`min_confidence`), and the five prediction-hook arguments (`hooks`,
 `on_predict_start`, `on_predict_end`, `hooks_raise`, `hooks_timeout`). They are per instance, so a
 crew with a large roster can be given room while the rest of the pipeline keeps the checkpoint's
 defaults.
@@ -175,3 +176,21 @@ integration](langchain.md#7-widening-the-token-budget-for-many-options) for that
 executes inside `predict`, and no wire format carries it. Install hooks in the process that runs
 inference. The two budgets do travel to a remote node, in the request body, up to its
 `LAYA_MAX_TOKEN_BUDGET` ceiling; a larger value comes back as a 422.
+
+### Language and abstention
+
+`lang` pins the language the task is routed and answered in -- selecting the answering
+checkpoint's per-language calibration instead of relying on built-in detection -- and
+`min_confidence` is core's abstention gate: a decision under it comes back as an abstention rather
+than a forced delegation. Both are read by `Agent.predict` and `Router.predict` alike and accepted by
+`laya-serve` in the request body, so a router or guard forwards them on the local and the remote
+path. An unset one is omitted, not sent as `None`, so it cannot shadow the deployment's own default;
+`min_confidence=0.0` and `lang=""` are real values and are forwarded as given.
+
+```python
+router = LayaCrewRouter(
+    confidence_threshold=0.80,
+    lang="fr",             # route a French-language crew in French
+    min_confidence=0.3,    # abstain on a delegation the model is not sure about
+)
+```

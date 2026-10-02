@@ -92,6 +92,7 @@ class MockAgent:
 
     def predict(self, state, questions, **kwargs):
         return {"answers": {qid: {"choice": "billing_agent", "confidence": self.confidence,
+                                  "answer_confidence": self.confidence,
                                   "urgency": 1, "needs_human": False}
                             for qid in questions}}
 

@@ -171,7 +171,12 @@ f = make_length_fake()
 check("length/empty inputs", f.predict_batch([], QUESTIONS, sort_by_length=True), [])
 check("length/empty questions", f.predict_batch(states[:1], {}, sort_by_length=True)[0]["answers"], {})
 check("length/empty cases do not encode", f.encoded, [])
-f.predict_batch(states, QUESTIONS, sort_by_length=True, on_predict_start=lambda ctx: ctx.skip([]))
+# The cache pattern carries one entry per state (see docs/hooks/api.md); an empty skip
+# would return zero rows for this 37-state call, which `skip()` refuses as the contract
+# violation it is. What this pins is that a skip short-circuits before sorting/encoding.
+f.predict_batch(states, QUESTIONS, sort_by_length=True,
+                on_predict_start=lambda ctx: ctx.skip(
+                    [{"model": "cached", "answers": {}, "usage": {}} for _ in ctx.states]))
 check("length/cache skip does not encode", f.encoded, [])
 
 plain, grouped = make_length_fake(), make_length_fake()

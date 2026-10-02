@@ -29,6 +29,50 @@ Exit codes: `0` on success, `1` when a threshold or a baseline tolerance fails, 
 usage error. `run` prints the overall metrics and any requested slices to stdout, and writes
 the full report and a Markdown summary when `--json` / `--markdown` are given.
 
+## Attributing shortlist errors
+
+For a labelled high-cardinality choice set, `laya.evals_shortlist.evaluate_shortlist`
+uses the existing `predict_shortlist` path and the regular evaluation harness. It
+answers two separate questions: did retrieval keep the gold label, and did Laya
+choose it when it was present? This is an opt-in Python API for choice labels;
+ordinary `laya-evals run` reports are unchanged.
+
+```python
+import laya
+from laya.evals import Dataset
+from laya.evals_shortlist import evaluate_shortlist
+from laya.shortlist import embed_fn_from_agent
+
+agent = laya.load()
+dataset_path = "intents.jsonl"
+dataset = Dataset.from_jsonl(dataset_path)
+report = evaluate_shortlist(
+    agent, dataset, embed_fn_from_agent(agent), k=20,
+    checkpoint_id="my-checkpoint@revision", embedder_id="my-encoder@revision",
+    dataset_path=dataset_path,
+)
+print(report.overall)
+print(report.cases[0]["shortlist_status"])
+```
+
+Use the same embedding function and checkpoint as the deployment being measured.
+The two identifiers are supplied by the caller and should name immutable revisions;
+the report cannot infer the weights behind an arbitrary callable. `dataset_path`
+records the file's SHA256 alongside the existing question fingerprint. Each case
+keeps the actual shortlist labels and one of `correct`, `retrieval_miss`, or
+`decision_miss`. `shortlist_recall_at_k` is the fraction of gold labels retained.
+`shortlist_accuracy_on_recalled` is correct decisions divided by retained cases;
+it is omitted when none were retained. The existing `choice_accuracy` remains
+end-to-end accuracy over all cases, including retrieval misses. The shortlist
+metrics appear in the same language, model, question and tag slices. Request
+latency includes embedding and the decision call; the report does not isolate
+stage timings. With `k >= n`, the original question passes through and retrieval
+recall is 1 without calling the embedder.
+
+This does not reproduce the BANKING77 results in [issue #102](https://github.com/NandhaKishorM/laya/issues/102):
+those numbers depend on its dataset, checkpoint and bi-encoder. This API makes the
+same kind of diagnosis repeatable on a caller's own labelled set.
+
 ## Evaluating an ONNX export
 
 `run --onnx PATH` scores an exported ONNX model through `ONNXAgent` instead of the torch
@@ -46,8 +90,10 @@ short name like `english`, since there is no Router on this path (default
 whose `model` field names a different one fails with a clear error rather than being silently
 answered by the wrong model; `--device` does not apply. `--batch-size` uses the agent's batch
 API when it has one and falls back to one call per state otherwise; `--sort-by-length` is forwarded
-to that batch API, which the per-state fallback has no group to reorder. The report's `config` block
-records the `onnx` path.
+to that batch API, which the per-state fallback has no group to reorder. Pass `--calibration PATH`
+to load a fitted calibration map onto `ONNXAgent`, so calibration gates such as `--max-ece`
+evaluate against calibrated probabilities. The report's `config` block records the `onnx` path
+and `calibration` path (when set).
 
 Measured on `research/evals/fixture.jsonl` (12 labelled rows, English checkpoint, CPU):
 
@@ -113,10 +159,11 @@ requests were served fast, not whether the run was cheap. With no `--batch-size`
 timing noise. What the harness actually did -- the batch size asked for, the runner shape it
 resolved to, how many rows shared a call, and the largest chunk -- is recorded in the report's
 `config.timing`, because the flag alone does not say whether anything was batched. Those counters
-record the calls issued, not the calls that returned: with `on_error=skip`, a chunk whose call
-raised still counts in `rows_grouped` and `max_chunk`, next to its entries in `config.errored`. The
-two `*_ms` metrics count only the calls that returned, so a failed call never contributes a latency
-it did not measure.
+record the calls issued, not the calls that returned: with `laya-evals run --on-error skip`, a
+chunk whose call raised still counts in `rows_grouped` and `max_chunk`, next to its entries in
+`config.errored`. The default is `--on-error fail`, which re-raises instead of publishing a report
+whose metrics cover only the calls that came back. The two `*_ms` metrics count only the calls that
+returned, so a failed call never contributes a latency it did not measure.
 
 ### Grouping the rows inside a batch
 
@@ -132,12 +179,74 @@ A run with no `--batch-size` asks for something that cannot happen, and says so 
 `sent: false`; a runner whose `predict_batch` predates the knob is scored unsorted rather than
 raising `TypeError` halfway through a long run.
 
+### The abstention gate at a threshold
+
+`--min-confidence T` forwards core's opt-in abstention threshold (#361) to every call the run
+makes, so `Router` and `ONNXAgent` mark answers whose `answer_confidence` falls below `T` with
+`low_confidence: True` before the harness sees them. Unlike grouping, this changes the answers
+that score: the same run at `T=0` and `T=0.7` is a different experiment, and a `precision@coverage`
+sweep is a series of these, not a single baseline drifting.
+
+The accepted range is core's `laya.confidence.check_min_confidence` -- `[0.0, 1.0]`, finite, not
+a bool -- rather than a copy here, so a value the gate itself would reject fails as a usage error
+(exit 2) before any checkpoint loads. `0.0` is a legal ask: it is the control arm for a
+`precision@coverage` sweep, and a check that dropped it would hide the sweep's own floor.
+
+A runner whose `predict` or (for a batched run) whose `predict_batch` predates the gate is
+**refused with a named `EvalError`**, not scored without the threshold. Silently dropping a
+scoring control is the class of lie this harness exists to prevent: the report would publish a
+`precision@coverage` figure for a policy that never ran. `config.timing` records both the ask and
+the fact: `min_confidence` is the threshold that was requested, `min_confidence_sent` says whether
+any call this run made actually carried it.
+
 ## Slices
 
 `compare` and `run` report overall numbers and, for `--slice language|model|qid|tag`, the same
 metrics per slice value, so a regression in one language or one question is visible without
 reading the aggregate. The `model` slice holds the checkpoint that answered each row: the
 `Router`'s own choice per request, or the runner's `model` for a runner that does not route.
+
+### Opt-in slice gates
+
+The overall baseline gate can pass while a smaller language or question slice regresses. To make
+one reviewed slice a CI requirement, save a JSON policy such as `gates.json`:
+
+```json
+{
+  "version": 1,
+  "rules": [
+    {"slice": {"language": "zh"}, "metric": "choice_accuracy",
+     "min_count": 50, "max_drop": 0.05},
+    {"slice": {"qid": "intent"}, "metric": "ece",
+     "min_count": 50, "max": 0.10}
+  ]
+}
+```
+
+```bash
+laya-evals run data.jsonl --baseline baseline.json --tolerance choice_accuracy=0.02 \
+    --gate-policy gates.json --json report.json
+laya-evals compare report.json --baseline baseline.json \
+    --tolerance choice_accuracy=0.02 --gate-policy gates.json
+```
+
+Each rule selects exactly one `language`, `model`, `qid`, or `tag` value and names the metric
+exactly as it appears in the slice report. It has a positive `min_count` and exactly one limit:
+`min` or `max` checks the candidate value; `max_drop` permits at most that decrease from the
+baseline; `max_increase` permits at most that increase. The latter two require `--baseline`.
+The count is the number of scored answers for that metric in the selected slice, in **both**
+reports for a relative rule. For `ece`, it is the number of answers with a finite confidence and
+boolean `correct` value. A missing slice or metric, too few scored answers, or skipped/errored
+cases fails the opted-in gate. Relative rules also require both reports to carry matching run
+identities, so missing evidence cannot appear as a pass. A measured regression reports the slice,
+metric, counts, values, and limit. Invalid policy syntax exits 2 before a checkpoint loads; a
+quality failure exits 1. The policy is recorded in `config.gate_policy` of a `run --json` report.
+`compare --gate-policy` applies the policy supplied on that command line to the saved measurements.
+If it differs from the report's recorded policy, `compare` says so; an explicit re-check under a
+new policy does not change the policy under which the original run was made.
+
+The regular overall comparison still applies, including its tolerance and legacy-baseline
+behavior. Without `--gate-policy`, slice reporting and comparison behave as before.
 
 ## Run identity
 
@@ -152,6 +261,7 @@ is reviewable on its own:
 | `questions_sha256` | a fingerprint of the question schema: every question's id, type, `instructions` and `criteria`, over the whole dataset |
 | `laya_version` | the `laya` that computed the numbers |
 | `thresholds` | the gate this run applied: `min`, `max` and `baseline_tolerance` |
+| `gate_policy` | the optional slice gate policy applied by `run --gate-policy` |
 | `revisions` | the commit each checkpoint that answered was loaded from (see [below](#baseline-and-ci-gate)) |
 
 `dataset` is a path, and a path is not an identity: a dataset can be edited in place, moved, or

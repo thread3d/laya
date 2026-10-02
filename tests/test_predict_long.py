@@ -6,6 +6,7 @@ window split, the per-type aggregation (noul = strongest window, choice/score = 
 window), and the per-call hook controls it forwards to whichever of those two calls runs. Numerical
 behaviour on real weights is exercised in tests/test_local_e2e.py.
 """
+import inspect
 import os
 import re
 import sys
@@ -16,7 +17,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np  # noqa: E402
 
-from laya.agent import Agent  # noqa: E402
+import laya.agent as agent_mod
+from laya.agent import Agent, _check_scan_budget, _start_evidence
+
+from laya.onnx_agent import ONNXAgent  # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -41,11 +45,16 @@ def check_true(name, cond, detail=""):
 
 
 class _Tok:
+    # The special-token ids and `truncation` are what `laya.common.build_head` reads: predict_long
+    # assembles each question's head to measure the room it leaves for the state before it sizes a
+    # window, so a fake that cannot build a head cannot reach the scan at all.
     mask_token = "[M]"
+    cls_token_id, sep_token_id, mask_token_id = 101, 102, 103
 
-    def __call__(self, text, add_special_tokens=False):
+    def __call__(self, text, add_special_tokens=False, truncation=False, max_length=None):
         # token count == character count, so the test controls windowing by string length
-        return {"input_ids": list(range(len(text)))}
+        ids = list(range(len(text)))
+        return {"input_ids": ids[:max_length] if (truncation and max_length) else ids}
 
     def decode(self, ids):
         return "w%d_%d" % (ids[0], ids[-1]) if ids else "w"
@@ -57,7 +66,7 @@ def make_agent(batch_result_fn):
     a.tok = _Tok()
     a._to_internal = staticmethod(Agent._to_internal).__func__
     a._calls = {"system_one": 0, "batch_states": None, "system_one_kwargs": None,
-                "batch_kwargs": None}
+                "batch_kwargs": None, "batch_size": "unset"}
 
     def _system_one(state, questions, lang=None, **controls):
         a._calls["system_one"] += 1
@@ -67,6 +76,7 @@ def make_agent(batch_result_fn):
     def _predict_batch(states, questions, batch_size=None, lang=None, **controls):
         a._calls["batch_states"] = list(states)
         a._calls["batch_kwargs"] = controls
+        a._calls["batch_size"] = batch_size
         return batch_result_fn(list(states), questions)
 
     a.system_one = _system_one
@@ -257,7 +267,11 @@ stub = _LongStub()
 out = _router(stub).predict_long({"body": "y" * 300}, Q, model="english",
                                  window=64, stride=32, batch_size=8, lang="de")
 check("router/routing key attached", out["routing"]["model"], "english")
-check("router/answers come from the scan", out["answers"], {"scanned": {"noul": 0.5}})
+# `predict_long` takes no `min_confidence` -- a window scan has no single confidence to gate on --
+# so the gate writes nothing and the scan's answers come back exactly as produced. A long-document
+# result is not a gated decision, and now it does not claim to be one.
+check("router/answers come from the scan", out["answers"],
+      {"scanned": {"noul": 0.5}})
 check("router/window forwarded", stub.calls[0]["window"], 64)
 check("router/stride forwarded", stub.calls[0]["stride"], 32)
 check("router/batch_size forwarded", stub.calls[0]["batch_size"], 8)
@@ -306,7 +320,8 @@ class _Recorder:
 recorder_stub = _LongStub()
 _router(recorder_stub).predict_long({"body": "y" * 300}, Q, model="english",
                                     on_predict_end=_Recorder().on_predict_end)
-check("router/per-call end hook sees the scan", ended["answers"], {"scanned": {"noul": 0.5}})
+check("router/per-call end hook sees the scan", ended["answers"],
+      {"scanned": {"noul": 0.5}})
 
 # 8. an agent with no predict_long is a named caller error, not a bare AttributeError
 class _NoScan:
@@ -494,6 +509,51 @@ def _question_agent():
     return a
 
 
+def _rewrite_agrees(name, actual, expected):
+    """A question rewrite must reproduce the direct call, EXCEPT for the pass count.
+
+    #692 added this comparison so a start hook's questions drive aggregation: an added decision must
+    not disappear, a rename must not `KeyError`, a type change must apply the right rule. All of that
+    lives in `answers`, and all of it is asserted exactly as before.
+
+    What is exempted is `usage.windows`, and only in the safe direction. Windowing happens BEFORE the
+    hook chain -- it has to, because a start hook is documented to see and rewrite `ctx.states`, i.e.
+    the windows themselves -- so the scan is sized from the questions the caller passed. When a hook
+    then LEAVES MORE room than the scan was sized for, the scan is finer than it needed to be: every
+    token is still covered, the answers are identical, and the only difference is that more passes
+    were made. Measured on the ONNX fixture for the `clear` rewrite: 14 windows against 6, with
+    identical `answers`. The torch fixture happens to produce 8 either way, so it passed the
+    whole-dict comparison by luck rather than by construction.
+
+    The other direction is not exempted and is not silent: a hook that leaves LESS room than the scan
+    was sized for is refused outright by `_check_scan_budget`, because then the windows really would be
+    re-truncated and part of the document would reach no model. That refusal has its own checks, and it
+    is why this exemption is one-sided in practice rather than by assertion here -- an earlier revision
+    of this helper also asserted `hooked >= direct`, which reads like a guarantee and cannot fail:
+    the only route to a coarser hooked scan is a shrinking rewrite, and that is refused before it can
+    be observed. Removed rather than kept as decoration.
+    """
+    # `actual` is None when the call raised: the torch side routes it through `_attempt`, which
+    # swallows the exception and returns None. Report that as a failure rather than raising out of
+    # the helper -- the whole-dict `check` this replaced compared None against a dict and failed
+    # cleanly, and losing that cost a crash instead of a diagnosis the first time a mutation
+    # reintroduced #692's KeyError.
+    if not isinstance(actual, dict) or not isinstance(expected, dict):
+        FAIL.append("questions/%s did not return a result to compare (actual=%r, expected=%r)"
+                    % (name, type(actual).__name__, type(expected).__name__))
+        return
+    a_usage = dict(actual.get("usage") or {})
+    e_usage = dict(expected.get("usage") or {})
+    a_windows, e_windows = a_usage.pop("windows", None), e_usage.pop("windows", None)
+    check("questions/%s reproduces the answers of the direct call" % name,
+          actual.get("answers"), expected.get("answers"))
+    check("questions/%s reproduces everything but the pass count" % name,
+          ({k: v for k, v in actual.items() if k != "usage"}, a_usage),
+          ({k: v for k, v in expected.items() if k != "usage"}, e_usage))
+    # `usage.windows` deliberately not compared; both values are read above only to strip them.
+    del a_windows, e_windows
+
+
 question_rewrites = [
     ("append", {**Q, "review": Q["flag"]}),
     ("replace", {"review": Q["flag"]}),
@@ -507,7 +567,7 @@ for name, rewritten_questions in question_rewrites:
     actual, exc = _attempt(lambda: _question_agent().predict_long(
         LONG, Q, on_predict_start=lambda ctx: setattr(ctx, "questions", rewritten_questions)))
     check("questions/%s returns without error" % name, _kind(exc), None)
-    check("questions/%s matches directly requesting the final schema" % name, actual, expected)
+    _rewrite_agrees(name, actual, expected)
 
 check("questions/no-op preserves the unhooked result",
       _question_agent().predict_long(LONG, Q, on_predict_start=lambda ctx: None),
@@ -599,6 +659,468 @@ check("docs/api.md tabulates a hook answer as zero windows",
       "| answered with `ctx.skip([result])` | `0` |" in api_para, True)
 check("docs/predict_long's docstring says the key is total",
       "always present" in (Agent.predict_long.__doc__ or ""), True)
+
+# 12. the window is sized by the room the questions leave, not by the config alone
+#
+# Every window is decoded and scored as an ordinary state, so `build_sequence` cuts one that is
+# wider than the room the question's own head leaves inside `max_len`. Sized from the config alone
+# the window was cut short on the way to the model while `answer["window"]["token_end"]` still
+# reported the whole span, and once the room fell under the stride, spans of the document were
+# read by no window at all.
+from laya import common as common_mod  # noqa: E402
+from laya.common import build_sequence, serialize_state  # noqa: E402
+
+TOK = _Tok()
+MAX_LEN, HEAD_MAX_LEN, CONFIG_BUDGET = 100, 20, 72      # make_agent's cfg, and its budget
+
+
+def head_len(qdef):
+    """The head `build_sequence` puts in front of the state, measured with no state at all."""
+    return len(build_sequence(TOK, "", Agent._to_internal(qdef), 10 ** 6, HEAD_MAX_LEN)[0]) - 1
+
+
+def room_for(qdef):
+    """The state tokens `qdef` leaves inside `max_len`, re-derived from `build_sequence`.
+
+    Deliberately not `laya.common.state_room`: the window has to fit what the sequence builder
+    really keeps, so this measures that the long way round instead of trusting the same helper the
+    code under test uses.
+    """
+    return max(0, MAX_LEN - head_len(qdef) - 1)
+
+
+def q_many(n):
+    """A choice question with `n` options, each long enough to be worth capping."""
+    return {"type": "choice", "instructions": "which one?",
+            "criteria": {"opt%02d" % i: "d" * 20 for i in range(n)}}
+
+
+def canned_for(questions, i, n):
+    """One canned answer per window, the last window the confident one."""
+    conf = 0.9 if i == n - 1 else 0.4
+    return {"answers": {qid: {"type": "choice", "choice": "opt00", "noul": conf,
+                              "confidence": conf, "answer_confidence": conf}
+                        for qid in questions},
+            "usage": {"input_tokens": 10}}
+
+
+def scan(questions, **kw):
+    """Scan LONG and return (result, the token spans of the windows handed to predict_batch)."""
+    agent = make_agent(lambda sts, q: [canned_for(q, i, len(sts)) for i in range(len(sts))])
+    result = agent.predict_long(LONG, questions, **kw)
+    handed = []
+    for text in agent._calls["batch_states"]:
+        first, last = text[1:].split("_")           # _Tok.decode renders a span as "wA_B"
+        handed.append((int(first), int(last) + 1))
+    return result, handed
+
+
+def read_spans(handed, room):
+    """What the model reads of each window: `build_sequence` keeps its first `room` tokens."""
+    return [(start, min(end, start + room)) for start, end in handed]
+
+
+def uncovered(spans, total):
+    """Token indices of `total` that no span in `spans` contains."""
+    seen = set()
+    for start, end in spans:
+        seen.update(range(start, end))
+    return sorted(set(range(total)) - seen)
+
+
+STATE_TOKENS = len(TOK(serialize_state(LONG))["input_ids"])
+
+# The premise, checked against build_sequence rather than assumed: a state is cut to the room, and
+# for a 12-option question on this config that room is under the budget the scan sized windows by.
+ROOM_12 = room_for(q_many(12))
+kept = len(build_sequence(TOK, "x" * (MAX_LEN + 50), Agent._to_internal(q_many(12)),
+                          MAX_LEN, HEAD_MAX_LEN)[0]) - head_len(q_many(12)) - 1
+check("room/build_sequence keeps exactly the room, whatever the state's length", kept, ROOM_12)
+check("room/12 options leave less room than the config budget", ROOM_12 < CONFIG_BUDGET, True)
+check("room/the questions the sections above scan with leave more room than the budget",
+      [room_for(q) >= CONFIG_BUDGET for q in Q.values()], [True, True])
+
+# 12a. a window is never wider than the room, so no window is truncated on the way in
+tight, handed = scan({"a": q_many(12)})
+check("tight/no window is wider than the room the question leaves",
+      max(end - start for start, end in handed) <= ROOM_12, True)
+check("tight/the windows still overlap",
+      all(b[0] < a[1] for a, b in zip(handed, handed[1:])), True)
+check("tight/every token of the state is read by some window",
+      uncovered(read_spans(handed, ROOM_12), STATE_TOKENS), [])
+
+# 12b. and the span reported is the span read, not the span asked for
+decided = tight["answers"]["a"]["window"]
+check("tight/token_end does not overstate what the model read",
+      decided["token_end"] - decided["token_start"] <= ROOM_12, True)
+check("tight/token_start/token_end are the deciding window's own span",
+      (decided["token_start"], decided["token_end"]), handed[decided["index"]])
+check("tight/the last window stops at the end of the state", handed[-1][1], STATE_TOKENS)
+
+# 12c. the failure that needed no wide window at all: a room under the stride left whole spans of
+# the document unread, because consecutive windows no longer touched.
+ROOM_20 = room_for(q_many(20))
+check("gap/20 options leave less room than the default stride",
+      ROOM_20 < CONFIG_BUDGET // 2, True)
+gappy, handed = scan({"a": q_many(20)})
+check("gap/the scan covers the whole state even so",
+      uncovered(read_spans(handed, ROOM_20), STATE_TOKENS), [])
+check("gap/which costs windows, and reports them", gappy["usage"]["windows"], len(handed))
+
+# 12d. two questions with different rooms share one list of windows, so the tightest one sets it
+mixed, handed = scan({"wide": q_many(2), "tight": q_many(12)})
+check("mixed/the window fits the tightest question",
+      max(end - start for start, end in handed) <= min(ROOM_12, room_for(q_many(2))), True)
+check("mixed/both questions name the same span",
+      mixed["answers"]["wide"]["window"], mixed["answers"]["tight"]["window"])
+
+# 12e. an explicit window past the room is clamped, and the caller is told
+with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    asked, handed = scan(Q, window=200)
+check("explicit/a window past the room is clamped to it",
+      max(end - start for start, end in handed) <= room_for(Q["dept"]), True)
+check("explicit/and the caller is warned about it",
+      [w.category.__name__ for w in caught], ["RuntimeWarning"])
+check("explicit/the warning names the room it clamped to",
+      "leave inside max_len" in str(caught[0].message) if caught else False, True)
+
+# Clamping the *default* is not the caller's doing, so it is not warned about.
+with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    scan({"a": q_many(12)})
+check("explicit/clamping the default window is not warned about",
+      [w.category.__name__ for w in caught], [])
+
+# 12f. a stride past the effective window is refused: the tokens between two windows would be read
+# by nothing, which is the failure this method exists to prevent.
+check_raises("stride/past the effective window is an error", ValueError,
+             lambda: scan(Q, stride=room_for(Q["dept"]) + 1))
+# A stride the caller paired with a window they asked for is NOT their error when the library then
+# reduces that window: window=90 with stride=90 is a self-consistent "no overlap, read everything".
+# Refusing it made the library's own clamp look like the caller's mistake, and forced every such
+# caller -- including `tests/test_onnx_long.py`'s window=96 stride=96 -- to be edited. It is clamped
+# to half the effective window under the same RuntimeWarning, and the scan still covers the state.
+with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    _clamped = scan({"a": q_many(12)}, window=90, stride=90)
+check_true("stride/a stride valid for the requested window is clamped, not refused",
+           _clamped[0]["usage"]["windows"] > 1, _clamped[0]["usage"])
+check_true("stride/and the caller is told the stride moved too",
+           any("stride=90" in str(w.message) and "reduced" in str(w.message) for w in caught),
+           [str(w.message)[:90] for w in caught])
+_room12 = room_for(q_many(12))
+# `read_spans` clamps every span to `start + room`, so `b - a <= room` is true of ANY input --
+# executed against deliberate garbage it still passed. What the clamped scan has to guarantee is
+# that nothing is left unread, which `uncovered` measures and which goes red when the stride clamp
+# is mutated to `size * 2`.
+check("stride/the clamped scan leaves no gap",
+      uncovered(read_spans(_clamped[1], _room12), STATE_TOKENS), [])
+# A stride past the window the caller actually asked for is still their error.
+check_raises("stride/past the window the caller asked for is still refused", ValueError,
+             lambda: scan({"a": q_many(12)}, window=40, stride=80))
+check("stride/a stride inside the window is accepted",
+      scan(Q, window=40, stride=40)[0]["usage"]["windows"] > 1, True)
+
+# 12f-bis. the ONNX path honours the same cap, because README and Router promise it for both
+try:                                                                            # noqa: E402
+    from laya.common import window_batch_cap, window_budget
+except ImportError:      # source reverted: let the checks below go red rather than abort the suite
+    def window_budget(*_a, **_k):        # type: ignore[misc]
+        return (0, 0, 0)
+
+    def window_batch_cap(*_a, **_k):     # type: ignore[misc]
+        return -1
+
+_onnx = ONNXAgent.__new__(ONNXAgent)
+_onnx.tok = _Tok()
+_onnx.cfg = {"max_len": MAX_LEN, "head_max_len": HEAD_MAX_LEN}
+_q_onnx = {"a": q_many(12)}   # 100 options fills this tiny harness entirely
+_eff_onnx, _step_onnx, _room_onnx = window_budget(
+    _onnx.tok, [_onnx._to_internal(_q_onnx["a"])], MAX_LEN, HEAD_MAX_LEN)
+check_true("onnx/predict_long caps the window at the room too",
+           _eff_onnx <= _room_onnx and _eff_onnx < max(64, MAX_LEN - HEAD_MAX_LEN - 8),
+           (_eff_onnx, _room_onnx))
+check_true("onnx/and its stride stays inside that window", _step_onnx <= _eff_onnx,
+           (_step_onnx, _eff_onnx))
+check_true("onnx/predict_long actually calls window_budget",
+           "window_budget(" in inspect.getsource(ONNXAgent.predict_long),
+           "the README and Router docstring promise the cap for both agents")
+
+# 12f-ter. capping the window must not turn one forward pass into an out-of-memory
+check("batch/a mild cap keeps the single shared pass", window_batch_cap(10, 43, 64), None)
+check("batch/no cap at all keeps it too", window_batch_cap(16, 312, 312), None)
+check_true("batch/a blow-up is bounded to the un-capped pass width",
+           0 < (window_batch_cap(413, 23, 312) or 0) < 413, window_batch_cap(413, 23, 312))
+check("batch/an explicit batch_size is always honoured", window_batch_cap(413, 23, 312, 8), 8)
+
+# 12g. the page that teaches the default teaches the cap as well
+window_para = README[README.index("A smaller `window` isolates"):][:900]
+check("docs/README says the window is capped at the room the questions leave",
+      "capped at the room the questions leave" in window_para, True)
+check("docs/predict_long's docstring documents the cap",
+      "capped at the room the" in (Agent.predict_long.__doc__ or ""), True)
+
+
+# --- findings from an adversarial review -----------------------------------------------------
+
+# The batch cap is wired into BOTH agents and nothing pinned the wiring: replacing `cap` with
+# `batch_size` at either call site, or swapping window_budget's two arguments so the cap can never
+# fire, left every suite green. The cap is the OOM protection the change exists to keep.
+_blow = make_agent(lambda states, questions: [
+    {"model": "m", "answers": {"a": {"choice": "x", "answer_confidence": 0.5}},
+     "usage": {"input_tokens": 1}} for _ in states])
+_blow.predict_long(LONG, {"a": q_many(16)})   # room 24 vs a 72-token config budget: 3x blow-up
+# The exact value, not "some int": returning a quarter of it, or moving _WINDOW_BATCH_BLOWUP,
+# both left a plausible-looking number that an in-range assertion accepted.
+check("batch cap/a blown-up scan is chunked to the un-capped scan's pass size",
+      _blow._calls["batch_size"], 9)
+
+_mild = make_agent(lambda states, questions: [
+    {"model": "m", "answers": {"a": {"choice": "x", "answer_confidence": 0.5}},
+     "usage": {"input_tokens": 1}} for _ in states])
+_mild.predict_long(LONG, {"a": q_many(2)})
+check("batch cap/a mild scan keeps the single shared pass", _mild._calls["batch_size"], None)
+
+_explicit = make_agent(lambda states, questions: [
+    {"model": "m", "answers": {"a": {"choice": "x", "answer_confidence": 0.5}},
+     "usage": {"input_tokens": 1}} for _ in states])
+_explicit.predict_long(LONG, {"a": q_many(16)}, batch_size=3)
+check("batch cap/an explicit batch_size is honoured untouched",
+      _explicit._calls["batch_size"], 3)
+
+# Both agents must USE the cap, and the torch scan must install the budget guard. The fake agent
+# replaces `predict_batch` wholesale, so no hook chain runs through it and behaviour cannot see the
+# wiring; the source is what distinguishes "computed" from "computed and passed on".
+_torch_src = inspect.getsource(Agent.predict_long)
+_onnx_src = inspect.getsource(ONNXAgent.predict_long)
+check_true("batch cap/the torch scan passes the cap to predict_batch",
+           "batch_size=cap" in _torch_src, "")
+check_true("batch cap/the ONNX scan passes the cap to predict_batch",
+           "window_batch_cap(" in _onnx_src and "batch_size=cap" in _onnx_src, "")
+# Compared on the statements, not on any mention: the comment above the call names `_to_internal`.
+check_true("questions/the ONNX scan validates before _to_internal",
+           _onnx_src.index("_Agent._check_question(qid")
+           < _onnx_src.index("internal = {qid: self._to_internal"), "")
+
+
+# A start hook may set ctx.max_len / ctx.head_max_len, or rewrite ctx.questions -- both documented
+# powers -- and `build_sequence` uses whatever it finds, while the scan was sized from the config
+# before any hook ran. `widen_for_high_cardinality`, which docs/hooks/patterns.md ships for exactly
+# these questions, widens the head faster than max_len, so the real room SHRINKS: 303 sized against
+# 253 real at 50 options on the English checkpoint, and 43.4% of a document unread at 100.
+#
+# The first version of this was a start hook that RAISED, and three ways of defeating it all left
+# the suite green: `hooks_raise=False` -- what docs/hooks/tracing.md recommends -- downgraded the
+# refusal to a RuntimeWarning and the scan proceeded; a hook that rewrote ctx.questions instead of
+# the budget was invisible; and `sized=0` at the call site made it unable to fire while the
+# source-text assertions still matched. It is now a plain function `predict_long` calls itself, so
+# no hook policy governs it, and both halves are checked below: what it decides, and that it is
+# actually called with the budget the scan used.
+_CFG = (100, 20)              # make_agent's config; budget = max(64, 100-20-8) = 72
+
+
+def _evidence(max_len=None, head_max_len=None, questions=None, answered=False):
+    return {"answered": answered, "states": None, "max_len": max_len,
+            "head_max_len": head_max_len,
+            "questions": {"a": q_many(2)} if questions is None else questions}
+
+
+_probe_agent = make_agent(lambda states, qs: [])
+
+
+def _scan_raw(questions=None, **kw):
+    a = make_agent(lambda states, qs: [])
+    return a.predict_long(LONG, questions or {"a": q_many(2)}, **kw)
+
+
+def _budget_message():
+    try:
+        _check_scan_budget(_probe_agent, _evidence(head_max_len=60), 72, *_CFG)
+    except ValueError as exc:
+        return str(exc)
+    return ""
+
+
+check_raises("hook budget/a hook that shrinks the room is refused", ValueError,
+             lambda: _check_scan_budget(_probe_agent, _evidence(head_max_len=60), 72, *_CFG))
+# `asked` is what predict_long was called with; the recorded questions are what the chain left.
+check_raises("hook budget/rewriting ctx.questions is caught too", ValueError,
+             lambda: _check_scan_budget(_probe_agent, _evidence(questions={"a": q_many(16)}),
+                                        72, *_CFG, asked={"a": q_many(2)}))
+# The boundary is `>=`, not `>`: a re-budget that leaves the room EXACTLY the size the scan used
+# is harmless and must still answer. At cfg 100/20 a 4-option question leaves exactly 72, which is
+# what a 2-option scan sized to, so this is the one shape that separates the two comparisons.
+check_true("hook budget/a room exactly equal to the window is allowed",
+           _check_scan_budget(_probe_agent, _evidence(questions={"a": q_many(4)}), 72, *_CFG,
+                              asked={"a": q_many(2)}) is None, "room == sized")
+
+check_true("hook budget/questions untouched skips the recompute entirely",
+           _check_scan_budget(_probe_agent, _evidence(questions={"a": q_many(16)}), 72, *_CFG,
+                              asked={"a": q_many(16)}) is None, "nothing moved")
+check_true("hook budget/an unchanged budget is allowed",
+           _check_scan_budget(_probe_agent, _evidence(), 72, *_CFG) is None, "no hook")
+check_true("hook budget/a budget widened together is allowed",
+           _check_scan_budget(_probe_agent, _evidence(400, 60), 72, *_CFG) is None, "room grows")
+check_true("hook budget/a hook that answered the document is not refused",
+           _check_scan_budget(_probe_agent, _evidence(head_max_len=60, answered=True),
+                              72, *_CFG) is None, "cache hit")
+check_true("hook budget/no questions is not a crash",
+           _check_scan_budget(_probe_agent, _evidence(head_max_len=60, questions={}),
+                              72, *_CFG) is None, "empty questions")
+check_true("hook budget/the refusal names both budgets and both rooms",
+           all(t in _budget_message() for t in ("max_len=100", "head_max_len=60", "sized for 72")),
+           _budget_message())
+
+# ... and that predict_long actually calls it, with the budget it sized the windows to. This is what
+# `sized=0` walked past: the symbol was present and the call site spelled right, but the value made
+# the check inert.
+_seen_budget = []
+_real_check = agent_mod._check_scan_budget
+try:
+    agent_mod._check_scan_budget = (
+        lambda ag, ev, sized, ml, hm, asked=None: _seen_budget.append((sized, ml, hm)))
+    _wired = make_agent(lambda states, qs: [
+        {"model": "m", "answers": {"a": {"choice": "x", "answer_confidence": 0.5}},
+         "usage": {"input_tokens": 1}} for _ in states])
+    _wired.predict_long(LONG, {"a": q_many(2)})
+finally:
+    agent_mod._check_scan_budget = _real_check
+check("hook budget/the torch scan checks its budget exactly once", len(_seen_budget), 1)
+# The room is the SMALLEST any question leaves, which is why `window_budget` takes a min. No test
+# put two questions of different cardinality through the checker, so `min` -> `max` was green.
+# At the unchanged budget these two leave rooms of 76 and 24 against a scan sized for 72, so `min`
+# refuses and `max` does not -- which is the whole reason `window_budget` takes a min. Collapsing
+# them under a widened head (both 36) makes the mutant survive, which is how it slipped through.
+check_raises("hook budget/the smallest room wins across questions", ValueError,
+             lambda: _check_scan_budget(
+                 _probe_agent, _evidence(questions={"a": q_many(2), "b": q_many(16)}), 72, *_CFG,
+                 asked={"a": q_many(2)}))
+
+# What the probe RECORDS is half the check: synthesising an evidence dict in the tests above leaves
+# the recording itself unpinned, and dropping either field made the checker silently inert.
+_rec_probe, _rec = _start_evidence()
+
+
+class _RecCtx:
+    results = None
+    states = ["s"]
+    max_len = 400
+    head_max_len = 60
+    questions = {"a": q_many(2)}
+
+
+_rec_probe(_RecCtx())
+check("probe/records the budget in force", (_rec["max_len"], _rec["head_max_len"]), (400, 60))
+check("probe/records the questions in force", list(_rec["questions"]), ["a"])
+check_true("probe/copies the questions rather than aliasing them",
+           _rec["questions"] is not _RecCtx.questions, "")
+
+# Validation before `_to_internal` on the torch agent too. The ONNX side is pinned by a source-order
+# check; deleting the torch loop was green.
+check_raises("questions/the torch scan validates before _to_internal", ValueError,
+             lambda: _scan_raw(questions={"a": {"type": "choice", "instructions": "?",
+                                                "criteria": None}}))
+
+# Both agents, not one. The ONNX scan had no check at all while the torch one refused the identical
+# input -- measured, 34.6% of a document reaching no model -- and the source comment two screens up
+# says the contract binds both agents.
+_onnx_src = inspect.getsource(ONNXAgent.predict_long)
+check_true("hook budget/the ONNX scan checks its budget too",
+           "_check_scan_budget(self, evidence, budget, max_len, head_max_len, questions)" in _onnx_src,
+           "")
+check("hook budget/both agents check it on the single-window path too",
+      (inspect.getsource(Agent.predict_long).count("_check_scan_budget("),
+       _onnx_src.count("_check_scan_budget(")), (2, 2))
+
+check("hook budget/it is handed the window size and the config it sized from",
+      _seen_budget[0] if _seen_budget else None,
+      (window_budget(TOK, [Agent._to_internal(q_many(2))], 100, 20,
+                     window=None, stride=None)[0], 100, 20))
+
+
+
+# A question whose options fill the whole sequence leaves no room for any state, so no window can
+# carry a single token of the document. `window_budget` refuses rather than scanning with window=0,
+# and deleting that raise left all 149 checks green -- the scan then ran with a window of 0 and
+# reported spans for text no model had seen.
+_no_room = {"a": q_many(400)}
+check_true("no room/the fixture really does fill the sequence",
+           room_for(q_many(400)) <= 0,
+           "room=%d" % room_for(q_many(400)))
+check_raises("no room/a scan with no room for the state is refused", ValueError,
+             lambda: window_budget(TOK, [Agent._to_internal(_no_room["a"])], MAX_LEN, HEAD_MAX_LEN,
+                                   window=None, stride=None))
+check_raises("no room/and predict_long refuses it rather than scanning a zero-width window",
+             ValueError, lambda: scan(_no_room))
+_no_room_msg = _attempt(lambda: window_budget(TOK, [Agent._to_internal(_no_room["a"])],
+                                              MAX_LEN, HEAD_MAX_LEN, window=None, stride=None))
+check_true("no room/the refusal names the budget that caused it",
+           "max_len=%d" % MAX_LEN in str(_no_room_msg) and "no room for the state" in str(_no_room_msg),
+           str(_no_room_msg)[:120])
+# And one option fewer still scans, so this pins the boundary rather than "big questions fail".
+check_true("no room/a question that leaves room is still scanned",
+           room_for(q_many(2)) > 0 and len(scan({"a": q_many(2)})[1]) > 0, "")
+
+
+# ------------------------------------------- a hard clamp of the DEFAULT window must not be silent
+# Capping the window at the room is what stops the tail of every window reaching no model, but it is
+# not free: the scan needs about `requested / room` times as many windows, each a full forward pass.
+# Measured on the English checkpoint with 100 four-word options -- room 102 of max_len 512, window
+# 312 -> 102, 11 windows -> 36, 1902 ms -> 5858 ms. Nothing in the caller's code implies that, so
+# `window_budget` says so. Only on a HARD clamp: warning about every small one would be noise, and
+# noise is how a warning that matters gets filtered out.
+check_true("clamp warning/the threshold is a ratio above 1 and not absurd",
+           1 < common_mod._WINDOW_CLAMP_WARN_RATIO <= 4, common_mod._WINDOW_CLAMP_WARN_RATIO)
+
+_default_window = max(64, MAX_LEN - HEAD_MAX_LEN - 8)
+
+
+def _clamp_warnings(qdef, **kw):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        window_budget(TOK, [Agent._to_internal(qdef)], MAX_LEN, HEAD_MAX_LEN,
+                      window=kw.get("window"), stride=kw.get("stride"))
+    return [str(c.message) for c in caught]
+
+
+# A question whose head leaves less than half the default window: found by search rather than by
+# hard-coding an option count, so a change to the fake tokenizer cannot quietly stop this reaching
+# the branch.
+_hard = next((n for n in range(2, 400)
+              if 0 < room_for(q_many(n)) * common_mod._WINDOW_CLAMP_WARN_RATIO <= _default_window),
+             None)
+check_true("clamp warning/a hard-clamp fixture exists", _hard is not None, "")
+# ... and one whose clamp is mild or absent, which must stay silent.
+_mild = next((n for n in range(2, 400) if room_for(q_many(n)) >= _default_window), None)
+check_true("clamp warning/a mild fixture exists", _mild is not None, "")
+
+if _hard is not None and _mild is not None:
+    _hard_msgs = _clamp_warnings(q_many(_hard))
+    check("clamp warning/fires once on a hard clamp of the default window", len(_hard_msgs), 1)
+    _m = _hard_msgs[0] if _hard_msgs else ""
+    check_true("clamp warning/names the room it was cut to", str(room_for(q_many(_hard))) in _m, _m)
+    check_true("clamp warning/names max_len", "max_len=%d" % MAX_LEN in _m, _m)
+    check_true("clamp warning/names how much more scanning it costs", "as many windows" in _m, _m)
+    check_true("clamp warning/points at the tool for a large label set",
+               "predict_shortlist" in _m, _m)
+
+    check("clamp warning/stays silent when the clamp is mild or absent",
+          _clamp_warnings(q_many(_mild)), [])
+
+    # An explicit `window=` keeps its own message and does not also get this one -- the caller who
+    # named a width is told their width was reduced, which is a different statement.
+    _explicit = _clamp_warnings(q_many(_hard), window=_default_window)
+    check("clamp warning/an explicit window gets exactly one message", len(_explicit), 1)
+    check_true("clamp warning/and it is the explicit-window one",
+               _explicit and "is wider than the" in _explicit[0], _explicit)
+
+# The refusal for a question with no room at all points at the same remedy.
+_no_room_msg = _attempt(lambda: window_budget(TOK, [Agent._to_internal(q_many(400))],
+                                              MAX_LEN, HEAD_MAX_LEN, window=None, stride=None))
+check_true("clamp warning/the no-room refusal names predict_shortlist too",
+           "predict_shortlist" in str(_no_room_msg), str(_no_room_msg)[:140])
+
 
 print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
 for f in FAIL:

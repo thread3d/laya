@@ -244,6 +244,23 @@ in
       description = "Let the router auto-select the typed-decisions checkpoint when question ids match its workflows.";
     };
 
+    defaultModel = lib.mkOption {
+      type = lib.types.nullOr (lib.types.strMatching "[A-Za-z0-9._/-]+");
+      default = null;
+      example = "multilingual";
+      description = ''
+        Checkpoint a state with no language evidence falls back to (sets
+        `LAYA_DEFAULT_MODEL`): text with no letters at all, or Latin script too
+        short to identify a language. Set it to `multilingual` when most traffic
+        on this host is not English. Text the detector can place is routed on
+        what it detects, so this is a fallback and not a pin. The spellings
+        accepted, and the aliases among them, are laya's own -- the server
+        checks the value against them at startup and refuses to start on a name
+        it does not know, so this module deliberately lists none. null leaves
+        laya's default, which is `english`.
+      '';
+    };
+
     apiKeyFile = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       default = null;
@@ -303,6 +320,8 @@ in
         LAYA_MAX_TOKEN_BUDGET = toString cfg.maxTokenBudget;
       } // lib.optionalAttrs (cfg.revision != null) {
         LAYA_REVISION = cfg.revision;
+      } // lib.optionalAttrs (cfg.defaultModel != null) {
+        LAYA_DEFAULT_MODEL = cfg.defaultModel;
       } // {
         HF_HOME = "/var/lib/${cfg.stateDirectory}/huggingface";
         # torch-bin bundles its own CUDA runtime but still needs the host

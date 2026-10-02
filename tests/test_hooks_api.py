@@ -83,6 +83,20 @@ check_param("Router.__init__", Router.__init__, "agent_kwargs", None)
 # ...and the per-checkpoint digests that `revisions` has always had a sibling need for
 check_param("Router.__init__", Router.__init__, "sha256_digests", None)
 
+# What the constructor does NOT raise over is part of its contract too: a shared
+# `agent_kwargs["expected_sha256"]` overlapping a per-checkpoint `sha256_digests` entry on one file
+# name is the ordinary shape, not a contradiction -- `model.safetensors` is the one name every
+# checkpoint uses for a different file. Refusing it here would reject a shared pin plus a
+# per-checkpoint override, and `laya.serve` maps a ValueError out of a load to a 422 about a
+# misconfiguration no request caused.
+_OVERLAP = "Router.__init__/a shared pin overlapping a per-checkpoint one constructs"
+try:
+    Router(sha256_digests={"english": {"model.safetensors": "b" * 64}},
+           agent_kwargs={"expected_sha256": {"model.safetensors": "c" * 64}})
+    check_true(_OVERLAP, True, "constructed")
+except ValueError as exc:
+    check_true(_OVERLAP, False, "raised instead of constructing: %s" % exc)
+
 # load() forwards Agent's own construction options, so none of them is reachable only
 # through the class; tests/test_download.py asserts that against both signatures.
 check_param("load", load, "compile", False)
@@ -130,6 +144,11 @@ check_param("Router.predict_batch", Router.predict_batch, "hooks_timeout", None)
 for param in ("max_len", "head_max_len"):
     check("Router.predict_batch/%s is per-request, not a call argument" % param,
           param in sig(Router.predict_batch), False)
+
+# shortlist_choice returns bare labels by default; return_scores=True also hands back the
+# rank-order cosines, so the flag is keyword-only and defaults to off
+check_param("shortlist_choice", laya.shortlist_choice, "return_scores", False,
+            inspect.Parameter.KEYWORD_ONLY)
 
 # route() takes per-call hooks so a hook can pin a checkpoint for one call
 check_param("Router.route", Router.route, "hooks", None)
@@ -297,10 +316,21 @@ for label, cls in (("LayaRouter", LayaRouter), ("LayaGuardrail", LayaGuardrail),
 # `input_tokens` / `output_tokens` are the fields every client decodes, so they are always
 # present. `options` (#538) is additive and conditional: it appears only for a request whose
 # options lost their distinct token spans, which is what keeps it out of ordinary responses.
-from laya.common import build_sequence, collapsed_options  # noqa: E402
+from laya.common import build_head, build_sequence, collapsed_options, state_room, window_budget  # noqa: E402
 
 check_param("build_sequence", build_sequence, "return_stats", False)
 check_param("build_sequence", build_sequence, "return_truncation_stats", False)
+
+# The sizing surface `predict_long` reads before it splits a state: `build_head` is the question
+# half `build_sequence` assembles, `state_room` is what is left of `max_len` for the state after
+# it, and `window_budget` turns the two into the window and stride a scan may use. Their defaults
+# are the checkpoint's, so a caller can measure a question without holding an Agent.
+for _name, _fn, _params in (("build_head", build_head, (("head_max_len", 192), ("option_order", None))),
+                            ("state_room", state_room, (("max_len", 512), ("head_max_len", 192))),
+                            ("window_budget", window_budget, (("max_len", 512), ("head_max_len", 192),
+                                                              ("window", None), ("stride", None)))):
+    for _param, _default in _params:
+        check_param(_name, _fn, _param, _default)
 check("collapsed_options/nothing collapsed is empty",
       collapsed_options(["q"], [{"options": {"options": 3, "options_distinct": 3,
                                              "tokens_per_option": None}}]), {})
@@ -838,6 +868,15 @@ check("serve/BODY_REFUSALS is the hook argument set LangChain refuses", sorted(_
 check("serve/BODY_REFUSALS names nothing but hooks",
       [key for key in _http_refusals if "hook" not in key and "predict" not in key], [])
 check("serve forwards and refuses disjoint sets", sorted(set(_http_controls) & set(_http_refusals)), [])
+
+# The opt-in shortlist evaluator is a public Python entry point. Pin its required
+# provenance arguments without adding an eager import to the package root.
+from laya.evals_shortlist import evaluate_shortlist  # noqa: E402
+
+check_param("evaluate_shortlist", evaluate_shortlist, "k", 20)
+check_param("evaluate_shortlist", evaluate_shortlist, "dataset_path", None)
+for param in ("checkpoint_id", "embedder_id"):
+    check_param("evaluate_shortlist", evaluate_shortlist, param, inspect.Parameter.empty)
 
 
 print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))

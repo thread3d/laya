@@ -66,8 +66,24 @@ export class Laya {
     if (state !== null && typeof state !== 'string' && !Array.isArray(state) && !isRecord(state)) {
       throw new LayaValidationError('state must be text, a JSON object, an array, or null');
     }
-    for (const key of ['task', 'lang']) {
-      if (key in options) throw new LayaValidationError(`${key} is not supported by /v1/systemone; use model instead`);
+    if (options.task !== undefined && (typeof options.task !== 'string' || !options.task.trim())) {
+      throw new LayaValidationError('task must be a nonempty string');
+    }
+    for (const key of ['lang', 'langGuess'] as const) {
+      const value = options[key];
+      if (value !== undefined && (typeof value !== 'string' || !value.trim())) {
+        throw new LayaValidationError(`${key} must be a nonempty language code string`);
+      }
+    }
+    for (const key of ['maxLen', 'headMaxLen'] as const) {
+      const value = options[key];
+      if (value !== undefined && (!Number.isInteger(value) || value < 1)) {
+        throw new LayaValidationError(`${key} must be a positive integer`);
+      }
+    }
+    if (options.minConfidence !== undefined &&
+        (!Number.isFinite(options.minConfidence) || options.minConfidence < 0 || options.minConfidence > 1)) {
+      throw new LayaValidationError('minConfidence must be a number between 0 and 1');
     }
     const model = options.model ?? this.model;
     if (model !== undefined && (typeof model !== 'string' || !model.trim())) {
@@ -78,8 +94,21 @@ export class Laya {
         ? { ...question, criteria: Object.fromEntries(question.criteria.map(label => [label, null])) }
         : question,
     ]));
-    const body: { state: State; questions: typeof wireQuestions; model?: string } = { state, questions: wireQuestions };
+    const body: {
+      state: State; questions: typeof wireQuestions; model?: string; task?: string;
+      lang?: string; lang_guess?: string; max_len?: number; head_max_len?: number;
+      min_confidence?: number;
+    } = { state, questions: wireQuestions };
     if (model !== undefined) body.model = model;
+    // The per-request controls `/v1/systemone` forwards when the request sends them (see
+    // docs/http-api.md); absent options stay absent so the deployment's own Router
+    // settings remain in charge.
+    if (options.task !== undefined) body.task = options.task;
+    if (options.lang !== undefined) body.lang = options.lang;
+    if (options.langGuess !== undefined) body.lang_guess = options.langGuess;
+    if (options.maxLen !== undefined) body.max_len = options.maxLen;
+    if (options.headMaxLen !== undefined) body.head_max_len = options.headMaxLen;
+    if (options.minConfidence !== undefined) body.min_confidence = options.minConfidence;
     validateJson(body);
     return JSON.stringify(body);
   }

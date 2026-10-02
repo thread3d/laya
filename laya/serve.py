@@ -5,8 +5,8 @@ API -- ``choice`` / ``score`` / ``noul`` answers and a ``{input_tokens,
 output_tokens}`` usage block -- so a client written against Jev (for example the
 `hs-jev` Haskell client) can point its ``baseUrl`` at this server and keep
 working unchanged. All this module adds is the HTTP surface Laya itself does not
-ship: a ``POST /v1/systemone`` route, an optional bearer check, and a health
-probe.
+ship: a ``POST /v1/systemone`` route and its ``POST /v1/systemone/batch`` sibling,
+an optional bearer check, and a health probe.
 
 Configuration is entirely via environment variables so the same entry point
 serves a laptop dev run and a systemd unit:
@@ -24,6 +24,8 @@ env var                    meaning                                        defaul
                            Keep <= physical cores; oversubscribing the     default)
                            logical/hyperthread count is a large regression.
 ``LAYA_AUTO_TASK``         auto-route to the typed-decisions checkpoint   0
+``LAYA_DEFAULT_MODEL``     fallback checkpoint when a state carries no   (english)
+                           language evidence; aliases like ml work
 ``LAYA_MAX_LOADED``        checkpoints kept resident at once. Below what  2
                            routing can choose, one reloads per switch.
 ``LAYA_API_KEY``           if set, require ``Authorization: Bearer <it>``  (none)
@@ -74,6 +76,14 @@ MAX_TOTAL_OPTIONS = 512
 # before inference, so without a bound many concurrent near-cap requests OOM
 # the worker even though every request is individually valid (#330).
 DEFAULT_MAX_CONCURRENT = 16
+
+# What `GET /health` answers an unauthenticated caller when `LAYA_API_KEY` is set. Liveness is
+# the half of that endpoint a container probe needs and the half the page promises is always
+# open; the rest of the payload names checkpoints, revision SHAs and host device state, so it
+# is for a caller who can authenticate. A deployment with no key set gets the full payload, as
+# it always has. Kept a module constant rather than a dict literal in the handler so the field
+# contract in tests/test_serve.py still reads the full payload off `health()`'s own `return`.
+LIVENESS_ONLY = {"status": "ok"}
 # Server-side ceiling on per-request max_len/head_max_len token budget overrides.
 DEFAULT_MAX_TOKEN_BUDGET = 8192
 
@@ -87,6 +97,20 @@ DEFAULT_MAX_TOKEN_BUDGET = 8192
 # language it reads, how many tokens it gets and where it abstains are all plain data.
 BODY_CONTROLS = ("model", "max_len", "head_max_len", "task", "lang", "lang_guess", "min_confidence")
 BODY_REFUSALS = ("hooks", "on_predict_start", "on_predict_end", "hooks_raise", "hooks_timeout")
+
+# ``Router.predict_batch`` reads two different kinds of control: call-level keyword arguments that
+# apply to the whole batch (chunking, padding, the abstention threshold) and per-request keys that
+# it lifts off each item of ``requests`` (checkpoint, task, language hint, token budget). The batch
+# endpoint keeps them in separate tuples so a caller-visible JSON body -- one set of controls that
+# applies to every state it sent -- is turned into both. ``tests/test_serve.py`` pins the two lists
+# against ``inspect.signature(Router.predict_batch)`` (call-level) and against the MCP tool's own
+# item key list (per-request), so a control added to either side has to be placed on one side of
+# this split -- forwarded, refused, or moved to the item tuple -- before the suite goes green.
+# ``hooks_timeout`` is refused on the batch path the same way it is on the single path: it belongs
+# to ``predict_batch``'s call-level args but governs how the *deployment's* hooks execute, so a
+# caller cannot be allowed to shorten or lengthen that deadline from an HTTP body.
+BATCH_BODY_CALL_CONTROLS = ("batch_size", "min_confidence", "sort_by_length")
+BATCH_BODY_ITEM_CONTROLS = ("max_len", "head_max_len", "task", "lang", "lang_guess")
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -239,6 +263,52 @@ def _validate_min_confidence(body: Dict[str, Any]) -> Optional[float]:
         raise HTTPException(status_code=422, detail=str(error)) from None
 
 
+def _validate_batch_size_param(body: Dict[str, Any]) -> Optional[int]:
+    """Validate the optional ``batch_size`` call argument on the batch endpoint (422).
+
+    ``Router.predict_batch`` reads it as the maximum number of states per Agent forward-pass batch,
+    so a non-positive or fractional value would either mean "one state per pass" or crash torch.
+    A boolean would be truthy and coerce to 1/0, which is not what the caller meant; refusing here
+    matches what the MCP tool's own validator does at ``laya/mcp/tools.py:_validate_batch_size``,
+    so the same typo is rejected the same way on both surfaces.
+    """
+    from fastapi import HTTPException
+
+    if "batch_size" not in body:
+        return None
+    val = body["batch_size"]
+    if val is None:
+        return None
+    if not isinstance(val, int) or isinstance(val, bool):
+        raise HTTPException(status_code=422, detail="batch_size must be an integer")
+    if val < 1:
+        raise HTTPException(status_code=422,
+                            detail="batch_size must be a positive integer, got %r" % (val,))
+    return val
+
+
+def _validate_sort_by_length_param(body: Dict[str, Any]) -> Optional[bool]:
+    """Validate the optional ``sort_by_length`` call argument on the batch endpoint (422).
+
+    ``Router.predict_batch`` forwards this verbatim to every ``Agent.predict_batch`` call, and an
+    agent that predates the knob drops it. Only the boolean is a meaningful value here -- a string
+    would be truthy and take the sort path silently. When the caller asks for ``False`` we still
+    forward ``None`` rather than ``False``, because ``predict_batch``'s own default is ``False``:
+    an absent argument means "the caller did not ask" and cannot override a deployment that built
+    its Router with the knob already on.
+    """
+    from fastapi import HTTPException
+
+    if "sort_by_length" not in body:
+        return None
+    val = body["sort_by_length"]
+    if val is None:
+        return None
+    if not isinstance(val, bool):
+        raise HTTPException(status_code=422, detail="sort_by_length must be a boolean")
+    return val
+
+
 def _resolve_max_loaded() -> Optional[int]:
     """Resident-checkpoint cap from ``LAYA_MAX_LOADED``; ``None`` leaves it to ``Router``.
 
@@ -262,6 +332,35 @@ def _resolve_max_loaded() -> Optional[int]:
     except ValueError:
         return None
     return n if n > 0 else None
+
+
+def _default_model_option() -> Dict[str, str]:
+    """Routing fallback from ``LAYA_DEFAULT_MODEL``, as a ``Router`` keyword; unset sends nothing.
+
+    ``Router.default`` answers the two states that carry no language evidence at all: no letters,
+    and Latin script too short to identify ("Quero cancelar", "Esqueci minha senha"). The README
+    tells a deployment whose traffic is mostly non-English to set ``Router(default="multilingual")``,
+    and this is the only way such a deployment can say so without writing its own server. Left out
+    of the constructor when unset, so the value cannot drift from ``Router``'s own default -- the
+    same reasoning as ``_resolve_max_loaded`` above.
+
+    The name goes through ``normalise_name``, so the accepted set and its aliases are core's and
+    not a list restated here. Unlike the numeric knobs, a typo here has no harmless fallback: a
+    silently-ignored value would keep routing the ambiguous states to the checkpoint the operator
+    just said cannot read them, so this raises and the caller refuses to start rather than serve a
+    configuration nobody asked for. ``laya.mcp.server`` turns the same error into a ``ToolError``,
+    because a stdio server has no startup to refuse.
+    """
+    raw = os.environ.get("LAYA_DEFAULT_MODEL")
+    if raw is None or not raw.strip():
+        return {}
+    from .router import normalise_name
+
+    try:
+        name = normalise_name(raw)
+    except ValueError as error:
+        raise ValueError("invalid LAYA_DEFAULT_MODEL %r: %s" % (raw.strip(), error)) from None
+    return {"default": name}
 
 
 def _resolve_port() -> int:
@@ -461,6 +560,11 @@ def _check_batch_limits(states: Any, questions: Any) -> None:
 # replaced cost ~170 ms on a near-cap body on the event loop.
 _LONE_SURROGATE = re.compile("[\ud800-\udfff]")
 
+# The answer both decision routes give to the same malformed body, written once so they cannot
+# drift: `tests/test_serve.py` asserts this text on `/v1/systemone` and on `/v1/systemone/batch`.
+_LONE_SURROGATE_DETAIL = ("request body contains an unpaired surrogate escape; "
+                          "those cannot be encoded as UTF-8")
+
 
 def _has_lone_surrogate(value: Any) -> bool:
     """True if any string in the parsed body contains an unpaired surrogate code point.
@@ -566,6 +670,12 @@ def build_router():
     max_loaded = _resolve_max_loaded()
     if max_loaded is not None:
         options["max_loaded"] = max_loaded
+    # Resolved before the Router is built: a name `Router` would reject is a configuration error,
+    # and `_resolve_port`'s idiom applies -- exit with the message, not a traceback.
+    try:
+        options.update(_default_model_option())
+    except ValueError as error:
+        raise SystemExit(str(error)) from None
     router = Router(**options)
     if _env_bool("LAYA_PRELOAD", True):
         router.preload(preload_names)
@@ -631,20 +741,33 @@ def create_app(router: Optional[Any] = None):
     # client can send now answers 401.
     expected_auth = ("Bearer " + api_key).encode("utf-8", "surrogateescape") if api_key else b""
 
-    def _check_auth(authorization: Optional[str]) -> None:
+    def _authorized(authorization: Optional[str]) -> bool:
+        """Whether this request carries the configured bearer. True when no key is set."""
         if api_key is None:
-            return
+            return True
         supplied = (authorization or "").encode("utf-8", "surrogateescape")
-        if not hmac.compare_digest(supplied, expected_auth):
+        return hmac.compare_digest(supplied, expected_auth)
+
+    def _check_auth(authorization: Optional[str]) -> None:
+        if not _authorized(authorization):
             raise HTTPException(status_code=401, detail="invalid or missing bearer token")
 
     @app.get("/health")
-    def health() -> Dict[str, Any]:
+    def health(authorization: Optional[str] = Header(default=None)) -> Dict[str, Any]:
         # `device` is where a resident checkpoint really computes, not what was asked for:
         # `Agent.device` reflects the silent GPU -> CPU fallback, so a container that asked
         # for a GPU it did not get says so. With nothing resident it is the configured
         # preference, and `device_is_preference` tells the reader which of the two it is
         # looking at. Same convention, and the same three keys, as `laya_status` over MCP.
+        # Liveness stays open, because every shipped probe reads it without a credential
+        # (compose.http.yaml's healthcheck, the Docker HEALTHCHECK, a k8s liveness probe) and
+        # the page promises as much. What is not open on a locked-down deployment is the detail
+        # below it: resident checkpoint names, their exact revision SHAs, the device state and
+        # each checkpoint's last fallback reason, which quotes host hardware. An unauthenticated
+        # caller gets the status and nothing else (#812).
+        if not _authorized(authorization):
+            return LIVENESS_ONLY
+
         checkpoint_devices: Dict[str, str] = {}
         for name in (router.loaded or []):
             device = agent_device(router_agent(router, name))
@@ -714,9 +837,7 @@ def create_app(router: Optional[Any] = None):
         # "inference failed". A *paired* surrogate is an ordinary astral character (an emoji) by
         # the time `json.loads` is done, so only lone ones are rejected here.
         if _has_lone_surrogate(body):
-            raise HTTPException(status_code=400,
-                                detail="request body contains an unpaired surrogate escape; "
-                                       "those cannot be encoded as UTF-8")
+            raise HTTPException(status_code=400, detail=_LONE_SURROGATE_DETAIL)
         model = _resolve_model(body.get("model"))
         max_budget_cap = _resolve_max_token_budget()
         max_len = _validate_budget_param(body, "max_len", max_budget_cap)
@@ -798,7 +919,64 @@ def create_app(router: Optional[Any] = None):
         states = body["states"]
         questions = body["questions"]
         _check_batch_limits(states, questions)
+        # Same refusal policy as the single endpoint: hooks and the two hook-execution knobs
+        # belong to the deployment, not the caller. `predict_batch` does take `hooks_timeout`,
+        # so without this call a batch body would silently hand a caller a shorter deadline for
+        # the operator's own hooks.
+        _refuse_body_refusals(body)
+        # The same guard `/v1/systemone` runs, for the same reason, and it has to walk the whole
+        # body rather than one state because that is what the batch carries: `predict_batch`
+        # tokenizes every state and every question here, so a lone `\udXXX` escape in any of them
+        # raises `TypeError` from the tokenizer and this route's `except Exception` reports the
+        # caller's own string as a 500 "inference failed" -- with a traceback per request. Ordered
+        # as on the single route: after the size checks, so `MAX_BATCH_STATES`, `MAX_STATE_CHARS`
+        # and `MAX_QUESTIONS` bound what the walk can reach.
+        if _has_lone_surrogate(body):
+            raise HTTPException(status_code=400, detail=_LONE_SURROGATE_DETAIL)
         model = _resolve_model(body.get("model"))
+        max_budget_cap = _resolve_max_token_budget()
+        max_len = _validate_budget_param(body, "max_len", max_budget_cap)
+        head_max_len = _validate_budget_param(body, "head_max_len", max_budget_cap)
+        # Every control is sent only when the caller sent it, matching `_systemone_inner`: an
+        # absent argument means "inherit what the Router was built with", so passing None would
+        # override a deployment's own `Router(lang_guess=...)` or abstention threshold.
+        # ``Router.predict_batch`` reads task / lang / lang_guess / max_len / head_max_len off
+        # each item of ``requests`` (see its docstring), so they go into every synthesized
+        # request dict; the HTTP body has one control set for the whole batch, which the Router
+        # still honours -- it groups the requests by these values for the forward pass.
+        item_overrides: Dict[str, Any] = {}
+        if max_len is not None:
+            item_overrides["max_len"] = max_len
+        if head_max_len is not None:
+            item_overrides["head_max_len"] = head_max_len
+        # An unknown task is left to `route_batch`, which normalises it through `normalise_name`
+        # and raises; the `except ValueError` below turns that into a 422 naming the task, so the
+        # accepted set is core's and not a list restated here.
+        if body.get("task") is not None:
+            item_overrides["task"] = body["task"]
+        for key in ("lang", "lang_guess"):
+            value = _validate_language_param(body, key)
+            if value is not None:
+                item_overrides[key] = value
+        # Call-level: `predict_batch` takes min_confidence / batch_size / sort_by_length as kwargs.
+        call_kwargs: Dict[str, Any] = {}
+        min_confidence = _validate_min_confidence(body)
+        if min_confidence is not None:
+            call_kwargs["min_confidence"] = min_confidence
+        batch_size = _validate_batch_size_param(body)
+        if batch_size is not None:
+            call_kwargs["batch_size"] = batch_size
+        sort_by_length = _validate_sort_by_length_param(body)
+        if sort_by_length:
+            # Only `True` is forwarded: `predict_batch`'s own default is `False`, and an attached
+            # agent whose `predict_batch` predates the knob (#294) silently drops it. The MCP
+            # tool makes the same choice for the same reason (see ``laya/mcp/tools.py``).
+            call_kwargs["sort_by_length"] = True
+        # The predict() fallback shape: `Router.predict` reads all six controls as call kwargs,
+        # so the item dict is flattened back and `min_confidence` joins it.
+        predict_kwargs: Dict[str, Any] = dict(item_overrides)
+        if min_confidence is not None:
+            predict_kwargs["min_confidence"] = min_confidence
         if gate is None:
             gate = asyncio.Lock()
         try:
@@ -807,8 +985,12 @@ def create_app(router: Optional[Any] = None):
 
                 def _do_batch():
                     if hasattr(router, "predict_batch"):
-                        reqs = [{"state": s, "questions": questions, "model": model} for s in states]
-                        results = router.predict_batch(reqs)
+                        reqs = [dict(state=s, questions=questions, model=model, **item_overrides)
+                                for s in states]
+                        results = router.predict_batch(reqs, **call_kwargs)
+                    elif predict_kwargs:
+                        results = [router.predict(s, questions, model=model, **predict_kwargs)
+                                   for s in states]
                     else:
                         results = [router.predict(s, questions, model=model) for s in states]
                     total_tokens = sum(r.get("usage", {}).get("input_tokens", 0) for r in results)

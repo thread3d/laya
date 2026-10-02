@@ -270,6 +270,105 @@ check(
     "Preciso das férias.\nDe: 10/09 a 15/09\nPode aprovar?",
 )
 
+# --------------------------------------------------------------- French mail
+# With English-only markers none of this was removed, and the quoted history below (a cancellation)
+# reached the model next to the new message (a refund request).
+FR_EMAIL = """Bonjour,
+
+J'ai été facturé deux fois sur la facture de mars. Merci de rembourser le double paiement aujourd'hui.
+
+Cordialement,
+Jean Dupont
+
+Envoyé depuis mon iPhone
+
+Ce message peut contenir des informations confidentielles. Si vous avez reçu ce message par erreur, merci de le supprimer.
+
+Le lun. 22 sept. 2026 à 10:14, Support <support@x.com> a écrit :
+> Bonjour Jean, nous avons reçu votre demande d'annulation du contrat Enterprise.
+"""
+check(
+    "fr/full reply keeps only the request",
+    clean_email_body(FR_EMAIL),
+    "Bonjour,\n\nJ'ai été facturé deux fois sur la facture de mars. "
+    "Merci de rembourser le double paiement aujourd'hui.",
+)
+check(
+    "fr/outlook original-message block is cut",
+    clean_email_body(
+        "Voici le justificatif de paiement.\n\n-----Message d'origine-----\n"
+        "De : Marie <marie@acme.com>\nObjet : résilier le contrat\nNous voulons résilier le contrat."
+    ),
+    "Voici le justificatif de paiement.",
+)
+check(
+    "fr/outlook header without separator is cut",
+    clean_email_body(
+        "Voici le justificatif.\n\nDe : Marie Dupont\nEnvoyé : lundi 22 septembre 2026\n"
+        "Objet : résilier le contrat\nNous voulons résilier le contrat."
+    ),
+    "Voici le justificatif.",
+)
+check(
+    "fr/gmail attribution wrapped over two lines is cut whole",
+    clean_email_body(
+        "L'accès est rétabli, merci.\n\nLe lun. 22 sept. 2026 à 10:14, Support Technique <\n"
+        "support@acme.com> a écrit :\n> ancien texte"
+    ),
+    "L'accès est rétabli, merci.",
+)
+check(
+    "fr/short sign-off is removed",
+    clean_email_body("Bonjour,\nLa facture de mars n'est pas arrivée.\nMerci,\nJean"),
+    "Bonjour,\nLa facture de mars n'est pas arrivée.",
+)
+check(
+    "fr/`Bien à vous` sign-off is removed",
+    clean_email_body("Bonjour,\nLa facture de mars n'est pas arrivée.\nBien à vous,\nMarie"),
+    "Bonjour,\nLa facture de mars n'est pas arrivée.",
+)
+check(
+    "fr/disclaimer footer is dropped",
+    clean_email_body(
+        "J'ai besoin de la facture de mars.\n\nSi vous avez reçu ce message par erreur, supprimez-le."
+    ),
+    "J'ai besoin de la facture de mars.",
+)
+check(
+    "fr/exclusive-use footer is dropped",
+    clean_email_body(
+        "Voici le devis demandé.\n\nCe document est à l'usage exclusif du destinataire."
+    ),
+    "Voici le devis demandé.",
+)
+
+# --------------------------------------------------------------- ...without eating the request
+check(
+    "fr/request mentioning `confidentiel` is kept",
+    clean_email_body("Le contrat confidentiel doit être signé avant vendredi."),
+    "Le contrat confidentiel doit être signé avant vendredi.",
+)
+check(
+    "fr/`Merci` opening a sentence is not a signature",
+    clean_email_body("Bonjour,\nMerci pour votre aide.\nRappelez-moi."),
+    "Bonjour,\nMerci pour votre aide.\nRappelez-moi.",
+)
+check(
+    "fr/`Le ... a écrit :` without a date is body text",
+    clean_email_body("Bonjour,\nLe rapport que vous avez écrit :\nla commande 4411 n'est pas arrivée."),
+    "Bonjour,\nLe rapport que vous avez écrit :\nla commande 4411 n'est pas arrivée.",
+)
+check(
+    "fr/`exclusivement` in a request is kept",
+    clean_email_body("Le montant est destiné exclusivement au paiement de la facture. Pouvez-vous confirmer ?"),
+    "Le montant est destiné exclusivement au paiement de la facture. Pouvez-vous confirmer ?",
+)
+check(
+    "fr/`De :` without an address is body text",
+    clean_email_body("J'ai besoin de congés.\nDe : 10/09 à 15/09\nC'est possible ?"),
+    "J'ai besoin de congés.\nDe : 10/09 à 15/09\nC'est possible ?",
+)
+
 # ------------------------------------------- `From:` starts prose, not only a quote header (#338)
 # The marker used to be `^\s*From:\s.+$`, which matched any line beginning "From: ". English
 # prose opens that way ("From: my side the integration works, but please refund ..."), so the

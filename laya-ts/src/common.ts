@@ -65,12 +65,21 @@ export function renderOptions(q: InternalQ): string[] {
     labels.true + ": " + (t !== null && t !== undefined && t !== "" ? renderCriterion(t) : "yes, the statement holds"),
   ];
 }
+export interface OptionStats {
+  /** Options the question defines, not the markers that survived the sequence clamp. */
+  total: number;
+  /** How many of them still have a token span of their own. */
+  distinct: number;
+  /** The per-option cap the head budget forced, or null when none was applied. */
+  tokens_per_option: number | null;
+}
 export interface QuestionPrefix {
   /** [CLS] head [SEP] options [SEP] — the state-independent part of the sequence. */
   ids: number[];
   /** Mask-marker positions (absolute; the prefix sits at the start of the final sequence). */
   markers: number[];
   nOptions: number;
+  optionStats: OptionStats;
 }
 /** The question half of `buildSequence`: everything before the state tokens. Hoisted out so
  * callers asking several questions about the same state can encode the state text only once. */
@@ -103,17 +112,29 @@ function buildQuestionPrefixUncached(tok: TokenizerLike, q: InternalQ,
   let optIds = order.map((i) =>
     [tok.maskId, ...tok.encode(" " + opts[i].split(maskTok).join(" ")).slice(0, 48)]);
   let budget = headMaxLen - optIds.reduce((a, o) => a + o.length, 0);
+  let tokensPerOption: number | null = null;
   if (budget < 16) {
     const per = Math.max(4, Math.floor((headMaxLen - 16) / Math.max(1, optIds.length)));
     optIds = optIds.map((o) => o.slice(0, per));
     budget = headMaxLen - optIds.reduce((a, o) => a + o.length, 0);
+    tokensPerOption = per;
   }
   headIds = headIds.slice(0, Math.max(8, budget));
   const ids = [tok.clsId, ...headIds, tok.sepId];
   const markers: number[] = [];
   for (const o of optIds) { markers.push(ids.length); ids.push(...o); }
   ids.push(tok.sepId);
-  return { ids, markers, nOptions: opts.length };
+  // Counted on the capped option ids, before assembly, exactly as Python's `build_head` does:
+  // re-slicing the finished sequence cannot close the last option's span, so the last option
+  // always looks distinguishable however it collided (#538).
+  return {
+    ids, markers, nOptions: opts.length,
+    optionStats: {
+      total: opts.length,
+      distinct: new Set(optIds.map((o) => o.join(","))).size,
+      tokens_per_option: tokensPerOption,
+    },
+  };
 }
 export interface SequenceStats {
   /** Encoded length of the full state, before the window clamp. */
@@ -124,6 +145,8 @@ export interface SequenceStats {
   state_tokens_dropped: number;
   /** True when the clamp dropped any state token. */
   truncated: boolean;
+  /** What the head budget did to this question's options (Python `build_sequence`'s other stats). */
+  options: OptionStats;
 }
 
 /** Append pre-encoded state tokens to a question prefix. Identical output to building the
@@ -149,8 +172,25 @@ export function sequenceWithState(prefix: QuestionPrefix, stateIds: number[], se
       state_tokens_used: used,
       state_tokens_dropped: stateIds.length - used,
       truncated: used < stateIds.length,
+      options: prefix.optionStats,
     },
   };
+}
+/** The questions whose options no longer have a token span each, keyed by question id.
+ *
+ * `total` is what the question defines, not the number of markers that reached the sequence, so a
+ * report cannot say "43 of 43" about a question whose 28 missing options never entered the input
+ * at all. Mirrors Python `laya.common.collapsed_options`; empty when nothing collapsed, which is
+ * the overwhelming majority of requests, so the agents add the key only when it says something. */
+export function collapsedOptions(qids: string[],
+    stats: (SequenceStats | undefined)[]): Record<string, OptionStats> {
+  const out: Record<string, OptionStats> = {};
+  qids.forEach((qid, i) => {
+    const s = stats[i]?.options;
+    if (s && s.distinct < s.total) out[qid] = { total: s.total, distinct: s.distinct,
+      tokens_per_option: s.tokens_per_option };
+  });
+  return out;
 }
 export function buildSequence(tok: TokenizerLike, state: unknown, q: InternalQ,
     maxLen = 512, headMaxLen = 192, optionOrder?: number[], truncateLeft = false): { ids: number[]; markers: number[]; stats: SequenceStats } {

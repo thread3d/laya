@@ -24,13 +24,15 @@ from laya.common import (
     render_options,
     resolve_lang_temperatures,
     serialize_state,
+    window_batch_cap,
+    window_budget,
     temp_bucket,
     unpermute_probs,
     TEMP_MIN,
     TEMP_MAX,
     clamp_temperature,
 )
-from laya.confidence import check_min_confidence, flag_low_confidence
+from laya.confidence import apply_confidence_gate, check_min_confidence
 
 
 class ONNXAgent(HookRegistry):
@@ -374,8 +376,7 @@ class ONNXAgent(HookRegistry):
             ctx.elapsed_ms = (time.perf_counter() - ctx.started_at) * 1000.0
             if ctx.results is not None:
                 ctx.usage = aggregate_usage(ctx.results)
-                if mc is not None:
-                    flag_low_confidence(ctx.results, mc)
+                apply_confidence_gate(ctx.results, mc)
             try:
                 dispatch(active, "on_predict_end", ctx, raise_errors=raise_errors, lock=self._hooks_lock, timeout=timeout)
             except BaseException as hook_exc:
@@ -438,7 +439,7 @@ class ONNXAgent(HookRegistry):
         in `Agent.predict_long`: `truncated` is a window count and `truncated_questions` is the
         last window's list, so `truncated` can be above 0 while the list is empty.
         """
-        from .agent import _start_evidence, _with_start_probe
+        from .agent import _check_scan_budget, _start_evidence, _with_start_probe
         from .hooks import aggregate_usage
 
         hook_kwargs = {"hooks": hooks, "on_predict_start": on_predict_start,
@@ -453,7 +454,25 @@ class ONNXAgent(HookRegistry):
             raise ValueError("predict_long: only aggregate='auto' is supported")
         max_len = self.cfg.get("max_len", 512)
         head_max_len = self.cfg.get("head_max_len", 192)
-        budget = window if (window and window > 0) else max(64, max_len - head_max_len - 8)
+        # The same cap the torch `Agent.predict_long` applies, for the same reason: a window wider
+        # than the room these questions leave is re-truncated by `build_sequence` on the way into
+        # `predict_batch`, so its tail reaches no model while `answer["window"]` reports the whole
+        # span -- and once the room falls below the default stride the windows stop overlapping and
+        # leave tokens no window reads at all. `README.md` and `Router.predict_long` document this
+        # contract for both agents, so both have to honour it.
+        ids = list(questions.keys())
+        # Validate before `_to_internal`, which does none: hoisting only `_to_internal` ahead of the
+        # hooks turned the ValueError `_check_question` exists to raise into
+        # `AttributeError: 'NoneType' object has no attribute 'items'` -- verbatim the message its
+        # own docstring says it prevents, and a regression from `main` on this path. The torch
+        # `predict_long` hoists both. `laya.serve` maps ValueError to 422 and anything else to 500.
+        from .agent import Agent as _Agent           # deferred, as `predict_batch` does
+
+        for qid in ids:
+            _Agent._check_question(qid, questions[qid])
+        internal = {qid: self._to_internal(questions[qid]) for qid in ids}
+        budget, step_default, _ = window_budget(self.tok, [internal[qid] for qid in ids], max_len,
+                                                head_max_len, window=window, stride=stride)
 
         state_ids = encode_text(
             self.tok,
@@ -466,10 +485,15 @@ class ONNXAgent(HookRegistry):
             probe, evidence = _start_evidence()
             single = dict(self.system_one(state, questions, lang=lang,
                                           **_with_start_probe(hook_kwargs, probe)))
+            # The same budget check as the multi-window path. Without it a document short enough to
+            # fit one window was silently truncated by a re-budgeting hook and still reported
+            # `windows: 1`, i.e. "the model read all of it" -- measured, 138 of 240 state tokens
+            # never reached the model, while a longer document on the identical input hard-failed.
+            _check_scan_budget(self, evidence, budget, max_len, head_max_len, questions)
             single["usage"] = {**(single.get("usage") or {}), "windows": 0 if evidence["answered"] else 1}
             return single
 
-        step = stride if (stride and stride > 0) else max(1, budget // 2)
+        step = step_default
         windows, starts = [], []
         i, n = 0, len(state_ids)
         while i < n:
@@ -483,8 +507,18 @@ class ONNXAgent(HookRegistry):
 
         probe, evidence = _start_evidence()
         # A copy, so a start hook that mutates `ctx.states` in place cannot shift `starts`.
-        results = self.predict_batch(list(windows), questions, batch_size=batch_size, lang=lang,
+        # Bound one forward pass to what the un-capped scan would have used; see
+        # `window_batch_cap`. An explicit batch_size is honoured untouched.
+        cap = window_batch_cap(len(windows), budget, max(64, max_len - head_max_len - 8),
+                               batch_size)
+        results = self.predict_batch(list(windows), questions, batch_size=cap, lang=lang,
                                      **_with_start_probe(hook_kwargs, probe))
+        # Same check as the torch agent, for the same reason and on the same contract: a start hook
+        # re-budgets an ONNX scan exactly as it re-budgets a torch one (`predict_batch` applies
+        # `ctx.max_len`/`ctx.head_max_len` identically), so leaving it off here meant the bug was
+        # fully live on this path while the other agent refused the identical input -- measured,
+        # 34.6% of a document reaching no model.
+        _check_scan_budget(self, evidence, budget, max_len, head_max_len, questions)
 
         if evidence["answered"]:
             # A hook answered the document before any window was scored: pass that answer
@@ -554,7 +588,10 @@ class ONNXAgent(HookRegistry):
                     usage[key] = val
         usage["output_tokens"] = 0
         usage["windows"] = len(results)
-        return {"model": "laya-rl-agent-onnx", "answers": answers, "usage": usage}
+        result = {"model": "laya-rl-agent-onnx", "answers": answers, "usage": usage}
+        # As in `Agent.predict_long`: no `min_confidence` here, so say so on every answer.
+        apply_confidence_gate([result], None)
+        return result
 
     def _infer(self, state: Union[str, dict, list], questions: Dict[str, Dict[str, Any]],
                max_len: Optional[int] = None, head_max_len: Optional[int] = None,

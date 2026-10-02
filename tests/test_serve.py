@@ -3,6 +3,8 @@
 A fake Router is injected so nothing loads a checkpoint; we only assert that the
 HTTP layer maps requests/responses and enforces auth as hs-jev expects.
 """
+import ast
+import asyncio
 import inspect
 import json
 import logging
@@ -19,6 +21,8 @@ from fastapi.testclient import TestClient  # noqa: E402
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 from laya.serve import (  # noqa: E402
+    BATCH_BODY_CALL_CONTROLS,
+    BATCH_BODY_ITEM_CONTROLS,
     BODY_CONTROLS,
     BODY_REFUSALS,
     DEFAULT_MAX_TOKEN_BUDGET,
@@ -27,6 +31,7 @@ from laya.serve import (  # noqa: E402
     _apply_thread_limit,
     _check_request_limits,
     _env_bool,
+    _LONE_SURROGATE_DETAIL,
     _resolve_max_token_budget,
     _resolve_max_loaded,
     _resolve_model,
@@ -488,6 +493,7 @@ def _server_router(monkeypatch, **env):
     monkeypatch.setenv("LAYA_PRELOAD", "0")       # nothing may download
     monkeypatch.setenv("LAYA_AUTO_TASK", "1")     # the config that puts three checkpoints in play
     monkeypatch.delenv("LAYA_MAX_LOADED", raising=False)
+    monkeypatch.delenv("LAYA_DEFAULT_MODEL", raising=False)
     for name, value in env.items():
         monkeypatch.setenv(name, value)
     router = build_router()
@@ -572,6 +578,83 @@ def test_raising_the_cap_stops_the_server_rebuilding_a_checkpoint(monkeypatch):
     assert roomy.max_loaded == 3
     assert len(built3) == 3, built3             # each checkpoint once, then they stay resident
     assert sorted(roomy.loaded) == sorted(DEFAULT_MODELS)
+
+
+# README's other answer written as a constructor argument is `Router(default="multilingual")`,
+# given where it explains that very short Latin-script text ("Quero cancelar", "Esqueci minha
+# senha") carries nothing identifying its language and so goes to `default`. Both packaged
+# servers build their Router from the environment and neither could pass it: the only reader of
+# LAYA_DEFAULT_MODEL was examples/server.py, so the demo server honoured the variable while
+# laya-serve routed the ambiguous states to the English checkpoint it was told not to use.
+#
+# Unlike the numeric knobs above, an unresolvable name is fatal here. `LAYA_MAX_LOADED=abc`
+# falling back to 2 costs a rebuild; `LAYA_DEFAULT_MODEL=mutli` falling back to english costs the
+# wrong checkpoint answering every ambiguous state, which is the failure the operator was trying
+# to configure away. So the message is core's and the server refuses to start.
+def test_default_model_reaches_the_router_the_server_builds(monkeypatch):
+    from laya.router import DEFAULT_MODELS, Router, _ALIASES, normalise_name
+    from laya.serve import _default_model_option
+
+    # Unset is "not asked for", not a copy of Router's default -- the same reason
+    # `_resolve_max_loaded` returns None, and the same drift it prevents.
+    monkeypatch.delenv("LAYA_DEFAULT_MODEL", raising=False)
+    assert _default_model_option() == {}
+    for blank in ("", "   ", "\n"):
+        monkeypatch.setenv("LAYA_DEFAULT_MODEL", blank)
+        assert _default_model_option() == {}, repr(blank)
+
+    # The accepted spellings are core's tables read out of core, so a name added to _ALIASES
+    # arrives here on its own -- and a value this module resolves differently from the way
+    # `Router` itself resolves it fails the same line.
+    for name in sorted(set(DEFAULT_MODELS) | set(_ALIASES)):
+        monkeypatch.setenv("LAYA_DEFAULT_MODEL", name)
+        assert _default_model_option() == {"default": normalise_name(name)}, name
+
+    # And it reaches the Router the server builds. The literal is the one the README and
+    # docs/docker.md quote, so moving Router's default has to move those too.
+    router, _ = _server_router(monkeypatch)
+    assert router.default == Router().default
+    assert router.default == "english"
+    for raw, want in (("multilingual", "multilingual"), ("ml", "multilingual"),
+                      (" MULTI ", "multilingual"), ("typed-decisions", "typed-decisions")):
+        router, _ = _server_router(monkeypatch, LAYA_DEFAULT_MODEL=raw)
+        assert router.default == want, raw
+
+    # The decision the whole knob exists to change, measured at `route()` rather than at the
+    # attribute -- `route` documents that it decides "without loading or running anything", so
+    # this costs no weights.
+    ambiguous = ("12345 !!!", "Quero cancelar", "Esqueci minha senha")
+    stock, _ = _server_router(monkeypatch)
+    portuguese, _ = _server_router(monkeypatch, LAYA_DEFAULT_MODEL="multilingual")
+    for state in ambiguous:
+        assert stock.route(state).model == "english", state
+        assert "using default (english)" in stock.route(state).reason, state
+        assert portuguese.route(state).model == "multilingual", state
+        assert "using default (multilingual)" in portuguese.route(state).reason, state
+    # A fallback, not a pin: text the detector can place routes on what it detects.
+    assert portuguese.route({"body": "Please refund the duplicate charge"}).model == "english"
+
+
+def test_an_unresolvable_default_stops_the_server_with_core_s_words(monkeypatch):
+    from laya.serve import build_router
+
+    monkeypatch.setenv("LAYA_PRELOAD", "0")
+    monkeypatch.delenv("LAYA_DEFAULT_MODEL", raising=False)
+    monkeypatch.setenv("LAYA_DEFAULT_MODEL", "mutli-lingual")
+    with pytest.raises(SystemExit) as raised:
+        build_router()
+    message = str(raised.value)
+    # Names the variable, quotes the value the operator typed, and then says in core's own words
+    # what the accepted set is -- so the typo is fixed from the message, not from the source.
+    assert message.startswith("invalid LAYA_DEFAULT_MODEL 'mutli-lingual': unknown model"), message
+    for name in ("english", "multilingual", "typed-decisions", "ml"):
+        assert name in message, message
+    # The contrast with the numeric knobs has to stay the contrast: with the name fixed, the bad
+    # number below still falls back instead of stopping the server.
+    monkeypatch.setenv("LAYA_DEFAULT_MODEL", "english")
+    monkeypatch.setenv("LAYA_MAX_LOADED", "abc")
+    assert build_router().default == "english"
+    assert build_router().max_loaded == 2
 
 
 
@@ -937,10 +1020,47 @@ def test_admission_slot_is_released_after_inference(monkeypatch):
     assert client.post("/v1/systemone", json=REQ).status_code == 200
 
 
+_WAIT_TIMEOUT = 5.0  # seconds; a loopback bind that has not landed by now never will (#721)
+
+
+async def _wait_for_condition(condition, what, timeout=_WAIT_TIMEOUT, interval=0.01):
+    """Poll `condition()` until it is truthy, or fail naming `what` rather than hang (#721).
+
+    An unbounded `while not ...: await asyncio.sleep(interval)` looks identical whether the
+    condition arrives in a millisecond or never, and prints nothing either way, so a host whose
+    loopback networking reports differently from the runners leaves pytest stalled instead of
+    failing. Bounding the wait turns that into an ordinary failure that names the step.
+    """
+
+    async def poll():
+        while not condition():
+            await asyncio.sleep(interval)
+
+    try:
+        await asyncio.wait_for(poll(), timeout)
+    except asyncio.TimeoutError:
+        pytest.fail(f"timed out after {timeout}s waiting for {what}")
+
+
+def test_a_bounded_wait_fails_on_a_condition_that_never_lands():
+    """#721: the bound is the whole point, so it is exercised against a condition that never
+    becomes true. Unbounded, this is the hang the helper exists to remove, and the same code
+    path then cannot be checked by a test that waits for it."""
+    async def lands():
+        await _wait_for_condition(lambda: True, "an already-true condition")
+
+    asyncio.run(lands())  # the satisfied case returns rather than waiting out the timeout
+
+    async def never():
+        await _wait_for_condition(lambda: False, "a condition that never lands", timeout=0.05)
+
+    with pytest.raises(pytest.fail.Exception, match="a condition that never lands"):
+        asyncio.run(never())
+
+
 def test_accepted_connections_set_tcp_nodelay(monkeypatch):
     """#620: asyncio skips TCP_NODELAY when an accepted socket reports proto 0, as it
     does on macOS and Windows, so Nagle held back small responses by about 50 ms."""
-    import asyncio
     import socket
 
     import uvicorn
@@ -957,18 +1077,22 @@ def test_accepted_connections_set_tcp_nodelay(monkeypatch):
                                 http=captured["http"], log_level="warning")
         server = uvicorn.Server(config)
         serving = asyncio.ensure_future(server.serve())
-        while not server.started:
-            await asyncio.sleep(0.01)
-        port = server.servers[0].sockets[0].getsockname()[1]
-        _, writer = await asyncio.open_connection("127.0.0.1", port)
-        while not server.server_state.connections:
-            await asyncio.sleep(0.01)
-        (conn,) = server.server_state.connections
-        nodelay = conn.transport.get_extra_info("socket").getsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY)
-        writer.close()
-        server.should_exit = True
-        await serving
-        return nodelay
+        writer = None
+        try:
+            await _wait_for_condition(lambda: server.started, "uvicorn to bind and start serving")
+            port = server.servers[0].sockets[0].getsockname()[1]
+            _, writer = await asyncio.open_connection("127.0.0.1", port)
+            await _wait_for_condition(lambda: server.server_state.connections,
+                                      "the loopback connection to be accepted")
+            (conn,) = server.server_state.connections
+            return conn.transport.get_extra_info("socket").getsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY)
+        finally:
+            # A timed-out wait raises out of `drive()`, and the server task and the client
+            # connection would then outlive the test, so tear both down on every path.
+            if writer is not None:
+                writer.close()
+            server.should_exit = True
+            await asyncio.wait_for(serving, _WAIT_TIMEOUT)
 
     assert asyncio.run(drive())
 
@@ -1247,6 +1371,97 @@ def test_an_unpaired_surrogate_is_a_caller_error_not_a_server_fault():
                       headers={"content-type": "application/json"})
     assert res.status_code == 200, (res.status_code, res.text)
     assert seen and "\U0001f600" in str(seen[0]), seen
+
+
+def _lone_surrogate_bodies(batch):
+    r"""Every slot 06462bf lists a `\udXXX` escape can hide in, shaped for the route asked about.
+
+    Built from one table rather than copied from the single-route test above, because the point is
+    that both routes see the same strings -- and a batch carries more than one state, so an escape
+    in the second of them is enough to reach the tokenizer. Each body is otherwise a request that
+    answers 200, so a refusal can only be about the escape.
+    """
+    plain = {"q": {"type": "noul", "instructions": "x"}}
+    slots = {
+        "state": {"states": ["ok", "\ud800"], "questions": plain} if batch
+        else {"state": "\ud800", "questions": plain},
+        "instructions": {"questions": {"q": {"type": "noul", "instructions": "\udfff"}}},
+        "criteria label": {"questions": {"q": {"type": "choice", "instructions": "x",
+                                               "criteria": {"\ud800": "a", "b": "c"}}}},
+    }
+    for label, body in slots.items():
+        if label != "state":
+            body["states" if batch else "state"] = ["ok"] if batch else "ok"
+    return slots
+
+
+def _surrogate_client():
+    router = BatchCapableFakeRouter()
+    return TestClient(create_app(router=router), raise_server_exceptions=False), router
+
+
+@pytest.mark.parametrize("path,batch",
+                         [("/v1/systemone", False), ("/v1/systemone/batch", True)],
+                         ids=["single", "batch"])
+@pytest.mark.parametrize("slot", sorted(_lone_surrogate_bodies(False)))
+def test_both_decision_routes_refuse_the_escape_before_the_router_sees_it(path, batch, slot,
+                                                                         monkeypatch):
+    r"""`/v1/systemone/batch` tokenizes the same body and had no guard on it.
+
+    06462bf turned a lone `\udXXX` escape into a `400` on the single route and recorded what it had
+    not covered: "only `/v1/systemone` is checked". The batch route went on walking no guard, so the
+    identical string reached the tokenizer there. Measured on the cached `english` checkpoint, CPU,
+    before this change:
+
+    ```
+    slot              Router.predict        Router.predict_batch     HTTP single  HTTP batch
+    state             TypeError             TypeError                400          200
+    instructions      TypeError             TypeError                400          200
+    criteria label    TypeError             TypeError                400          200
+    paired emoji      ok (1 answers)        ok (1 answers)           200          200
+    ```
+
+    None of those batch `200`s mean the escape is harmless. The HTTP columns were measured with a
+    stub router that does not tokenize -- the handler builds one request per state and hands them to
+    `predict_batch`, which raises the `TypeError` above for all three slots on the real one, so each
+    is a `500 inference failed` on a live server plus a `_log.exception` traceback per request. That
+    is exactly the shape 06462bf was written to stop. So each slot is its own case, the message is
+    read from `laya.serve` rather than retyped here, and the router is asserted to have seen
+    nothing: the refusal has to land before the forward pass it exists to prevent.
+    """
+    monkeypatch.delenv("LAYA_API_KEY", raising=False)
+    client, router = _surrogate_client()
+    body = _lone_surrogate_bodies(batch)[slot]
+    # `json.dumps` escapes the unpaired surrogate by default, which is what a client sending one of
+    # these puts on the wire: pure ASCII that `json.loads` turns back into an unencodable character.
+    res = client.post(path, content=json.dumps(body).encode("ascii"),
+                      headers={"content-type": "application/json"})
+    assert res.status_code == 400, (slot, res.status_code, res.text)
+    assert _LONE_SURROGATE_DETAIL in res.text, (slot, res.text)
+    assert not router.calls and not router.batch_calls, (
+        "%s was refused after it reached inference: %r %r" % (slot, router.calls, router.batch_calls))
+
+
+@pytest.mark.parametrize("path,batch",
+                         [("/v1/systemone", False), ("/v1/systemone/batch", True)],
+                         ids=["single", "batch"])
+def test_an_emoji_still_reaches_both_decision_routes(path, batch, monkeypatch):
+    """A *paired* surrogate is one astral character by the time the parser is done.
+
+    The other half of the guard: a check keyed on surrogate code points rather than on
+    unpairedness would reject every emoji a state contains, which is why 06462bf asserts it for the
+    single route and it is asserted here for both.
+    """
+    monkeypatch.delenv("LAYA_API_KEY", raising=False)
+    client, router = _surrogate_client()
+    body = {"states": ["hi \U0001f600"]} if batch else {"state": "hi \U0001f600"}
+    body["questions"] = {"q": {"type": "noul", "instructions": "x"}}
+    res = client.post(path, content=json.dumps(body).encode("utf-8"),
+                      headers={"content-type": "application/json"})
+    assert res.status_code == 200, (res.status_code, res.text)
+    states = ([r["state"] for r in router.batch_calls[-1]] if batch
+              else [router.calls[-1]["state"]])
+    assert any("\U0001f600" in str(s) for s in states), states
 
 
 def test_a_deeply_nested_state_is_not_a_recursion_error():
@@ -1747,3 +1962,596 @@ def test_http_api_page_documents_exactly_the_forwarded_controls():
     prose = page[page.index("`model`, `task`, `lang`, `lang_guess`"):]
     for key in BODY_REFUSALS:
         assert "`%s`" % key in prose, "%s is not named where the refusal is explained" % key
+
+
+# --------------------------------------------------------------------- batch endpoint per-call controls
+#
+# `Router.predict_batch` reads two kinds of control: call-level kwargs that apply to the whole
+# batch (chunking, padding, abstention) and per-request keys it lifts off each item of ``requests``
+# (checkpoint, task, language, token budget). Before this PR, the HTTP batch endpoint read neither
+# -- it always synthesized a plain ``{state, questions, model}`` dict and called ``predict_batch``
+# with no kwargs, so a caller could not send any of the controls the single endpoint already
+# forwards. The suite below pins the two split lists against core's own signature, verifies every
+# control reaches the right side of the Router call, and refuses a hook control the same way
+# ``/v1/systemone`` already does.
+
+
+class BatchRecordingRouter(FakeRouter):
+    """Records ``predict_batch``'s full call: the requests list and every call kwarg."""
+
+    def __init__(self):
+        super().__init__()
+        self.batch_calls = []
+
+    def predict_batch(self, requests, **kwargs):
+        self.batch_calls.append(([dict(r) for r in requests], dict(kwargs)))
+        return [
+            {
+                "model": "laya-rl-agent",
+                "answers": {
+                    "dept": {
+                        "type": "choice",
+                        "choice": "billing",
+                        "probabilities": {"billing": 0.94, "tech": 0.06},
+                        "confidence": 0.94,
+                    }
+                },
+                "usage": {"input_tokens": 42, "output_tokens": 0},
+                "routing": {"model": "english", "reason": "English Latin text"},
+            }
+            for _ in requests
+        ]
+
+
+class StrictBatchRouter(BatchRecordingRouter):
+    """``predict_batch(self, requests)`` -- takes no call kwargs.
+
+    Witness against an always-forward mutation: if the handler unconditionally passed ``batch_size``
+    or ``min_confidence``, this Router would raise ``TypeError`` and 500 on a bare body.
+    """
+
+    def predict_batch(self, requests):  # noqa: D401 -- strict on purpose
+        return super().predict_batch(requests)
+
+
+BATCH_CALL_VALUES = {"batch_size": 4, "min_confidence": 0.9, "sort_by_length": True}
+BATCH_ITEM_VALUES = {"max_len": 64, "head_max_len": 32, "task": "typed-decisions",
+                     "lang": "de", "lang_guess": "de"}
+
+
+def _batch_client(monkeypatch):
+    monkeypatch.delenv("LAYA_API_KEY", raising=False)
+    fake = BatchRecordingRouter()
+    return TestClient(create_app(router=fake)), fake
+
+
+def test_batch_call_controls_are_exactly_predict_batch_kwargs_or_refusal():
+    """A control added to ``Router.predict_batch`` must be placed on one side of the line.
+
+    Either serve forwards it (``BATCH_BODY_CALL_CONTROLS``) or it refuses it (``hooks_timeout``,
+    the one hook-execution arg that ``predict_batch`` takes). Silently ignoring a new kwarg is the
+    failure mode this pin exists to catch: the same reasoning that made ``/v1/systemone`` refuse
+    ``hooks_timeout`` in #724 applies to the batch path -- a caller cannot shorten the deadline
+    on which the operator's own hooks execute.
+    """
+    from laya.router import Router
+
+    taken = set(inspect.signature(Router.predict_batch).parameters) - {"self", "requests"}
+    declared = set(BATCH_BODY_CALL_CONTROLS) | {"hooks_timeout"}
+    assert taken == declared, "predict_batch() takes %s; serve declares %s" % (
+        sorted(taken), sorted(declared))
+
+
+def test_batch_controls_cover_the_single_endpoints_set_plus_batch_only():
+    """Everything the single endpoint forwards must reach the batch path too, and vice versa.
+
+    The batch forwards the same per-call controls ``/v1/systemone`` does -- split across the item
+    dict (``Router.predict_batch`` reads them per item) and the call kwargs (min_confidence) --
+    plus the batch-only chunking and padding knobs (``batch_size``, ``sort_by_length``) that
+    ``predict_batch`` accepts and ``predict`` does not. ``model`` still goes into every item, as
+    it has since the batch endpoint shipped. If a control moves across either boundary, this
+    test names it.
+    """
+    batch_side = set(BATCH_BODY_ITEM_CONTROLS) | set(BATCH_BODY_CALL_CONTROLS)
+    single_side = (set(BODY_CONTROLS) | {"batch_size", "sort_by_length"}) - {"model"}
+    assert batch_side == single_side, (
+        "batch forwards %s; single endpoint + batch-only says %s"
+        % (sorted(batch_side), sorted(single_side)))
+
+
+@pytest.mark.parametrize("key", sorted(BATCH_ITEM_VALUES))
+def test_each_batch_item_control_reaches_every_request(monkeypatch, key):
+    client, fake = _batch_client(monkeypatch)
+    r = client.post("/v1/systemone/batch", json={**BATCH_REQ, key: BATCH_ITEM_VALUES[key]})
+    assert r.status_code == 200, r.text
+    requests, _ = fake.batch_calls[0]
+    assert len(requests) == len(BATCH_REQ["states"])
+    for item in requests:
+        assert item.get(key) == BATCH_ITEM_VALUES[key], (key, item)
+
+
+@pytest.mark.parametrize("key", sorted(BATCH_CALL_VALUES))
+def test_each_batch_call_control_reaches_predict_batch_kwargs(monkeypatch, key):
+    client, fake = _batch_client(monkeypatch)
+    r = client.post("/v1/systemone/batch", json={**BATCH_REQ, key: BATCH_CALL_VALUES[key]})
+    assert r.status_code == 200, r.text
+    _, kwargs = fake.batch_calls[0]
+    assert kwargs.get(key) == BATCH_CALL_VALUES[key], (key, kwargs)
+
+
+def test_batch_unset_controls_are_not_sent_as_none(monkeypatch):
+    """An absent control must stay absent in either the item dict or the call kwargs.
+
+    Core reads an absent argument as "inherit what the Router was built with", so sending
+    ``min_confidence=None`` would override a deployment's ``Router(min_confidence=...)``, and
+    sending a per-item key with value ``None`` would break a Router whose ``predict_batch``
+    predates the key (#294 shape).
+    """
+    client, fake = _batch_client(monkeypatch)
+    assert client.post("/v1/systemone/batch", json=BATCH_REQ).status_code == 200
+    requests, kwargs = fake.batch_calls[0]
+    assert kwargs == {}
+    for item in requests:
+        for key in BATCH_BODY_ITEM_CONTROLS:
+            assert key not in item, (key, item)
+
+
+@pytest.mark.parametrize("key", sorted(set(BATCH_ITEM_VALUES) | set(BATCH_CALL_VALUES)))
+def test_batch_explicit_null_is_no_control(monkeypatch, key):
+    """``{"lang_guess": null}`` means "no hint" -- same shape the single endpoint honours.
+
+    A Jev client that serialises its absent fields must keep working; only a value says the
+    caller asked for something.
+    """
+    client, fake = _batch_client(monkeypatch)
+    assert client.post("/v1/systemone/batch", json={**BATCH_REQ, key: None}).status_code == 200
+    requests, kwargs = fake.batch_calls[0]
+    assert "min_confidence" not in kwargs and "batch_size" not in kwargs
+    assert "sort_by_length" not in kwargs
+    for item in requests:
+        assert key not in item
+
+
+def test_batch_min_confidence_zero_is_still_a_threshold(monkeypatch):
+    """``0.0`` is falsy but is a value the caller chose; ``if min_confidence:`` would drop it."""
+    client, fake = _batch_client(monkeypatch)
+    assert client.post("/v1/systemone/batch",
+                       json={**BATCH_REQ, "min_confidence": 0.0}).status_code == 200
+    _, kwargs = fake.batch_calls[0]
+    assert kwargs["min_confidence"] == 0.0
+
+
+def test_batch_sort_by_length_false_is_not_forwarded(monkeypatch):
+    """``predict_batch``'s own default is ``False``, so ``False`` is what the caller did NOT ask.
+
+    Forwarding ``False`` explicitly would still work on ``Router`` but silently disappear on any
+    attached agent whose ``predict_batch`` predates the knob (#294) -- which is why the MCP tool
+    makes the same choice. The endpoint does accept the value; it just does not translate it into
+    a kwarg.
+    """
+    client, fake = _batch_client(monkeypatch)
+    assert client.post("/v1/systemone/batch",
+                       json={**BATCH_REQ, "sort_by_length": False}).status_code == 200
+    _, kwargs = fake.batch_calls[0]
+    assert "sort_by_length" not in kwargs
+
+
+def test_batch_strict_predict_batch_router_answers_a_quiet_body(monkeypatch):
+    """An attached Router whose ``predict_batch(self, requests)`` takes nothing else must still work.
+
+    The endpoint forwards kwargs only when the caller asks. If the handler always passed
+    ``batch_size=None`` (or any call kwarg) unconditionally, this Router would raise ``TypeError``
+    and the endpoint would 500 on a body that sent nothing -- which is exactly the mutation this
+    witness kills.
+    """
+    monkeypatch.delenv("LAYA_API_KEY", raising=False)
+    fake = StrictBatchRouter()
+    client = TestClient(create_app(router=fake))
+    r = client.post("/v1/systemone/batch", json=BATCH_REQ)
+    assert r.status_code == 200, r.text
+    assert len(fake.batch_calls) == 1
+    _, kwargs = fake.batch_calls[0]
+    assert kwargs == {}
+
+
+@pytest.mark.parametrize("key,value", [
+    ("lang", True),
+    ("lang", 5),
+    ("lang_guess", ["de"]),
+    ("lang_guess", {"code": "de"}),
+    ("max_len", 0),
+    ("max_len", -1),
+    ("max_len", True),
+    ("max_len", "64"),
+    ("head_max_len", "32"),
+    ("min_confidence", 1.5),
+    ("min_confidence", -0.1),
+    ("min_confidence", "0.9"),
+    ("batch_size", 0),
+    ("batch_size", -3),
+    ("batch_size", True),
+    ("batch_size", 1.5),
+    ("batch_size", "4"),
+    ("sort_by_length", "yes"),
+    ("sort_by_length", 1),
+])
+def test_bad_control_on_batch_is_refused_before_inference(monkeypatch, key, value):
+    client, fake = _batch_client(monkeypatch)
+    r = client.post("/v1/systemone/batch", json={**BATCH_REQ, key: value})
+    assert r.status_code == 422, (key, value, r.text)
+    assert not fake.batch_calls, "a refused body must not reach predict_batch"
+
+
+@pytest.mark.parametrize("key", BODY_REFUSALS)
+def test_batch_hook_control_is_refused_not_dropped(monkeypatch, key):
+    """The batch endpoint must honour the same refusal policy the single endpoint already states.
+
+    Without ``_refuse_body_refusals``, a batch body would silently hand a caller a shorter
+    deadline for the operator's hooks -- ``predict_batch`` *does* take ``hooks_timeout`` as a
+    call arg, so this is not a theoretical refusal here. The other four are refused for the same
+    reason they are on ``/v1/systemone``: they run inside the server process.
+    """
+    value = {"hooks": [], "on_predict_start": "cache", "on_predict_end": "audit",
+             "hooks_raise": False, "hooks_timeout": 5.0}[key]
+    client, fake = _batch_client(monkeypatch)
+    r = client.post("/v1/systemone/batch", json={**BATCH_REQ, key: value})
+    assert r.status_code == 422, r.text
+    detail = r.json()["detail"]
+    assert key in detail
+    assert "cannot be sent to this endpoint" in detail
+    assert not fake.batch_calls, "the refusal must come before inference"
+
+
+def test_batch_predict_fallback_forwards_every_control(monkeypatch):
+    """When the attached Router has no ``predict_batch``, every control must reach ``predict()``.
+
+    The batch path synthesizes per-state ``predict()`` calls with the same kwargs the single
+    endpoint uses -- ``max_len``/``head_max_len``/``task``/``lang``/``lang_guess``/``min_confidence``
+    all apply per call. A caller that sends ``min_confidence`` on a batch body must see the
+    abstention gate apply per item on the fallback path, not silently skip it because
+    ``predict_batch`` was unavailable.
+    """
+    monkeypatch.delenv("LAYA_API_KEY", raising=False)
+    fake = BudgetRouter()
+    client = TestClient(create_app(router=fake))
+    body = {**BATCH_REQ, "max_len": 64, "head_max_len": 32, "task": "typed-decisions",
+            "lang": "de", "lang_guess": "de", "min_confidence": 0.5}
+    r = client.post("/v1/systemone/batch", json=body)
+    assert r.status_code == 200, r.text
+    assert len(fake.calls) == len(BATCH_REQ["states"])
+    for call in fake.calls:
+        assert call["max_len"] == 64
+        assert call["head_max_len"] == 32
+        assert call["task"] == "typed-decisions"
+        assert call["lang"] == "de"
+        assert call["lang_guess"] == "de"
+        assert call["min_confidence"] == 0.5
+
+
+def test_batch_predict_fallback_sends_no_kwargs_when_body_is_quiet(monkeypatch):
+    """A quiet batch body on the fallback path must call ``predict()`` with no kwargs at all.
+
+    An attached Router whose ``predict()`` does not take the new keywords -- the ``FakeRouter``
+    class this suite has always used -- must keep answering on a bare batch. Passing ``None``
+    would 500 on that shape and would override a deployment's own ``Router(lang_guess=...)``
+    on a modern one.
+    """
+    monkeypatch.delenv("LAYA_API_KEY", raising=False)
+    fake = FakeRouter()
+    client = TestClient(create_app(router=fake))
+    r = client.post("/v1/systemone/batch", json=BATCH_REQ)
+    assert r.status_code == 200, r.text
+    assert len(fake.calls) == len(BATCH_REQ["states"])
+
+
+def test_batch_controls_combine_on_one_call(monkeypatch):
+    """Call kwargs and item overrides land on the same call, not in isolation.
+
+    A caller that sends a token budget and a chunking cap together must see them on the same
+    ``predict_batch`` invocation -- not the budget on the item and the chunk cap dropped, and
+    not the reverse. This is the whole-point-of-the-PR shape.
+    """
+    client, fake = _batch_client(monkeypatch)
+    r = client.post("/v1/systemone/batch",
+                    json={**BATCH_REQ, "batch_size": 2, "sort_by_length": True,
+                          "min_confidence": 0.8, "task": "typed-decisions", "max_len": 128})
+    assert r.status_code == 200, r.text
+    requests, kwargs = fake.batch_calls[0]
+    assert kwargs == {"min_confidence": 0.8, "batch_size": 2, "sort_by_length": True}
+    for item in requests:
+        assert item["task"] == "typed-decisions"
+        assert item["max_len"] == 128
+def test_health_liveness_is_open_but_the_detail_needs_the_bearer(monkeypatch):
+    """#812: `/health` answered deployment internals to an unauthenticated caller.
+
+    `POST /v1/systemone` was gated and `GET /health` was not, so on a server the operator had
+    locked down with `LAYA_API_KEY` anyone could read the resident checkpoint names, each one's
+    exact Hugging Face revision SHA, the device state, and `last_fallback_reason`, which quotes
+    host hardware ("GPU 0 total 8.00 GiB"). Reconnaissance rather than a data path, but it is
+    exactly the inventory you would want before targeting a revision.
+
+    Requiring the bearer outright was not the fix: `compose.http.yaml`'s healthcheck, the Docker
+    HEALTHCHECK and any k8s liveness probe all read this endpoint with no credential, and
+    docs/http-api.md promises it is always open. So liveness stays open and the detail does not.
+    """
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("LAYA_API_KEY", "s3cret")
+    client = TestClient(create_app(router=FakeRouter()))
+
+    # a probe with no credential still gets its 200, which is all a healthcheck reads
+    anonymous = client.get("/health")
+    assert anonymous.status_code == 200
+    assert anonymous.json() == {"status": "ok"}
+
+    # and the same for a wrong bearer: still live, still no detail, and not a 401, because a
+    # probe that starts failing on a bad credential is a worse outage than the disclosure
+    wrong = client.get("/health", headers={"Authorization": "Bearer nope"})
+    assert wrong.status_code == 200
+    assert wrong.json() == {"status": "ok"}
+
+    # the detail is the authorized caller's
+    full = client.get("/health", headers={"Authorization": "Bearer s3cret"})
+    assert full.status_code == 200
+    _, returned = _health_return_keys()
+    assert sorted(full.json()) == sorted(returned)
+    for leaked in ("loaded", "revisions", "cpu_fallbacks", "checkpoint_devices"):
+        assert leaked in full.json()
+        assert leaked not in anonymous.json()
+
+
+def test_health_without_an_api_key_is_unchanged():
+    """A deployment that set no key never asked to be gated, so it gets the whole payload."""
+    from fastapi.testclient import TestClient
+
+    client = TestClient(create_app(router=FakeRouter()))
+    _, returned = _health_return_keys()
+    assert sorted(client.get("/health").json()) == sorted(returned)
+
+
+def _health_return_keys():
+    """The keys `health()` hands back, read out of its own `return` statement."""
+    path = os.path.join(ROOT, "laya", "serve.py")
+    with open(path, encoding="utf-8") as handle:
+        tree = ast.parse(handle.read(), filename=path)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "health":
+            for stmt in node.body:
+                if isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.Dict):
+                    return node, [k.value for k in stmt.value.keys
+                                  if isinstance(k, ast.Constant) and isinstance(k.value, str)]
+    raise AssertionError("no `def health()` returning a dict literal in laya/serve.py")
+
+
+def test_http_api_page_documents_exactly_the_health_fields():
+    """The payload `/health` documents has to be the payload the handler builds.
+
+    The page showed four keys while the handler returned seven: `device_is_preference`,
+    `checkpoint_devices` and `cpu_fallbacks` arrived with the device-fact reporting and #574's
+    fallback counters, and both were written up in docs/docker.md -- the page a reader opens before
+    pointing a probe at a server was the one page nobody updated. Its sample also printed
+    `"device": "auto"`, which is what `LAYA_DEVICE` defaults to, not a value the handler can return.
+
+    So the key list is read out of `health()`'s `return` rather than typed here, in both directions
+    like the request-body gate above, and the sample is checked for internal coherence too: it is one
+    server's answer, so every per-checkpoint block is keyed by the names in `loaded`, and
+    `device_is_preference` and `device` follow the two rules the handler states.
+    """
+    health, returned = _health_return_keys()
+    assert returned, "health() returns no literal keys; retarget this"
+
+    page = open(os.path.join(ROOT, "docs", "http-api.md"), encoding="utf-8").read()
+    section = page[page.index("### `GET /health`"):page.index("### `POST")]
+    sample = json.loads(section.split("```json", 1)[1].split("```", 1)[0])
+
+    assert sorted(sample) == sorted(returned), "the sample says %s, health() returns %s" % (
+        sorted(sample), sorted(returned))
+    for key in returned:
+        assert "\n- `%s` " % key in section, (
+            "%s is in the sample with no bullet defining it, so the field is listed and not "
+            "explained" % key)
+
+    # The per-checkpoint blocks all key on the same resident checkpoints. A fourth dict-valued key
+    # means the handler grew one and this list has to grow with it, deliberately.
+    resident = set(sample["loaded"])
+    assert resident, "the sample shows no resident checkpoint, so the blocks below prove nothing"
+    blocks = [k for k, v in sample.items() if isinstance(v, dict) and v]
+    assert len(blocks) == 3, "dict-valued blocks are %s; retarget this if the payload grew" % blocks
+    for block in blocks:
+        assert set(sample[block]) == resident, "%s is keyed %r, loaded says %r" % (
+            block, sorted(sample[block]), sorted(resident))
+
+    # `device` is a device label, not the configuration word: the labels come from the only function
+    # that can produce one when nothing is resident.
+    dev_path = os.path.join(ROOT, "laya", "mcp", "device.py")
+    with open(dev_path, encoding="utf-8") as handle:
+        dev_tree = ast.parse(handle.read(), filename=dev_path)
+    labels = set()
+    for node in ast.walk(dev_tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "resolve_device":
+            labels = {stmt.value.value for stmt in ast.walk(node)
+                      if isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.Constant)
+                      and isinstance(stmt.value.value, str)}
+    assert labels, "resolve_device() returns no literal device label; retarget this"
+    assert sample["device"] in labels, "%r is not a device label resolve_device can return (%s)" % (
+        sample["device"], sorted(labels))
+
+    # The handler's two rules about those fields: the preference flag is true exactly while nothing
+    # is resident, and the top-level answer is the first resident checkpoint's own device.
+    assert sample["device_is_preference"] == (not sample["checkpoint_devices"]), (
+        "device_is_preference says %r with checkpoint_devices %r" % (
+            sample["device_is_preference"], sample["checkpoint_devices"]))
+    if sample["checkpoint_devices"]:
+        assert sample["device"] == next(iter(sample["checkpoint_devices"].values())), (
+            "device must be the first resident checkpoint's device, as serve.py computes it")
+
+    # And the shape of a fallback entry, which no page has ever spelled out: read from the dict the
+    # handler builds per checkpoint.
+    counters = None
+    for node in ast.walk(health):
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Subscript) \
+                and isinstance(node.value, ast.Dict):
+            counters = [k.value for k in node.value.keys if isinstance(k, ast.Constant)]
+    assert counters, "health() builds no per-checkpoint dict literal; retarget this"
+    for name in resident:
+        assert sorted(sample["cpu_fallbacks"][name]) == sorted(counters), (
+            "cpu_fallbacks entries say %s, the handler builds %s" % (
+                sorted(sample["cpu_fallbacks"][name]), sorted(counters)))
+
+
+def _decision_response_site(rel):
+    """What one Agent builds the decision response out of, read from its own literals.
+
+    Returns the result dict's keys, the keys its `usage` block always carries, the keys it adds to
+    `usage` only under a condition, and the `model` constant it stamps. Read out of the source rather
+    than transcribed, because the point of this gate is that the page and both agents describe the
+    same payload; a hand-copied list would be a third copy to keep in step.
+    """
+    path = os.path.join(ROOT, rel)
+    with open(path, encoding="utf-8") as handle:
+        tree = ast.parse(handle.read(), filename=path)
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        keys = usage = head = None
+        optional = set()
+        for stmt in ast.walk(fn):
+            if not isinstance(stmt, ast.Assign) or not stmt.targets:
+                continue
+            first = stmt.targets[0]
+            names = ([k.value for k in stmt.value.keys
+                      if isinstance(k, ast.Constant) and isinstance(k.value, str)]
+                     if isinstance(stmt.value, ast.Dict) else [])
+            if isinstance(first, ast.Name) and first.id == "usage" and "state_tokens" in names:
+                usage = names
+            elif isinstance(first, ast.Subscript) and isinstance(first.value, ast.Name):
+                if first.value.id == "usage" and isinstance(first.slice, ast.Constant):
+                    optional.add(first.slice.value)
+                elif first.value.id == "window_results" and {"answers", "model", "usage"} <= set(names):
+                    keys = names
+                    head = next((v.value for k, v in zip(stmt.value.keys, stmt.value.values)
+                                 if isinstance(k, ast.Constant) and k.value == "model"
+                                 and isinstance(v, ast.Constant)), None)
+        if usage:
+            assert keys, "%s: %s builds a usage block in no result dict literal" % (rel, fn.name)
+            assert head, "%s: %s's result dict has no literal `model` constant" % (rel, fn.name)
+            return {"keys": sorted(keys), "usage": sorted(usage),
+                    "optional": sorted(optional), "head": head}
+    raise AssertionError("%s: no `usage = {...}` literal with a `state_tokens` key" % rel)
+
+
+def _route_decision_keys():
+    """Every keyword some `RouteDecision(...)` is built with, across all of `_route`'s branches."""
+    path = os.path.join(ROOT, "laya", "router.py")
+    with open(path, encoding="utf-8") as handle:
+        tree = ast.parse(handle.read(), filename=path)
+    keys = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "RouteDecision":
+            keys.update(kw.arg for kw in node.keywords if kw.arg)
+    assert keys, "no RouteDecision(...) call with keywords in laya/router.py; retarget this"
+    return sorted(keys)
+
+
+def _md_table_keys(page, header):
+    """The first column of a markdown table, read as rows rather than searched for substrings."""
+    lines = page.splitlines()
+    start = lines.index(header)
+    rows = []
+    for line in lines[start + 2:]:
+        if not line.strip():
+            break
+        rows.append(line.split("|")[1].strip().strip("`"))
+    return rows
+
+
+def test_http_api_page_documents_the_decision_response_keys():
+    r"""The page documents two of the six `usage` keys the agents actually send.
+
+    `### Response` showed `"usage": {"input_tokens": 74, "output_tokens": 0}`, while
+    `Agent.predict_batch` builds six keys and `OnnxAgent._infer_batch` builds the same six -- the
+    truncation report #174 asked for, and the only place a caller can see that the state it sent was
+    cut before the model read it. It showed three of the four `routing` keys (`workflow` is on every
+    branch of `_route`) and four of the eight `laya.lang.analyse()` returns. And it named a
+    `lang_guess` key of `routing` that no code path has ever set: `lang_guess` is a *request* control
+    (`BODY_CONTROLS`), and the evidence a hint acted on is spelled out in `reason`.
+
+    ```
+    usage   documented 2  <-  agent 6 always + options when options collapse, onnx the same
+    routing documented 4  <-  RouteDecision 5: model, repo, reason, detection, workflow
+    detection documented 4  <-  analyse() 8
+    lang_guess   documented 1  <-  set by 0 branches
+    ```
+
+    So every key set below is read out of the source -- the result and usage literals, the
+    `RouteDecision(...)` keywords, `analyse()` at runtime, which needs no checkpoint -- and held to
+    the page in both directions, as the request-body and `/health` gates above do. The sample is the
+    response to the request the page itself prints, so the coherence checks at the end can read it as
+    one server's answer rather than as six unrelated numbers.
+    """
+    from laya.lang import analyse
+
+    page = open(os.path.join(ROOT, "docs", "http-api.md"), encoding="utf-8").read()
+    section = page[page.index("### Response"):page.index("### Confidence")]
+    sample = json.loads(section.split("```json", 1)[1].split("```", 1)[0])
+
+    torch_site = _decision_response_site(os.path.join("laya", "agent.py"))
+    onnx_site = _decision_response_site(os.path.join("laya", "onnx_agent.py"))
+    top, always, optional = torch_site["keys"], torch_site["usage"], torch_site["optional"]
+    assert {k: v for k, v in onnx_site.items() if k != "head"} == \
+        {k: v for k, v in torch_site.items() if k != "head"}, (
+        "the two agents report different fields, so the page cannot describe both: torch %s, "
+        "onnx %s" % (torch_site, onnx_site))
+
+    assert sorted(sample) == sorted(top + ["routing"]), (
+        "the sample says %s, an agent result is %s plus the `routing` Router.attach" % (
+            sorted(sample), top))
+    assert sample["model"] == torch_site["head"], (
+        "the sample's head name is %r, `Agent.predict_batch` stamps %r" % (
+            sample["model"], torch_site["head"]))
+
+    assert sorted(sample["usage"]) == always, (
+        "the sample's usage block says %s, the agents build %s" % (sorted(sample["usage"]), always))
+    documented = _md_table_keys(section, "| `usage` key | meaning |")
+    assert sorted(documented) == sorted(always + optional), (
+        "the usage table says %s, the agents build %s (always) + %s (only when it has to say so)"
+        % (sorted(documented), always, optional))
+
+    routing = _route_decision_keys()
+    assert sorted(sample["routing"]) == routing, (
+        "the sample's routing block says %s, `_route` builds %s" % (sorted(sample["routing"]),
+                                                                   routing))
+    assert sorted(_md_table_keys(section, "| `routing` key | meaning |")) == routing, (
+        "the routing table must name exactly the keys a RouteDecision can carry")
+
+    # The hint the page used to describe as a key is not one, and no branch has ever set it.
+    assert "lang_guess" not in routing + always + optional, (
+        "`lang_guess` is now a response key; the prose describes it as request-side evidence")
+    assert "`lang_guess` evidence" not in page, "the page still calls lang_guess a routing key"
+
+    # `detection` is whatever analyse() returns, so the field names come from calls rather than a
+    # list -- over enough states to show the set does not move with the script, which is what lets
+    # one row describe it.
+    shapes = {tuple(sorted(analyse(state))) for state in
+              ("I was charged twice this month, I want my money back",
+               "Rechnung \u00fcber zwei Abbuchungen, ich bitte um Erstattung",
+               "\u3042\u306e\u8acb\u6c4f\u304c\u91cd\u8907\u3057\u3066\u3044\u307e\u3059", "")}
+    assert len(shapes) == 1, "analyse() returns a different key set per script: %s" % (sorted(shapes),)
+    detected = sorted(shapes.pop())
+    assert sorted(sample["routing"]["detection"]) == detected, (
+        "the sample shows %s, analyse() returns %s" % (
+            sorted(sample["routing"]["detection"]), detected))
+    detection_row = [line for line in section.splitlines() if line.startswith("| `detection` |")]
+    assert len(detection_row) == 1, "the routing table has no single `detection` row"
+    for key in detected:
+        assert "`%s`" % key in detection_row[0], (
+            "%s is in the sample's detection block but not named in the row that defines it" % key)
+
+    # And the sample has to be internally coherent, since it is presented as one real answer: the
+    # truncation flag is that worst case being non-zero, and the per-question list is empty when
+    # nothing was cut.
+    usage = sample["usage"]
+    assert usage["output_tokens"] == 0, "the head generates nothing, so a sample must not show more"
+    assert usage["truncated"] == (usage["state_tokens_dropped"] > 0), usage
+    assert (usage["truncated_questions"] == []) == (not usage["truncated"]), usage
+    assert 0 < usage["state_tokens"] and usage["state_tokens_dropped"] < usage["state_tokens"], usage

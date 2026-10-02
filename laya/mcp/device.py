@@ -4,6 +4,14 @@ The environment variable is normalised once, in `env_device`, and passed on to t
 (``Router(device=...)``); `resolve_device` reports that same string, so the device a client is
 told about and the device torch is asked for cannot drift apart. Normalisation lower-cases the
 device type, because torch's parser is case-sensitive.
+
+Normalisation is not sufficient for that guarantee on its own. ``cuda:`` -- or ``gpu``, or
+``cuda: 0`` -- normalises to a string torch's parser still refuses, and the refusal lands
+wherever the first checkpoint build happens: on the lazy Router that is inside a request
+handler, after the server started healthily and ``laya_status`` reported the string as the
+device in use. `env_device` therefore parses the value it is about to return with
+``torch.device`` and raises a named ``ValueError`` for one torch cannot read, so the typo is
+attributed to the variable at the point the process reads it.
 `resolve_device` is a best-effort label of the *configured preference*
 (LAYA_DEVICE or torch auto-detection), not of the device a loaded checkpoint
 actually runs on. For the real device read ``Agent.device`` via
@@ -32,6 +40,12 @@ def env_device() -> str | None:
     Splitting on the device *type* and the optional index keeps that true for ``CUDA:0``:
     torch wants the type lower-cased and does not care about the index, so
     ``CUDA:0 -> cuda:0``.
+
+    The normalised value is then parsed by torch (``_check_torch_device``): a value torch
+    cannot read raises ``ValueError`` naming ``LAYA_DEVICE``, before the string can reach
+    ``Router(device=...)`` or be reported as the device in use. ``cuda:`` (trailing colon),
+    ``gpu`` and ``cuda: 0`` (space after the colon) are the common typos; ``CUDA:0`` is not
+    one, because it is normalised first.
     """
     value = os.environ.get(_ENV_KEY)
     if value is None:
@@ -41,7 +55,30 @@ def env_device() -> str | None:
         return None
     kind, sep, index = value.partition(":")
     kind = kind.lower()
-    return "%s%s%s" % (kind, sep, index) if sep else kind
+    normalised = "%s%s%s" % (kind, sep, index) if sep else kind
+    _check_torch_device(normalised)
+    return normalised
+
+
+def _check_torch_device(value: str) -> None:
+    """Raise a named ValueError for a device string ``torch.device`` refuses.
+
+    ``torch.device`` is used as the parser itself rather than a lookalike of it: devices
+    this module has never heard of (``meta``, ``privateuseone:1``) keep working, and a
+    torch that cannot be imported leaves the value alone, because nothing downstream
+    could have used it anyway.
+    """
+    try:
+        import torch
+    except Exception:  # pragma: no cover - torch is a hard dependency of the package
+        return
+    try:
+        torch.device(value)
+    except Exception as exc:
+        raise ValueError(
+            "%s=%r is not a torch device: %s -- use a device such as 'cpu', 'cuda', "
+            "'cuda:0' or 'mps'" % (_ENV_KEY, value, exc)
+        ) from exc
 
 
 def resolve_device(force: str | None = None) -> str:
@@ -56,6 +93,10 @@ def resolve_device(force: str | None = None) -> str:
     This is what the Router is asked to build on, not what a loaded agent
     computes on: use ``agent_device`` for the real device (a GPU -> CPU
     fallback happens silently at agent build time).
+
+    A ``LAYA_DEVICE`` value torch cannot parse raises here too (see
+    ``env_device``): there is no path on which this function labels a device
+    torch would refuse, so the label and the build cannot disagree.
     """
     if force:
         return force

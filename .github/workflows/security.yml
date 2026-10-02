@@ -121,7 +121,12 @@ jobs:
             exit "$code"
           fi
           if [ "$code" -ne 0 ]; then
-            echo "::warning::advisories in optional-integration dependencies -- visible here, not blocking PRs (see #645/#646)"
+            # Name the advisories in the annotation itself, so a triager sees WHAT was found
+            # without opening the log (#694 review). Only the pip-audit table IDs (GHSA/PYSEC):
+            # --desc bodies quote CVE- ids in prose, and a warning that repeats prose noise is
+            # a warning nobody reads.
+            ids=$(grep -oE "(GHSA|PYSEC)-[A-Za-z0-9-]+" pip-audit-extras.log | sort -u | tr '\n' ' ')
+            echo "::warning::advisories in optional-integration dependencies: ${ids% } -- visible here, not blocking PRs (see #645)"
           fi
 
   codeql:

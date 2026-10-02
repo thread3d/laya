@@ -398,13 +398,36 @@ def apply_calibration_payload(obj, payload: Dict[str, Any]) -> None:
     and still loads, so an older file never becomes a hard failure. Each value is passed
     through `clamp_temperature`, so a non-numeric or out-of-range entry cannot crash a later
     forward the way an unclamped zero used to.
+
+    The payload's *shape* is checked before any of that, and refused with a `ValueError`
+    naming the field: the values may be junk the clamp forgives, but a temperature that is
+    not a list of three, a version that is not an integer, or a bucket map that is not an
+    object is a file this code cannot read -- JSON gives `int`, `str`, `list` and `dict`
+    for the three mistakes below just as happily as it gives the right shapes, and each
+    used to fail with a raw `TypeError`/`AttributeError` from `len()`/`dict()`, or worse,
+    to load: a `{"a": 1, "b": 2, "c": 3}` or `"abc"` has `len` 3 and used to pass the
+    length check and install its *keys* as temperatures.
     """
+    if not isinstance(payload, dict):
+        raise ValueError("calibration JSON must be an object, got %s" % type(payload).__name__)
     version = payload.get("version", 1)
     if version is None:
         version = 1
+    if isinstance(version, bool) or not isinstance(version, (int, float, str)):
+        raise ValueError("calibration JSON version must be an integer, got %r" % (version,))
+    try:
+        version = int(version)
+    except (TypeError, ValueError, OverflowError) as exc:   # Overflow: JSON's 1e999 is inf
+        raise ValueError(
+            "calibration JSON version must be an integer, got %r" % (version,)) from exc
     temps = payload.get("temperature")
-    if temps is None or len(temps) != N_QTYPES:
+    if not isinstance(temps, (list, tuple)) or len(temps) != N_QTYPES:
         raise ValueError("calibration JSON must contain temperature: [3 floats]")
-    if int(version) >= CALIBRATION_VERSION:
+    by_options = payload.get("temperature_by_options") or {}
+    if not isinstance(by_options, dict):
+        raise ValueError(
+            "calibration JSON temperature_by_options must be an object of bucket -> float, "
+            "got %s" % type(by_options).__name__)
+    if version >= CALIBRATION_VERSION:
         _warn_if_identity_mismatch(obj, payload)
-    _install_temperatures(obj, temps, payload.get("temperature_by_options") or {})
+    _install_temperatures(obj, temps, by_options)

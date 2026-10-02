@@ -351,6 +351,50 @@ check(
 )
 
 
+# --------------------------------------------------------------- payload shape
+# The values above are tolerated and clamped; the *shape* is not negotiable, and the
+# check is the line above the tolerance: "[3 floats]" means a list of three, not
+# anything with a length of three. JSON hands back int, str, list and dict for the
+# mistakes below just as happily as the right shapes -- a dict or a string of length 3
+# used to pass the length check and install its *keys* as temperatures, and a scalar
+# temperature or bucket map crashed with a raw TypeError instead of the ValueError
+# the function's own message promises.
+
+
+def _refuses(name, payload, fragment=None):
+    try:
+        apply_calibration_payload(stub, payload)
+    except ValueError as exc:
+        check_true(name, fragment is None or fragment in str(exc), str(exc))
+        return
+    except BaseException as exc:  # noqa: BLE001 -- the old TypeError/AttributeError
+        FAIL.append("%s: raised %r, want ValueError" % (name, exc))
+        return
+    FAIL.append("%s: accepted %r" % (name, payload))
+
+
+_refuses("shape/non-object payload", ["temperature", [1.0, 1.0, 1.0]], "must be an object")
+_refuses("shape/scalar temperature", {"temperature": 5}, "[3 floats]")
+_refuses("shape/string temperature", {"temperature": "abc"}, "[3 floats]")
+_refuses("shape/dict temperature", {"temperature": {"a": 1, "b": 2, "c": 3}}, "[3 floats]")
+_refuses("shape/wrong-length temperature", {"temperature": [1.0, 1.0]}, "[3 floats]")
+_refuses("shape/string version", {"temperature": [1.0] * 3, "version": "x"},
+         "version must be an integer")
+_refuses("shape/bool version", {"temperature": [1.0] * 3, "version": True},
+         "version must be an integer")
+_refuses("shape/object version", {"temperature": [1.0] * 3, "version": {"v": 2}},
+         "version must be an integer")
+_refuses("shape/scalar by_options",
+         {"temperature": [1.0] * 3, "temperature_by_options": 5}, "temperature_by_options")
+_refuses("shape/list by_options",
+         {"temperature": [1.0] * 3, "temperature_by_options": [["choice:2", 1.5]]},
+         "temperature_by_options")
+# and a numeric string version still parses, as it did before the check existed
+version_ok = type("Stub", (), {})()
+apply_calibration_payload(version_ok, {"temperature": [1.1, 1.2, 1.3], "version": "1"})
+check("shape/numeric string version still loads", version_ok.temperature, [1.1, 1.2, 1.3])
+
+
 # --------------------------------------------------------------- constructor wiring (no Hub download)
 init_src = inspect.getsource(Agent.__init__)
 check_true("init/calibration kwarg", "calibration: Optional[str] = None" in init_src)

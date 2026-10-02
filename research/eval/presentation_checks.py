@@ -24,7 +24,14 @@ Checks
     depend on the order picks the first slot in exactly 1/3 of the decisions. The
     metric is the observed first-slot rate.
 
-Both metrics read raw marker logits (before temperature) through
+``choice_slot0_identical``
+    The same control for ``choice`` (#602, part a). Choice keys must be unique, so the
+    options are numbered keys with one shared description (``1: a request``,
+    ``2: a request``, ...), the counterpart of score's ``level N:`` prefix. Gated at 4
+    options, with 3 reported beside it; same gate as the score control. It runs with
+    ``--lang`` (or when named in ``--checks``), so the default English report is unchanged.
+
+All metrics read raw marker logits (before temperature) through
 ``laya_eval.score_cases``, the same forward pass ``research/scripts/bench_local.py``
 uses. ``parity`` checks that path against ``Agent.system_one`` before anything is
 reported.
@@ -92,6 +99,9 @@ STATES = (
 INSTRUCTIONS = "How urgent is this request?"
 IDENTICAL_TEXTS = ("moderate", "a request")
 IDENTICAL_KS = (3, 4, 5)
+# Option counts for the choice control. The first is gated: 4, as in a 4-option routing
+# question; 3 is reported next to it.
+CHOICE_KS = (4, 3)
 LEVELS = ("Not urgent", "Soon", "Work is blocked")
 
 # Fixed states in other languages, for the multilingual checkpoint (#602). Each tuple follows
@@ -181,6 +191,16 @@ ScoreFn = Callable[[str, Sequence[Dict[str, Any]]], List[Any]]
 
 def identical_question(text: str, k: int, instructions: str = INSTRUCTIONS) -> Dict[str, Any]:
     return {"type": "score", "instructions": instructions, "criteria": [text] * k}
+
+
+def choice_identical_question(text: str, k: int, instructions: str = INSTRUCTIONS) -> Dict[str, Any]:
+    """Numbered keys with one shared description: `1: <text>`, `2: <text>`, ... (#602).
+
+    Choice keys must be unique, so the options cannot be identical outright; a numbered key is
+    the closest counterpart of the `level N:` prefix the score control carries.
+    """
+    return {"type": "choice", "instructions": instructions,
+            "criteria": {str(i + 1): text for i in range(k)}}
 
 
 def permuted_questions(levels: Sequence[str] = LEVELS,
@@ -274,16 +294,61 @@ def check_score_first_slot_permuted(score_fn: ScoreFn, states: Optional[Sequence
     }
 
 
+def check_choice_slot0_identical(score_fn: ScoreFn, states: Optional[Sequence[str]] = None,
+                                 lang: str = "en") -> Dict[str, Any]:
+    """The score control's counterpart for `choice` (#602, part a).
+
+    One choice question whose options are `1: <text>`, `2: <text>`, ...: they differ only by
+    position and the numbered key. The metric is slot 0's raw marker logit minus the mean over
+    the options, averaged over states and texts, at the first entry of CHOICE_KS; the others are
+    reported beside it and not gated. Same gate as the score control.
+    """
+    spec = LANGUAGES[lang]
+    states = spec["states"] if states is None else states
+    configs = [(text, k) for text in spec["identical_texts"] for k in CHOICE_KS]
+    questions = [choice_identical_question(text, k, spec["instructions"]) for text, k in configs]
+    by_k: Dict[int, List[float]] = {k: [] for k in CHOICE_KS}
+    per_config: Dict[str, List[float]] = {"%s/K=%d" % c: [] for c in configs}
+    for state in states:
+        slot0: Dict[int, List[float]] = {k: [] for k in CHOICE_KS}
+        for (text, k), z in zip(configs, score_fn(state, questions)):
+            z = [float(v) for v in z]
+            centred = z[0] - mean(z)
+            slot0[k].append(centred)
+            per_config["%s/K=%d" % (text, k)].append(centred)
+        for k in CHOICE_KS:
+            by_k[k].append(mean(slot0[k]))
+    gated = by_k[CHOICE_KS[0]]
+    metric = mean(gated)
+    lo, hi = leave_one_out(gated)
+    return {
+        "metric": round(metric, 4),
+        "threshold": SLOT0_MIN,
+        "passed": passes(metric, SLOT0_MIN),
+        "leave_one_out": [round(lo, 4), round(hi, 4)],
+        "k": CHOICE_KS[0],
+        "by_k": {str(k): round(mean(v), 4) for k, v in by_k.items()},
+        "per_state": [round(x, 4) for x in gated],
+        "per_config": {name: round(mean(v), 4) for name, v in per_config.items()},
+    }
+
+
 CHECKS: Dict[str, Callable[..., Dict[str, Any]]] = {
     "score_slot0_identical": check_score_slot0_identical,
     "score_first_slot_permuted": check_score_first_slot_permuted,
 }
+# Checks outside the default English run, so its report is unchanged. A `--lang` run adds them;
+# `--checks` can name them anywhere.
+CHOICE_CHECKS: Dict[str, Callable[..., Dict[str, Any]]] = {
+    "choice_slot0_identical": check_choice_slot0_identical,
+}
+ALL_CHECKS: Dict[str, Callable[..., Dict[str, Any]]] = {**CHECKS, **CHOICE_CHECKS}
 
 
 def run_checks(score_fn: ScoreFn, names: Optional[Sequence[str]] = None,
                states: Optional[Sequence[str]] = None, lang: str = "en") -> Dict[str, Any]:
     names = list(names or CHECKS)
-    results = {name: CHECKS[name](score_fn, states, lang) for name in names}
+    results = {name: ALL_CHECKS[name](score_fn, states, lang) for name in names}
     return {"checks": results, "passed": all(r["passed"] for r in results.values())}
 
 
@@ -350,6 +415,25 @@ def parity(agent, states: Optional[Sequence[str]] = None, lang: str = "en") -> f
     return worst
 
 
+def choice_parity(agent, states: Optional[Sequence[str]] = None, lang: str = "en") -> float:
+    """`parity` for the choice control's questions, keyed by option name as system_one reports them."""
+    from laya.common import QTYPES
+
+    spec = LANGUAGES[lang]
+    states = spec["states"] if states is None else states
+    questions = {"k%d" % k: choice_identical_question(spec["identical_texts"][0], k, spec["instructions"])
+                 for k in CHOICE_KS}
+    score = agent_score_fn(agent)
+    worst = 0.0
+    for state in states:
+        public = agent.system_one(state, questions)["answers"]
+        for (qid, q), z in zip(questions.items(), score(state, list(questions.values()))):
+            p = softmax_t(z, temperature_for(agent, QTYPES["choice"], len(z)))
+            got = [public[qid]["probabilities"][key] for key in q["criteria"]]
+            worst = max(worst, max(abs(a - float(b)) for a, b in zip(got, p)))
+    return worst
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="presentation-checks",
@@ -360,16 +444,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         help="checkpoint subfolder, e.g. multilingual")
     parser.add_argument("--device", default="cpu",
                         help="default cpu: fp32 and deterministic, which is what the thresholds were set on")
-    parser.add_argument("--checks", default=",".join(CHECKS),
-                        help="comma-separated subset of: %s" % ", ".join(CHECKS))
+    parser.add_argument("--checks", default=None,
+                        help="comma-separated subset of: %s. Default: %s; with --lang, all of them"
+                             % (", ".join(ALL_CHECKS), ", ".join(CHECKS)))
     parser.add_argument("--out", default=None, help="write the JSON report here")
     parser.add_argument("--lang", action="append", default=None,
                         help="fixed-state language: %s; repeat or comma-separate (--lang ja,ko). "
                              "Without it the run is English and the report is unchanged" % ", ".join(LANGUAGES))
     args = parser.parse_args(argv)
 
-    names = [x.strip() for x in args.checks.split(",") if x.strip()]
-    unknown = [x for x in names if x not in CHECKS]
+    if args.checks is None:
+        names = list(CHECKS) if args.lang is None else list(ALL_CHECKS)
+    else:
+        names = [x.strip() for x in args.checks.split(",") if x.strip()]
+    unknown = [x for x in names if x not in ALL_CHECKS]
     if unknown:
         print("unknown checks: %s" % ", ".join(unknown), file=sys.stderr)
         return 2
@@ -410,6 +498,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             spec = LANGUAGES[lang]
             routed = routes(spec["states"])
             lang_worst = parity(agent, lang=lang)
+            extra: Dict[str, Any] = {}
+            if any(name in CHOICE_CHECKS for name in names):
+                extra = {"parity_score_max_abs_diff": lang_worst,
+                         "parity_choice_max_abs_diff": choice_parity(agent, lang=lang),
+                         "choice_ks": list(CHOICE_KS)}
+                lang_worst = max(lang_worst, extra["parity_choice_max_abs_diff"])
             lang_report = run_checks(agent_score_fn(agent), names, lang=lang)
             by_lang[lang] = {
                 "config": {"states": len(spec["states"]), "instructions": spec["instructions"],
@@ -417,6 +511,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                            "identical_ks": list(IDENTICAL_KS), "levels": list(spec["levels"]),
                            "router_picks": routed},
                 "parity_max_abs_diff": lang_worst,
+                **extra,
                 **lang_report,
             }
             print("== %s: Router picks %s" % (lang, ", ".join(
@@ -448,6 +543,9 @@ def print_report(report: Dict[str, Any], worst: float) -> None:
         print("  %-26s %8.4f  >= %5.2f  %s   (leave-one-out %.4f .. %.4f)"
               % (name, r["metric"], r["threshold"], "PASS" if r["passed"] else "FAIL",
                  r["leave_one_out"][0], r["leave_one_out"][1]))
+        if "by_k" in r:
+            print("  %-26s gated at K=%d; by K: %s" % ("", r["k"], ", ".join(
+                "%s %.4f" % (k, v) for k, v in r["by_k"].items())))
     print("  parity vs Agent.system_one: max |dp| %.2e (tolerance %.0e)" % (worst, PARITY_TOL))
 
 

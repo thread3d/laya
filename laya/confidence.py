@@ -40,13 +40,21 @@ def _gate_confidence(answer: Dict[str, Any]) -> Optional[float]:
 
     `answer_confidence` first, falling back to the entropy `confidence` so an answer that carries
     only the older field is still gated rather than silently passed.
+
+    None means *no usable number*, never an unusable one. An earlier version returned whatever
+    `confidence` held when the validity test failed, so an answer with no `answer_confidence` and a
+    NaN `confidence` returned NaN. `flag_low_confidence` was indifferent to that -- `NaN < x` is
+    False and `None is not None` is also False, so it flagged either way -- but a caller that
+    *reads* the number could not tell "nothing to gate on" from "a gate ran on a NaN", and
+    :func:`apply_confidence_gate` reports those two differently on purpose.
     """
     conf = answer_confidence_value(answer)
-    if conf is None:
-        conf = answer.get("confidence")
-        if isinstance(conf, (int, float)) and not isinstance(conf, bool) and math.isfinite(conf):
-            return float(conf)
-    return conf
+    if conf is not None:
+        return conf
+    fallback = answer.get("confidence")
+    if isinstance(fallback, (int, float)) and not isinstance(fallback, bool) and math.isfinite(fallback):
+        return float(fallback)
+    return None
 
 
 def check_min_confidence(v: Any) -> float:
@@ -79,3 +87,67 @@ def flag_low_confidence(results: List[Dict[str, Any]], min_confidence: float) ->
             conf = _gate_confidence(a)
             if conf is not None and conf < min_confidence:
                 a["low_confidence"] = True
+
+
+#: The states :func:`apply_confidence_gate` reports, and the only ones. There is deliberately no
+#: "no gate was configured" member: when `min_confidence` is not set the function writes nothing at
+#: all, so a caller tells "this run had no gate" from "this answer cleared the gate" by whether
+#: `abstention` is present. A sentinel for the unconfigured case would put that same information
+#: back into the payload for every caller, which is the thing the gate is meant to avoid.
+GATE_PASSED = "passed"            # a gate ran and this answer's confidence cleared it
+GATE_ABSTAINED = "abstained"      # a gate ran and this answer's confidence fell below it
+GATE_UNEVALUATED = "unevaluated"  # a gate ran and this answer carried no usable confidence
+
+GATE_STATES = (GATE_PASSED, GATE_ABSTAINED, GATE_UNEVALUATED)
+
+
+def apply_confidence_gate(results: List[Dict[str, Any]], min_confidence: Optional[float] = None) -> None:
+    """Report the confidence gate's state, on the answers a gate was actually applied to.
+
+    A gate is a policy, and a policy whose application cannot be observed is not one. With
+    `min_confidence` set, this writes ``abstention`` -- one of :data:`GATE_STATES` -- onto every
+    answer, plus ``abstention_threshold``, so a caller can answer three questions it otherwise
+    cannot:
+
+    * what fraction of decisions abstained, rather than inferring it from whether
+      ``low_confidence`` happened to be set;
+    * how many answers the gate could not decide on, which a boolean cannot express at all;
+    * what threshold produced these results -- ``flag_low_confidence`` consumes the threshold and
+      drops it, so without this a batch run with per-class thresholds cannot be re-split.
+
+    ``GATE_UNEVALUATED`` is the case a boolean cannot express: the gate ran and the answer carried
+    no usable confidence, so the gate could not decide. Reporting that as a pass is the same lie
+    as reporting it as a flag.
+
+    **With `min_confidence` unset, this writes nothing.** No ``abstention``, no
+    ``abstention_threshold``, no flag. That is the whole contract: an ungated call returns exactly
+    the payload it returned before, and the presence of the field -- not a fourth value read out
+    of it -- is what tells a caller the gate ran. Call it unconditionally, once per call, in place
+    of an `if min_confidence is not None:` guard: that guard is what leaves a path reporting
+    nothing at all, which is the state this function exists to distinguish.
+
+    The flag itself stays :func:`flag_low_confidence`'s -- this delegates rather than
+    re-implementing the rule, so the boolean and the reported state cannot drift apart.
+
+    A `min_confidence` of exactly ``0.0`` *was* set, so states are reported, and
+    :func:`flag_low_confidence` treats ``0.0`` as a no-op because nothing can fall below it. Every
+    answer carrying a usable confidence therefore reads ``passed``, and the threshold echo is what
+    distinguishes that from a real pass at a real threshold.
+    """
+    if min_confidence is None:
+        return
+    flag_low_confidence(results, min_confidence)
+    for res in results:
+        answers = res.get("answers") if isinstance(res, dict) else None
+        if not isinstance(answers, dict):
+            continue
+        for a in answers.values():
+            if not isinstance(a, dict):
+                continue
+            if a.get("low_confidence"):
+                a["abstention"] = GATE_ABSTAINED
+            elif _gate_confidence(a) is None:
+                a["abstention"] = GATE_UNEVALUATED
+            else:
+                a["abstention"] = GATE_PASSED
+            a["abstention_threshold"] = float(min_confidence)

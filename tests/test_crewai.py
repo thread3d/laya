@@ -298,7 +298,8 @@ from laya.integrations import langchain as langchain_module
 from laya.integrations import llamaindex as llamaindex_module
 from laya.router import Router
 
-CONTROLS = tuple(_controls.PREDICT_CONTROLS) + tuple(_controls.HOOK_CONTROLS)
+CONTROLS = (tuple(_controls.PREDICT_CONTROLS) + tuple(_controls.DECISION_CONTROLS)
+            + tuple(_controls.HOOK_CONTROLS))
 
 
 def _params(fn):
@@ -308,6 +309,8 @@ def _params(fn):
 # The shared tuples name the arguments the shared builders accept, in both directions.
 check("controls/budget tuple names budget_kwargs",
       set(_params(_controls.budget_kwargs)), set(_controls.PREDICT_CONTROLS))
+check("controls/decision tuple names decision_kwargs",
+      set(_params(_controls.decision_kwargs)), set(_controls.DECISION_CONTROLS))
 check("controls/hook tuple names hook_kwargs",
       set(_params(_controls.hook_kwargs)), set(_controls.HOOK_CONTROLS))
 
@@ -354,7 +357,8 @@ class RecordingAgent:
         }
 
 
-ALL_CONTROLS = {"max_len": 1024, "head_max_len": 512, "hooks": ["H"], "on_predict_start": "S",
+ALL_CONTROLS = {"max_len": 1024, "head_max_len": 512, "lang": "fr", "min_confidence": 0.4,
+                "hooks": ["H"], "on_predict_start": "S",
                 "on_predict_end": "E", "hooks_raise": True, "hooks_timeout": 0.5}
 
 
@@ -384,13 +388,16 @@ def guard_call(**controls):
 
 for label, call in (("router", crew_call), ("guard", guard_call)):
     check("controls/%s with nothing set sends nothing" % label, call(), {})
-    check("controls/%s forwards all seven" % label, call(**ALL_CONTROLS), ALL_CONTROLS)
+    check("controls/%s forwards every control" % label, call(**ALL_CONTROLS), ALL_CONTROLS)
     check("controls/%s forwards one budget alone" % label, call(head_max_len=256),
           {"head_max_len": 256})
+    check("controls/%s forwards lang alone" % label, call(lang="fr"), {"lang": "fr"})
+    check("controls/%s forwards min_confidence alone" % label, call(min_confidence=0.4),
+          {"min_confidence": 0.4})
     # 0 and [] are decisions, not absences: truthiness tests here would drop them.
     check("controls/%s keeps falsy values" % label,
-          call(head_max_len=0, hooks=[], hooks_raise=False),
-          {"head_max_len": 0, "hooks": [], "hooks_raise": False})
+          call(head_max_len=0, hooks=[], hooks_raise=False, min_confidence=0.0),
+          {"head_max_len": 0, "hooks": [], "hooks_raise": False, "min_confidence": 0.0})
     check("controls/%s alongside model" % label,
           call(model="laya-multilingual", max_len=1024),
           {"model": "laya-multilingual", "max_len": 1024})
@@ -426,6 +433,16 @@ check("controls/remote body omits unset budgets",
       [k for k in remote_body({}) if k in _controls.PREDICT_CONTROLS], [])
 check("controls/remote body keeps a zero",
       remote_body({"head_max_len": 0}).get("head_max_len"), 0)
+# `lang` / `min_confidence` are laya-serve `BODY_CONTROLS` too, so the same override reaches the
+# remote node -- and an unset one stays out of the body rather than shadowing the deployment.
+check("controls/remote body carries the decision controls",
+      {k: v for k, v in remote_body({"lang": "es", "min_confidence": 0.3}).items()
+       if k in _controls.DECISION_CONTROLS},
+      {"lang": "es", "min_confidence": 0.3})
+check("controls/remote body omits unset decision controls",
+      [k for k in remote_body({}) if k in _controls.DECISION_CONTROLS], [])
+check("controls/remote body keeps min_confidence=0.0",
+      remote_body({"min_confidence": 0.0}).get("min_confidence"), 0.0)
 
 # A hook is a Python callable that runs inside `predict`; a serve node cannot receive one. Saying
 # so beats reporting success after never calling it.
@@ -450,6 +467,67 @@ except ValueError as exc:
     check_true("controls/guard remote refuses hooks", "hooks" in str(exc))
 except Exception as exc:
     check_true("controls/guard remote refuses hooks", False, type(exc).__name__)
+
+
+# --------------------------------------------------------------- Confidence source
+# The threshold gates on core's own gate number (`_gate_confidence`): `answer_confidence` first,
+# falling back to the entropy `confidence` so an answer that carries only the older field is
+# still gated rather than silently passed (fail-closed). The entropy-only checks below are the
+# ones that regress-protect that fallback: a "read `answer_confidence` or treat as fully
+# confident" rule -- which is what `answer_confidence_value` returns -- would let a 0.10 entropy
+# answer through a 0.80 gate, and those checks would go RED.
+
+
+class DisagreeingAgent(MockLayaAgent):
+    """Answers whose two confidence fields disagree, on purpose."""
+
+
+def _disagreeing_router(**kwargs):
+    def response(state, questions):
+        return {"model": "mock-crew-router",
+                "answers": {"delegation": {"choice": "agent_0", "confidence": 0.95,
+                                           "answer_confidence": 0.4}}}
+    return LayaCrewRouter(agent=DisagreeingAgent(response), **kwargs)
+
+
+# Below the calibrated threshold but above the entropy one: gates on the calibrated number.
+low = _disagreeing_router(confidence_threshold=0.80, fallback_agent_index=1)
+decided = low.route("anything", agents)
+check("gate/reads calibrated not entropy", decided.agent_index, 1)
+try:
+    _disagreeing_router(confidence_threshold=0.80, raise_on_low_confidence=True).route("anything",
+                                                                                       agents)
+    check_true("gate/raises on the calibrated number", False, "no error raised")
+except LayaLowConfidenceError as err:
+    check("gate/error carries the calibrated number", err.confidence, 0.4)
+
+
+# Fail-closed: an answer carrying ONLY the entropy field, below the threshold, is still gated.
+# This is the case a "calibrated number or nothing" reading gets wrong -- it would see no
+# `answer_confidence`, treat the answer as fully confident, and let a 0.10 answer past a 0.80
+# gate. Above the threshold the same shape passes.
+def _entropy_router(conf, **kwargs):
+    def response(state, questions):
+        return {"model": "mock-crew-router",
+                "answers": {"delegation": {"choice": "agent_0", "confidence": conf}}}
+    return LayaCrewRouter(agent=DisagreeingAgent(response), **kwargs)
+
+
+ent_low = _entropy_router(0.10, confidence_threshold=0.80, fallback_agent_index=1).route(
+    "anything", agents)
+check("gate/entropy-only below threshold is still gated (fail-closed)", ent_low.agent_index, 1)
+ent_high = _entropy_router(0.95, confidence_threshold=0.80, fallback_agent_index=1).route(
+    "anything", agents)
+check("gate/entropy-only above threshold passes", ent_high.agent_index, 0)
+
+# An answer with no usable confidence keeps the old behaviour: treated as fully confident.
+def _silent(state, questions):
+    return {"model": "mock-crew-router", "answers": {"delegation": {"choice": "agent_2"}}}
+
+
+kept = LayaCrewRouter(agent=DisagreeingAgent(_silent), confidence_threshold=0.80).route(
+    "anything", agents)
+check("gate/missing confidence still passes", kept.agent_index, 2)
 
 
 # --------------------------------------------------------------- Results Summary

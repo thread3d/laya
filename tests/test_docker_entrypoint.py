@@ -114,6 +114,36 @@ class EntrypointTests(unittest.TestCase):
                 self.assertTrue(self.report(result, name)["matched"], result.stdout)
                 self.assertNotIn("synthetic-file-value", result.stdout + result.stderr)
 
+    def test_a_utf8_bom_is_not_part_of_the_secret(self):
+        """A Windows editor's byte-order mark is file metadata, not the token's first character.
+
+        PowerShell 5.1's `utf8` encoding and Notepad both write a UTF-8 BOM, and this
+        entrypoint's audience includes the Windows path it runs a child on. Read as plain
+        utf-8 the mark becomes U+FEFF, which `.strip()` does not remove (it is not
+        whitespace), so the loaded variable carried one leading character no consumer --
+        the Hub for `HF_TOKEN`, `laya-serve`'s bearer check for `LAYA_API_KEY` -- accepts.
+        """
+        for name in SECRET_NAMES:
+            with self.subTest(secret=name):
+                with tempfile.TemporaryDirectory() as directory:
+                    secret = Path(directory) / "token"
+                    secret.write_bytes(b"\xef\xbb\xbfsynthetic-file-value\n")
+                    result = self.invoke(name, {name + "_FILE": str(secret)}, "synthetic-file-value")
+                self.assertTrue(self.report(result, name)["matched"], result.stdout)
+                self.assertNotIn("synthetic-file-value", result.stdout + result.stderr)
+
+    def test_a_file_that_is_only_a_bom_is_empty(self):
+        """Stripping the BOM leaves nothing, and nothing is the empty-secret refusal, not a load."""
+        for name in SECRET_NAMES:
+            with self.subTest(secret=name):
+                with tempfile.TemporaryDirectory() as directory:
+                    secret = Path(directory) / "token"
+                    secret.write_bytes(b"\xef\xbb\xbf")
+                    result = self.invoke(name, {name + "_FILE": str(secret)})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertIn(name + "_FILE", result.stderr)
+
     def test_file_variable_is_removed_before_the_command_runs(self):
         """What "and the `_FILE` variable is removed before the server execs" promises, per name."""
         for name in SECRET_NAMES:

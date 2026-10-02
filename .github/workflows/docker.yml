@@ -59,6 +59,12 @@ jobs:
           docker compose -f compose.yaml -f compose.cuda.yaml config --quiet
           docker compose -f compose.yaml -f compose.http.yaml config --quiet
           docker compose -f compose.yaml -f compose.http.yaml -f compose.cuda.yaml config --quiet
+          # ModelScope prefetch, alone and stacked on top of every other combination a
+          # deployment reaches for.
+          docker compose -f compose.yaml -f compose.modelscope.yaml config --quiet
+          docker compose -f compose.yaml -f compose.http.yaml -f compose.modelscope.yaml config --quiet
+          docker compose -f compose.yaml -f compose.http.yaml -f compose.cuda.yaml -f compose.modelscope.yaml config --quiet
+          docker compose -f compose.yaml -f compose.http.yaml -f compose.spark.yaml -f compose.modelscope.yaml config --quiet
           docker build --pull -t laya:smoke .
       - name: Check installed runtime and fresh cache permissions
         run: |

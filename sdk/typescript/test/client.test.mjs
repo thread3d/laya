@@ -36,6 +36,24 @@ test('systemone request preserves Unicode/JSON, auth, model override and proxy p
   assert.equal(calls, 1);
 });
 
+test('health accepts the liveness-only answer a locked-down server gives an anonymous probe', async () => {
+  // A server with LAYA_API_KEY set answers an unauthenticated /health with {status: 'ok'} and
+  // withholds loaded/device, because those name resident checkpoints, their revision SHAs and
+  // the host device state. That is a healthy response and must not be a LayaResponseError.
+  const client = new Laya({ fetch: async () => json({ status: 'ok' }) });
+  assert.deepEqual(await client.health(), { status: 'ok' });
+
+  // the detail is still validated whenever the server does send it
+  const bad = new Laya({ fetch: async () => json({ status: 'ok', loaded: ['nope'], device: 'cpu' }) });
+  await assert.rejects(bad.health(), LayaResponseError);
+  const badDevice = new Laya({ fetch: async () => json({ status: 'ok', device: 7 }) });
+  await assert.rejects(badDevice.health(), LayaResponseError);
+  // and a missing or wrong status is still a failure
+  for (const payload of [{}, { status: 'degraded' }]) {
+    await assert.rejects(new Laya({ fetch: async () => json(payload) }).health(), LayaResponseError);
+  }
+});
+
 test('Laya health uses GET and accepts the existing server response', async () => {
   const calls = [];
   const client = new Laya({ fetch: async (url, init) => {
@@ -86,12 +104,38 @@ test('client model default and prediction overrides select local checkpoints', a
   assert.deepEqual(models, ['english', 'multilingual']);
 });
 
-test('unsupported routing options and invalid models fail before sending a request', async () => {
+test('invalid model and control values fail before sending a request', async () => {
   const client = new Laya({ fetch: async () => { assert.fail('must not send'); } });
-  for (const options of [{ task: 'typed' }, { lang: 'hi' }, { model: '' }, { model: 1 }]) {
-    await assert.rejects(client.predict('hello', questions, options), LayaValidationError);
+  for (const options of [
+    { model: '' }, { model: 1 },
+    { task: '' }, { task: 12 },
+    { lang: 12 }, { lang: '   ' }, { langGuess: 42 },
+    { maxLen: 0 }, { maxLen: 2.5 }, { headMaxLen: -1 },
+    { minConfidence: -0.1 }, { minConfidence: 1.5 }, { minConfidence: NaN },
+  ]) {
+    await assert.rejects(client.predict('hello', questions, options), LayaValidationError, JSON.stringify(options));
   }
   for (const model of ['', '  ', 1]) assert.throws(() => new Laya({ model }), LayaValidationError);
+});
+
+test('per-request controls reach the wire under their server names', async () => {
+  const client = new Laya({ fetch: async (_url, init) => {
+    assert.deepEqual(JSON.parse(init.body), {
+      state: 'hello',
+      questions,
+      task: 'typed',
+      lang: 'de',
+      lang_guess: 'fr',
+      max_len: 2048,
+      head_max_len: 256,
+      min_confidence: 0.8,
+    });
+    return json(prediction);
+  } });
+  await client.predict('hello', questions, {
+    task: 'typed', lang: 'de', langGuess: 'fr',
+    maxLen: 2048, headMaxLen: 256, minConfidence: 0.8,
+  });
 });
 
 test('bad JavaScript inputs fail before fetch without lossy serialization', async () => {

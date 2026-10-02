@@ -17,7 +17,7 @@ import math
 import sys
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from . import evals
+from . import _eval_policy, evals
 from .evals import EvalError
 
 
@@ -27,15 +27,22 @@ class RouterRunner:
     def __init__(self, router: Any):
         self.router = router
 
-    def predict(self, state: Any, questions: Dict[str, Any], model: Optional[str] = None) -> Dict[str, Any]:
+    def predict(self, state: Any, questions: Dict[str, Any], model: Optional[str] = None,
+                min_confidence: Optional[float] = None) -> Dict[str, Any]:
+        if min_confidence is not None:
+            return self.router.predict(state, questions, model=model,
+                                       min_confidence=min_confidence)
         return self.router.predict(state, questions, model=model)
 
     def predict_batch(self, states: Sequence[Any], questions: Dict[str, Any],
                       model: Optional[str] = None, batch_size: Optional[int] = None,
-                      sort_by_length: bool = False) -> List[Dict[str, Any]]:
+                      sort_by_length: bool = False,
+                      min_confidence: Optional[float] = None) -> List[Dict[str, Any]]:
         requests = [{"state": state, "questions": questions, "model": model} for state in states]
-        return self.router.predict_batch(requests, batch_size=batch_size,
-                                         sort_by_length=sort_by_length)
+        kwargs = {"batch_size": batch_size, "sort_by_length": sort_by_length}
+        if min_confidence is not None:
+            kwargs["min_confidence"] = min_confidence
+        return self.router.predict_batch(requests, **kwargs)
 
 
 class OnnxRunner:
@@ -56,23 +63,30 @@ class OnnxRunner:
                 "the ONNX runner serves only %r, but this example asks for %r; "
                 "run them separately or drop --onnx" % (self.agent.model_id, model))
 
-    def predict(self, state: Any, questions: Dict[str, Any], model: Optional[str] = None) -> Dict[str, Any]:
+    def predict(self, state: Any, questions: Dict[str, Any], model: Optional[str] = None,
+                min_confidence: Optional[float] = None) -> Dict[str, Any]:
         self._check_model(model)
+        if min_confidence is not None:
+            return self.agent.predict(state, questions, min_confidence=min_confidence)
         return self.agent.predict(state, questions)
 
     def predict_batch(self, states: Sequence[Any], questions: Dict[str, Any],
                       model: Optional[str] = None, batch_size: Optional[int] = None,
-                      sort_by_length: bool = False) -> List[Dict[str, Any]]:
+                      sort_by_length: bool = False,
+                      min_confidence: Optional[float] = None) -> List[Dict[str, Any]]:
         self._check_model(model)
         agent_batch = getattr(self.agent, "predict_batch", None)
+        extra = {}
+        if min_confidence is not None:
+            extra["min_confidence"] = min_confidence
         if agent_batch is not None:
             if sort_by_length:
                 # Asked for, so it has to reach the agent's own grouping. The per-state fallback
                 # below cannot honour it: there is no batch to reorder.
                 return agent_batch(list(states), questions, batch_size=batch_size,
-                                   sort_by_length=True)
-            return agent_batch(list(states), questions, batch_size=batch_size)
-        return [self.agent.predict(state, questions) for state in states]
+                                   sort_by_length=True, **extra)
+            return agent_batch(list(states), questions, batch_size=batch_size, **extra)
+        return [self.agent.predict(state, questions, **extra) for state in states]
 
 
 def _parse_pairs(pairs: Optional[Sequence[str]]) -> Dict[str, float]:
@@ -135,16 +149,22 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     validate = sub.add_parser("validate", help="check a dataset file without running a model")
-    validate.add_argument("dataset")
+    validate.add_argument("dataset",
+                          help="JSONL file to check; blank lines and lines starting with '#' are "
+                               "ignored, and a file that leaves no examples is an error")
 
     run = sub.add_parser("run", help="evaluate a dataset and apply thresholds")
-    run.add_argument("dataset")
+    run.add_argument("dataset",
+                     help="labelled JSONL file; each row carries a state, the questions to answer "
+                          "on it, and the expected answer per question id")
     run.add_argument("--model", help="force a checkpoint instead of auto-routing")
     run.add_argument("--device", help="torch device, e.g. cpu or cuda")
     run.add_argument("--onnx", metavar="PATH",
                      help="evaluate an ONNX export through ONNXAgent instead of the torch Router; "
                           "--model then names the checkpoint directory or Hub id the export came "
                           "from (default convaiinnovations/laya)")
+    run.add_argument("--calibration", metavar="PATH",
+                     help="path to a JSON calibration map for ONNXAgent (requires --onnx)")
     run.add_argument("--revision", action="append", metavar="SHA | NAME=SHA",
                      help="pin the checkpoint commit: a bare SHA applies to every checkpoint this "
                           "run loads, NAME=SHA pins one (repeatable). Unpinned runs fetch the "
@@ -155,7 +175,17 @@ def _build_parser() -> argparse.ArgumentParser:
                      help="with --batch-size N where 1 < N < the run, group similarly sized "
                           "examples into the same forward pass so each pads to a shorter maximum; "
                           "scores the same answers, in the same order")
-    run.add_argument("--on-error", choices=("fail", "skip"), default="fail")
+    run.add_argument("--min-confidence", dest="min_confidence", type=float, metavar="THRESHOLD",
+                     help="abstention threshold on `answer_confidence` (#361): answers below it "
+                          "come back abstained, so the run scores the policy at that threshold "
+                          "rather than the raw argmax. Accepted range is core's -- "
+                          "`laya.confidence.check_min_confidence` -- not a copy of it here, and a "
+                          "runner that predates the gate is refused with a named error rather "
+                          "than silently scored without it")
+    run.add_argument("--on-error", choices=("fail", "skip"), default="fail",
+                     help="'fail' (the default) stops the run when a runner call raises; 'skip' "
+                          "lists every row it could not score under the report's config.errored "
+                          "and reports the metrics for the rows that returned")
     run.add_argument("--baseline", help="a baseline report JSON to compare against")
     run.add_argument("--tolerance", action="append", metavar="METRIC=VALUE",
                      help="allowed absolute drift from the baseline; repeatable")
@@ -170,14 +200,20 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument("--max", action="append", metavar="METRIC=VALUE", help="maximum for any metric")
     run.add_argument("--slice", action="append", choices=("language", "model", "qid", "tag"),
                      help="also report this slice dimension; repeatable")
+    run.add_argument("--gate-policy", metavar="FILE",
+                     help="apply opt-in per-slice quality rules from a JSON policy")
     run.add_argument("--json", dest="json_out", help="write the full report JSON here")
     run.add_argument("--markdown", dest="markdown_out", help="write a Markdown summary here")
 
     compare = sub.add_parser("compare", help="compare a report JSON against a baseline")
-    compare.add_argument("report")
-    compare.add_argument("--baseline", required=True)
+    compare.add_argument("report", help="a report JSON written by `laya-evals run --json`")
+    compare.add_argument("--baseline", required=True,
+                         help="the reviewed report JSON this one is checked against; its dataset "
+                              "and question fingerprints must match")
     compare.add_argument("--tolerance", action="append", metavar="METRIC=VALUE",
                          help="allowed absolute drift; repeatable")
+    compare.add_argument("--gate-policy", metavar="FILE",
+                         help="apply opt-in per-slice quality rules from a JSON policy")
 
     return parser
 
@@ -256,6 +292,10 @@ def _warn_no_value(extra: Sequence[evals.Evaluator], report: evals.EvalReport) -
 
 def _cmd_run(args) -> int:
     dataset = evals.Dataset.from_jsonl(args.dataset)
+    policy = _eval_policy.load_policy(args.gate_policy) if args.gate_policy else None
+    if policy and _eval_policy.needs_baseline(policy) and not args.baseline:
+        raise EvalError("--gate-policy has a relative rule; pass --baseline")
+    baseline = _load_report(args.baseline) if args.baseline and policy else None
     if args.model:
         for example in dataset.examples:      # --model is authoritative over per-row model
             example.model = args.model
@@ -270,9 +310,11 @@ def _cmd_run(args) -> int:
         if revisions:
             raise EvalError("--revision NAME=SHA needs the Router; with --onnx pass one bare SHA")
         agent = ONNXAgent(args.model or "convaiinnovations/laya", onnx_path=args.onnx,
-                          revision=revision)
+                          revision=revision, calibration=args.calibration)
         runner: Any = OnnxRunner(agent)
     else:
+        if args.calibration:
+            raise EvalError("--calibration requires --onnx; for the torch Router calibrate via fit_temperatures")
         import laya
         try:
             pins: Dict[str, Any] = {}
@@ -295,13 +337,18 @@ def _cmd_run(args) -> int:
               # refetched under the same name, and a reviewer comparing two reports needs the
               # report -- not a file mtime -- to say so.
               "dataset_sha256": evals.file_fingerprint(args.dataset)}
+    if policy:
+        config["gate_policy"] = policy
     if args.onnx:
         config["onnx"] = args.onnx
+        if args.calibration:
+            config["calibration"] = args.calibration
     if extra:
         config["score_within"] = [evaluator.tolerance for evaluator in extra]
     report = evals.evaluate(runner, dataset, evaluators=evals.default_evaluators() + extra,
                             batch_size=args.batch_size, on_error=args.on_error, config=config,
-                            sort_by_length=args.sort_by_length)
+                            sort_by_length=args.sort_by_length,
+                            min_confidence=args.min_confidence)
     # Which commit answered belongs in the artifact a baseline is, and it can only be read after
     # the run: `preload=False` means no checkpoint is resident before the first row.
     # `loaded_revisions` reports the commit each resident agent came from -- the pin when there is
@@ -328,7 +375,8 @@ def _cmd_run(args) -> int:
 
     failures = _check_thresholds(report.overall, mins, maxs)
     if args.baseline:
-        baseline = _load_report(args.baseline)
+        if baseline is None:
+            baseline = _load_report(args.baseline)
         ok, deltas = report.compare(baseline, tolerances)
         _print_deltas(deltas)
         if not ok:
@@ -338,6 +386,8 @@ def _cmd_run(args) -> int:
         refusal = _comparability_failure(report, baseline)
         if refusal:
             failures.append(refusal)
+    if policy:
+        failures.extend(_eval_policy.check_policy(report, policy, baseline))
 
     for name in sorted(report.overall):
         print("%-18s %.4f" % (name, report.overall[name]))
@@ -368,10 +418,14 @@ def _cmd_compare(args) -> int:
     # that disagreed with its baseline passed the gate while the same disagreement stated in
     # `config` was refused. The baseline has always gone through `_identity_of`; this makes the
     # candidate side symmetric.
+    policy = _eval_policy.load_policy(args.gate_policy) if args.gate_policy else None
     document = _load_report(args.report)
     report = evals.EvalReport(
         config=evals._identity_of(document),
         **{k: v for k, v in document.items() if k in ("overall", "slices", "cases")})
+    if policy and report.config.get("gate_policy") not in (None, policy):
+        print("laya-evals: warning: --gate-policy differs from the report's recorded gate_policy; "
+              "this verdict uses --gate-policy", file=sys.stderr)
     baseline = _load_report(args.baseline)
     ok, deltas = report.compare(baseline, _parse_pairs(args.tolerance))
     _print_deltas(deltas)
@@ -379,9 +433,12 @@ def _cmd_compare(args) -> int:
     # comparability refusal has to apply here: a saved report that cannot say which experiment
     # it came from must not pass a gate either.
     refusal = _comparability_failure(report, baseline)
-    if refusal:
-        print("FAIL: " + refusal, file=sys.stderr)
-    return 0 if ok and not refusal else 1
+    failures = [refusal] if refusal else []
+    if policy:
+        failures.extend(_eval_policy.check_policy(report, policy, baseline))
+    for failure in failures:
+        print("FAIL: " + failure, file=sys.stderr)
+    return 0 if ok and not failures else 1
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:

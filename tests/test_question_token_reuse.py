@@ -88,10 +88,16 @@ class QuestionTokenReuse(unittest.TestCase):
     def test_predict_long_uses_the_same_cache_for_all_windows(self):
         tok = Tokenizer()
         agent = agent_with(tok)
-        agent.predict_long("x" * 1000, QUESTIONS, window=80, stride=50, batch_size=3)
+        scanned = agent.predict_long("x" * 1000, QUESTIONS, window=80, stride=50, batch_size=3)
         head = "choice question: " + QUESTION["ins"]
-        self.assertEqual(sum(text == head for _, text, _ in tok.calls), 1)
-        self.assertEqual(sum(text == " billing: charges" for _, text, _ in tok.calls), 1)
+        # Twice, not once per window: predict_long assembles each question's head once on its own
+        # to measure the room the question leaves for the state -- the cap on the window -- and the
+        # scan that follows then shares one cache across every window it scores. The point of this
+        # test is the second number: the head is encoded a fixed number of times, not once per
+        # window, which the assertion below states as such.
+        self.assertEqual(sum(text == head for _, text, _ in tok.calls), 2)
+        self.assertEqual(sum(text == " billing: charges" for _, text, _ in tok.calls), 2)
+        self.assertGreater(scanned["usage"]["windows"], 2)
         self.assertGreater(len(agent.batches), 1)
 
     def test_sequence_parity_for_rendering_order_and_budgets(self):

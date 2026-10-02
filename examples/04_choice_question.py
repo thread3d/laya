@@ -10,7 +10,8 @@ banner("04", "Routing a support email (choice)", """
     A `choice` question gives the model a fixed set of labels. `criteria` is a
     label -> description map: each key becomes one answer option and its description
     tells the model what that label means. The answer then carries the chosen label, a
-    probability for every label, and a calibrated confidence.
+    probability for every label, and two confidence numbers: `answer_confidence` (max(p),
+    the number to gate on -- example 18 routes at a threshold on it) and `confidence`.
 
     `confidence` is not the top probability: it is the normalised entropy of the whole
     distribution, 1 - H(p) / log(k), so it rewards one option clearly beating the rest.
@@ -47,6 +48,7 @@ for label, state in CASES:
     answer = agent.predict(state, DEPARTMENT)["answers"]["department"]
     print("   chosen label : %s" % answer["choice"])
     print("   confidence   : %.3f" % answer["confidence"])
+    print("   answer_conf  : %.3f" % answer["answer_confidence"])
     print("   all label probabilities:")
     for option, prob in answer["probabilities"].items():
         bar = "#" * int(round(prob * 32))

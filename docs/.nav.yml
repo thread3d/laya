@@ -3,6 +3,7 @@
 nav:
   - index.md
   - Guides:
+      - use-cases.md
       - structured.md
       - hooks
       - langchain.md

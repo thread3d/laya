@@ -31,7 +31,7 @@ from typing import Callable, Dict, List, Optional, Sequence
 
 import torch
 
-from .common import build_model, proper_reward
+from .common import build_model, proper_reward, TEMP_MIN, TEMP_MAX
 
 __all__ = [
     "available_devices",
@@ -162,7 +162,9 @@ def fit_temperature(sel: List) -> float:
         return loss
 
     opt.step(closure)
-    return float(torch.clamp(log_t.exp(), 0.1, 10.0).item())
+    # Clamp to the runtime's own bounds: fitting outside TEMP_MIN..TEMP_MAX produces a value the
+    # inference path silently clamps anyway, so the exported temperature would not be the fit.
+    return float(torch.clamp(log_t.exp(), TEMP_MIN, TEMP_MAX).item())
 
 
 # ------------------------------------------------------------------ the loop

@@ -8,7 +8,7 @@ Laya provides fast, non-autoregressive decision components for **LangChain** and
 * **`LayaEvaluator`**: Rubric-based output grading and hallucination evaluation.
 * **`LayaDecision`**: Schema-driven decisions -- a JSON schema or pydantic model in, schema-shaped values out.
 
-Every node also takes core's five per-call prediction-hook arguments (`hooks`, `on_predict_start`, `on_predict_end`, `hooks_raise`, `hooks_timeout`).
+Every node also takes core's per-call decision controls -- the two token budgets (`max_len`, `head_max_len`), the language and abstention controls (`lang`, `min_confidence`), and the five prediction-hook arguments (`hooks`, `on_predict_start`, `on_predict_end`, `hooks_raise`, `hooks_timeout`).
 
 Supports both **local in-process inference** (`Agent` or `Router`) and **remote HTTP inference** against your own `laya-serve` without requiring PyTorch on edge clients.
 
@@ -263,6 +263,38 @@ landed between -3.9% and +2.1%, so treat the overhead as unmeasurable rather tha
 silicon that loop can overlap forwards on a thread pool, and concurrent MPS forwards abort the
 process; pass `max_concurrency=1` there, or call `invoke()` in a loop.
 
+### The per-call controls
+
+The node plans the questions itself, but the call it makes is an ordinary one, so it takes the
+same seven per-call arguments as the other four nodes -- the two token budgets and the five
+prediction hooks:
+
+```python
+decide = LayaDecision(
+    Ticket,
+    max_len=8192,        # the document is longer than the checkpoint's state window
+    head_max_len=512,    # the enum has more members than the default option budget fits
+    hooks=[Memo()],      # the cache pair from section 8, on a schema decision
+    hooks_timeout=0.25,
+)
+```
+
+`head_max_len` is the one worth knowing here, because a schema writes the option list for you:
+an enum with many members is a wide option prompt, and the trimming an over-wide prompt gets is
+silent -- several members can reach the model as the same text, which is a wrong answer rather
+than an error. See [Widening the Token Budget](#7-widening-the-token-budget-for-many-options) for
+the measured collapse and the recovery.
+
+Leave an argument out and it is not sent at all, so the decision keeps whatever the runner was
+built with. `head_max_len=0` and `hooks=[]` are decisions rather than absences and are forwarded
+as given.
+
+**Remote mode forwards the budgets and refuses the hooks.** A `LayaDecision` with a `base_url`
+puts `max_len` / `head_max_len` in the request body like its siblings, under the same
+`LAYA_MAX_TOKEN_BUDGET` ceiling. A hook is a Python callable and cannot cross HTTP, so passing one
+to a remote node raises at the call site instead of quietly deciding without the cache or the
+audit line.
+
 ---
 
 ## 6. Batching Many Inputs
@@ -343,13 +375,35 @@ the labels already fit the default budget and four answers move. The docs do not
 the wider collation changes those four -- it is enough that it can. That is why the two arguments
 are opt-in per node: set the knob to fix a question that does not fit, not to sharpen one that does.
 
-The same override applies to `LayaGuardrail`, `LayaTriage` and `LayaEvaluator`.
+The same override applies to `LayaGuardrail`, `LayaTriage`, `LayaEvaluator` and `LayaDecision`.
 It is per node, so a chain can give its wide routing step room while every other node keeps the
 checkpoint's defaults, which is the point of not raising `agent.cfg["head_max_len"]` process-wide.
 
 **Remote mode forwards it.** A node with a `base_url` sends `max_len` / `head_max_len` in the
 request body, and `laya-serve` applies them up to its `LAYA_MAX_TOKEN_BUDGET` ceiling (8192 by
 default); a larger value comes back as a 422.
+
+### Language and abstention
+
+Every runnable also takes `lang` and `min_confidence`, the two per-request controls `Agent.predict`
+and `Router.predict` both read and `laya-serve` both accepts in the body. `lang` pins the language
+the state is routed and answered in -- select the answering checkpoint's per-language calibration
+rather than relying on built-in detection -- and `min_confidence` is core's abstention gate: a
+decision under it comes back as an abstention instead of a forced choice. Both are forwarded on the
+local and the remote path, and an unset one is omitted rather than sent as `None` so it cannot
+shadow a checkpoint's own default. `min_confidence=0.0` and `lang=""` are real values, not absences,
+and are forwarded as given.
+
+```python
+router = LayaRouter(
+    criteria={"billing": "invoices", "tech": "bugs"},
+    lang="es",                        # route and answer in Spanish
+    min_confidence=0.3,               # abstain below a 0.3 calibrated confidence
+)
+```
+
+Unlike `task` and `lang_guess` -- Router-only routing keywords a direct `Agent.predict` rejects --
+these two are safe on every runner and every deployment.
 
 ---
 

@@ -60,6 +60,9 @@ jobs:
       # This job installs nothing, so running the audit here is what proves it needs
       # nothing but the standard library. Its test suite imports numpy and runs in `test`.
       - run: python research/benchmarks/zh_short_commands/audit.py
+      # Standard library only, audit and tests alike, so both run here.
+      - run: python research/benchmarks/es_phone_turns/audit.py
+      - run: python -m unittest discover -s research/benchmarks/es_phone_turns/tests -v
 
   test:
     name: tests (py${{ matrix.python }})
@@ -115,6 +118,7 @@ jobs:
           python tests/test_onnx_long.py
           python tests/test_onnx_sort.py
           python tests/test_download.py
+          python tests/test_verify_checkpoints.py
           python tests/test_shortlist.py
           python tests/test_decision_model.py
           python tests/test_head_checkpointing.py
@@ -129,6 +133,7 @@ jobs:
           python tests/test_question_token_reuse.py
           python tests/test_lazy_import.py
           python tests/test_runtime_fixes.py
+          python tests/test_agent_gate.py
           python tests/test_option_collapse.py
           python tests/test_lang_guess.py
           python tests/test_identifier_complexity.py
@@ -138,13 +143,16 @@ jobs:
           python tests/test_context_manager.py
           python tests/test_criteria_normalization.py
           python tests/test_docker_entrypoint.py
+          python tests/test_modelscope_prefetch.py
           python tests/test_empty_questions.py
           python tests/test_router_memory.py
           python tests/test_shortlist_cosine.py
           python tests/test_temperature_loading.py
           python tests/test_confidence.py
           python tests/test_cli.py
+          python tests/test_cli_lang_guess.py
           python tests/test_mcp.py
+          python tests/test_mcp_device.py
           python tests/test_langchain.py
           python tests/test_portability.py
           python tests/test_training.py
@@ -156,6 +164,7 @@ jobs:
           python tests/test_predict_batch.py
           python tests/test_revision_pinning.py
           python tests/test_example_server_errors.py
+          python tests/test_example_server_per_call_controls.py
           python tests/test_crewai.py
           python tests/test_llamaindex.py
 
@@ -248,6 +257,9 @@ jobs:
       - name: Eval harness tests
         run: python -m pytest tests/test_evals.py -q
 
+      - name: Shortlist attribution tests
+        run: python -m pytest tests/test_evals_shortlist.py -q
+
       - name: Eval API guard
         run: python tests/test_evals_api.py
 
@@ -301,7 +313,7 @@ jobs:
         run: |
           for t in test_router test_criteria test_batch test_predict_long \
                    test_structured test_structured_api test_onnx_lang_parity \
-                   test_download test_shortlist test_decision_model \
+                   test_download test_verify_checkpoints test_shortlist test_decision_model \
                    test_head_checkpointing test_packaging test_doc_tables \
                    test_tokenizer_cache test_tokenizer_concurrency test_lazy_import \
                    test_runtime_fixes test_lang_guess test_identifier_complexity \
@@ -309,6 +321,7 @@ jobs:
                    test_criteria_normalization test_docker_entrypoint \
                    test_empty_questions test_router_memory test_shortlist_cosine \
                    test_temperature_loading test_confidence test_cli test_mcp \
+                   test_mcp_device \
                    test_langchain test_portability test_training \
                    test_example_server_limits test_blank_lang_routing \
                    test_export_onnx_safety test_load_errors test_revision_pinning; do

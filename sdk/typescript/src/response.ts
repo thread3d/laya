@@ -24,8 +24,14 @@ export function validateRoute(value: unknown): void {
 }
 
 export function validateHealth(value: unknown): void {
-  expect(isRecord(value) && value.status === 'ok' && typeof value.device === 'string', 'health');
-  expect(Array.isArray(value.loaded) && value.loaded.every(model), 'loaded');
+  // Liveness is the only field every caller gets. The rest is withheld from an unauthenticated
+  // probe on a server with LAYA_API_KEY set, so requiring it here would reject a healthy
+  // response; each field is still checked when the server does send it.
+  expect(isRecord(value) && value.status === 'ok', 'health');
+  if (value.device !== undefined) expect(typeof value.device === 'string', 'device');
+  if (value.loaded !== undefined) {
+    expect(Array.isArray(value.loaded) && value.loaded.every(model), 'loaded');
+  }
 }
 
 export function validatePrediction(value: unknown, questions: Questions): void {

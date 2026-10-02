@@ -6,7 +6,9 @@ FROM ${PYTHON_IMAGE} AS build
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-RUN python -m venv /opt/venv
+# The virtualenv is copied into the runtime image. Upgrade its bundled installers
+# so an up-to-date base does not still ship ensurepip's older pip/setuptools (#739).
+RUN python -m venv --upgrade-deps /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # CPU by default on AMD64 and ARM64. The CUDA override selects cu128 and the
@@ -28,6 +30,13 @@ COPY laya/ ./laya/
 RUN pip install ".[serve]" && pip check
 
 FROM ${PYTHON_IMAGE} AS runtime
+
+# Optional ModelScope prefetch: with `--build-arg MODELSCOPE_MODEL=multilingual` the checkpoint is
+# baked into the hub cache during the build, so the image never depends on huggingface.co. The
+# argument takes a checkpoint type (multilingual, english, typed-decisions, all) or a comma- or
+# space-separated list of `repo[:subfolder]` specs; empty by default leaves the image as it was.
+ARG MODELSCOPE_MODEL=""
+ARG MODELSCOPE_REVISION="master"
 
 LABEL org.opencontainers.image.title="Laya Docker quickstart" \
       org.opencontainers.image.source="https://github.com/NandhaKishorM/laya" \
@@ -57,6 +66,21 @@ COPY --from=build /opt/venv /opt/venv
 COPY LICENSE /usr/share/doc/laya/LICENSE
 COPY examples/docker/ /opt/laya/examples/
 COPY docker/entrypoint.py /opt/laya/entrypoint.py
+COPY docker/prefetch_modelscope.py /opt/laya/prefetch_modelscope.py
+
+# Bake the requested ModelScope checkpoints into the hub cache ($HF_HOME/hub), laid out the way
+# `snapshot_download` reads them offline, so no entry point changes: the quickstart's Router, the
+# HTTP server's Router and `laya.cli` all resolve their repo ids to the baked snapshot. The cache is
+# handed to the runtime user afterwards, because the tokenizer-compatibility fix writes into the
+# snapshot on first load.
+RUN if [ -n "$MODELSCOPE_MODEL" ]; then \
+      python /opt/laya/prefetch_modelscope.py \
+        --model "$MODELSCOPE_MODEL" \
+        --revision "$MODELSCOPE_REVISION" \
+        --cache-dir "$HF_HOME/hub" \
+      && chown -R laya:laya /home/laya/.cache; \
+    fi
+
 USER laya
 WORKDIR /home/laya
 

@@ -5,7 +5,7 @@ import tempfile
 import threading
 import time
 import warnings
-from contextlib import ExitStack, nullcontext
+from contextlib import ExitStack, contextmanager, nullcontext
 from contextvars import ContextVar
 from typing import Any, Dict, List, Optional, Union
 
@@ -41,8 +41,11 @@ from .common import (
     serialize_state,
     temp_bucket,
     unpermute_probs,
+    window_batch_cap,
+    state_room,
+    window_budget,
 )
-from .confidence import check_min_confidence, flag_low_confidence
+from .confidence import apply_confidence_gate, check_min_confidence
 from .hooks import (
     HookRegistry, PredictContext, _as_sequence, aggregate_usage, compose_hooks, dispatch,
     normalise_hooks, validate_timeout,
@@ -155,6 +158,54 @@ def _verify_compatibility(model: torch.nn.Module, cfg: Dict, weights: Dict[str, 
 _TOKENIZERS: Dict[tuple, Any] = {}
 _TOKENIZERS_LOCK = threading.Lock()
 
+class _InferenceGate:
+    """Read-write synchronization gate protecting shared model device placement (#649).
+
+    Normal inference acquires the read lock so multiple threads can evaluate the model
+    concurrently without serialization. When a thread encounters GPU OOM and needs
+    to temporarily migrate the model to CPU for a scoped fallback, it acquires the write
+    lock. This ensures all in-flight requests finish safely before the model is moved,
+    and blocks new requests until the model and device state are restored.
+    """
+
+    def __init__(self):
+        self._cond = threading.Condition(threading.Lock())
+        self._readers = 0
+        self._writers = 0
+        self._waiting_writers = 0
+
+    @contextmanager
+    def read_lock(self):
+        with self._cond:
+            while self._writers > 0 or self._waiting_writers > 0:
+                self._cond.wait()
+            self._readers += 1
+        try:
+            yield
+        finally:
+            with self._cond:
+                self._readers -= 1
+                if self._readers == 0:
+                    self._cond.notify_all()
+
+    @contextmanager
+    def write_lock(self):
+        with self._cond:
+            self._waiting_writers += 1
+            try:
+                while self._readers > 0 or self._writers > 0:
+                    self._cond.wait()
+                self._writers = 1
+            finally:
+                self._waiting_writers -= 1
+        try:
+            yield
+        finally:
+            with self._cond:
+                self._writers = 0
+                self._cond.notify_all()
+
+
 # The per-inference CPU fallback rewrites shared runtime state (device, dtype, amp) and moves the
 # model while other threads may be running their own forward, so the demotion and the restore are
 # serialised. A second request that hits OOM waits here and re-demotes only if it needs to.
@@ -208,6 +259,22 @@ def _amp_context(device, dtype, enabled: bool):
     return torch.autocast(device_type=device.type, dtype=dtype)
 
 
+def _pad_cuda_compile_batch(batch: Dict, pad_token_id: int) -> Dict:
+    """Keep compiled CUDA attention on the same sequence-length guard family.
+
+    Some Inductor SDPA versions specialise on the token length modulo eight even with
+    dynamic shapes. Pad only the masked tail; marker positions and caller-visible token
+    accounting continue to refer to the original sequence.
+    """
+    missing = -batch["input_ids"].shape[1] % 8
+    if not missing:
+        return batch
+    padded = dict(batch)
+    padded["input_ids"] = torch.nn.functional.pad(batch["input_ids"], (0, missing), value=pad_token_id)
+    padded["attention_mask"] = torch.nn.functional.pad(batch["attention_mask"], (0, missing), value=0)
+    return padded
+
+
 MPS_AMP_MIN_ROWS_DEFAULT = 5
 # An unsupported autocast op fails the same way on every request. Retry that request in
 # full precision, and only turn AMP off after this many failures in a row (#351).
@@ -225,14 +292,26 @@ def _mps_amp_min_rows() -> int:
 
 def _cuda_amp_dtype(checkpoint_default: Optional[str]) -> torch.dtype:
     """Autocast dtype on CUDA at compute capability >= 8: the checkpoint's `amp_dtype` (bf16 for the
-    shipped checkpoints), or LAYA_CUDA_AMP=fp16|bf16 when set. fp16 stays 2-10x closer to the fp32
-    forward than bf16 on every shipped checkpoint at the same speed; anything else is ignored."""
+    shipped checkpoints), or LAYA_CUDA_AMP=fp16|float16|bf16|bfloat16 when set. fp16 stays 2-10x
+    closer to the fp32 forward than bf16 on every shipped checkpoint at the same speed; anything
+    else is ignored. The long spellings count because they are what `agent.dtype` reports back, so
+    the precision a user reads off one response is one they can ask for on the next."""
     raw = os.environ.get("LAYA_CUDA_AMP", "").lower()
     if raw in ("fp16", "float16"):
         return torch.float16
     if raw in ("bf16", "bfloat16"):
         return torch.bfloat16
     return amp_dtype(checkpoint_default)
+
+
+def _cpu_amp_dtype() -> Optional[torch.dtype]:
+    """Autocast dtype on CPU: bf16 when LAYA_CPU_AMP=bf16|bfloat16, None to leave the forward in
+    fp32. No fp16 spelling is offered here, because CPU autocast has no fp16 fast path that beats
+    fp32 -- bf16 is the only reduced precision worth asking for, and only on hardware with native
+    BF16 instructions, which is why it stays opt-in. Anything else is ignored."""
+    if os.environ.get("LAYA_CPU_AMP", "").lower() in ("bf16", "bfloat16"):
+        return torch.bfloat16
+    return None
 
 def _option_count(qdef: Dict) -> int:
     """How many options a validated question definition renders to.
@@ -264,7 +343,8 @@ def _start_evidence():
     inference, `states` is a snapshot of the states that reached it (`None` if the probe never ran,
     which means `predict_batch` was replaced and no hook chain was dispatched).
     """
-    evidence = {"answered": False, "states": None, "question_types": None}
+    evidence = {"answered": False, "states": None, "question_types": None,
+                "max_len": None, "head_max_len": None, "questions": None}
 
     def probe(ctx):
         evidence["answered"] = ctx.results is not None
@@ -276,14 +356,82 @@ def _start_evidence():
                 qid: qdef.get("type") if isinstance(qdef, dict) else None
                 for qid, qdef in ctx.questions.items()
             }
+        # Also what the budget and the questions ACTUALLY are once the chain has run, for
+        # `_check_scan_budget`. Recorded, never judged here: a hook that raises is governed by the
+        # caller's `hooks_raise`/`hooks_timeout`, so a correctness check that raises from inside the
+        # chain can be switched off by a policy meant for third-party telemetry. Measured: with
+        # `hooks_raise=False` -- what `docs/hooks/tracing.md` recommends -- a refusal became a
+        # RuntimeWarning blaming `_StartAdapter`, and the scan proceeded.
+        evidence["max_len"] = ctx.max_len
+        evidence["head_max_len"] = ctx.head_max_len
+        evidence["questions"] = dict(ctx.questions) if ctx.questions else {}
 
     return probe, evidence
 
 
+def _check_scan_budget(agent, evidence, sized, cfg_max_len, cfg_head_max_len, asked=None):
+    """Raise when the budget or questions in force leave less room than the scan was sized for.
+
+    `predict_long` sizes its windows from the agent's config, before any hook has run. A start hook
+    may then set `ctx.max_len`/`ctx.head_max_len`, or rewrite `ctx.questions` -- both documented
+    powers -- and `build_sequence` uses whatever it finds. When the head widens faster than
+    `max_len`, or the questions get more options, the real room SHRINKS: every window is
+    re-truncated on the way in, and once the stride exceeds the real room consecutive windows stop
+    touching. Measured on the English checkpoint with `widen_for_high_cardinality` from
+    `docs/hooks/patterns.md` at 50 options, windows sized 303 against a room of 253; at 100 options
+    a reviewer measured 43.4% of a document reaching no model, against the 37.6% this change exists
+    to remove. Silently worse than not windowing at all.
+
+    Called by `predict_long` AFTER the chain has run, not raised from inside it. A hook that raises
+    is subject to the caller's `hooks_raise` and `hooks_timeout`, so the first version of this check
+    could be switched off by `hooks_raise=False` -- which `docs/hooks/tracing.md` recommends -- and
+    could blow a `hooks_timeout` the caller set for their own hooks. The cost is that the forward
+    pass has already happened when this fires: a misconfigured scan is refused rather than answered
+    wrongly, but it is not refused for free. Sizing the windows after the chain instead would change
+    when hooks run and what they see, which is a larger change than this one.
+    """
+    if evidence.get("answered"):
+        return                                 # a hook answered the document; no window was scored
+    questions = evidence.get("questions")
+    if not questions:
+        return                                 # nothing to fit, as `window_budget` also concludes
+    eff_max_len = evidence.get("max_len")
+    eff_head = evidence.get("head_max_len")
+    eff_max_len = cfg_max_len if eff_max_len is None else eff_max_len
+    eff_head = cfg_head_max_len if eff_head is None else eff_head
+    if eff_max_len == cfg_max_len and eff_head == cfg_head_max_len and (
+            asked is None or questions == asked):
+        # Nothing the scan was sized against moved, so there is nothing to recompute -- and
+        # recomputing anyway costs a tokenization of every question head, which `window_budget`
+        # already paid and `_encode_state` will pay again. That showed up as a third head
+        # tokenization in `test_question_token_reuse`, which asserts two.
+        return
+    try:
+        internal = [agent._to_internal(q) for q in questions.values()]
+    except Exception:
+        return                                 # malformed questions are the validator's to report
+    if not internal:
+        return
+    room = min(state_room(agent.tok, q, eff_max_len, eff_head) for q in internal)
+    if room >= sized:
+        return
+    raise ValueError(
+        "predict_long: after the start hooks ran, the questions and token budget (max_len=%d "
+        "head_max_len=%d) leave %d state tokens per window, but the scan was sized for %d from the "
+        "agent's config (max_len=%d head_max_len=%d). Every window would be re-truncated and parts "
+        "of the document would reach no model. Pass window=/stride= explicitly, or call "
+        "predict_batch directly, if you need a start hook to change either."
+        % (eff_max_len, eff_head, room, sized, cfg_max_len, cfg_head_max_len))
+
+
 def _with_start_probe(hook_kwargs, probe):
-    """`hook_kwargs` with `probe` appended after the caller's own start hooks."""
+    """`hook_kwargs` with `probe` appended after the caller's own start hooks.
+
+    `probe` may be one hook or a list of them, appended in order.
+    """
     kwargs = dict(hook_kwargs)
-    kwargs["on_predict_start"] = list(_as_sequence(hook_kwargs.get("on_predict_start"))) + [probe]
+    extra = list(probe) if isinstance(probe, (list, tuple)) else [probe]
+    kwargs["on_predict_start"] = list(_as_sequence(hook_kwargs.get("on_predict_start"))) + extra
     return kwargs
 def _option_logits(logits, items, offset):
     """Raw per-option logits, the rows `_decode_answers` divides by temperature.
@@ -323,6 +471,7 @@ class Agent(HookRegistry):
     last_fallback_reason = None
     # Set when `compile=True` wrapped the model in torch.compile.
     _compiled = False
+    _gate = _InferenceGate()
 
     def __init__(
         self,
@@ -536,8 +685,9 @@ class Agent(HookRegistry):
             self.load_calibration(calibration)
         # Autocast policy. CUDA, MPS and XPU all support fp16/bf16 autocast and the shipped
         # checkpoints are trained in reduced precision; on CUDA the checkpoint's `amp_dtype`
-        # (bf16) is the default and LAYA_CUDA_AMP=fp16|bf16 overrides it. CPU bf16 is only a win
-        # on hardware with native BF16, so it stays opt-in via LAYA_CPU_AMP=bf16. MPS fp16 is slower than fp32 on
+        # (bf16) is the default and _cuda_amp_dtype's LAYA_CUDA_AMP override wins over it. CPU
+        # bf16 is only a win on hardware with native BF16, so it stays opt-in through
+        # _cpu_amp_dtype. MPS fp16 is slower than fp32 on
         # a single small row (autocast overhead dominates) and only wins once the batch has
         # several rows, so it is gated per call by `mps_amp_min_rows` (default 5, override with
         # LAYA_MPS_AMP_MIN_ROWS) rather than enabled unconditionally. XPU autocast supports
@@ -563,11 +713,13 @@ class Agent(HookRegistry):
                 self.amp_enabled = True
                 self.dtype = torch.bfloat16
         elif self.device.type == "cpu":
-            if os.environ.get("LAYA_CPU_AMP", "").lower() in ("bf16", "bfloat16"):
+            cpu_amp = _cpu_amp_dtype()
+            if cpu_amp is not None:
                 self.amp_enabled = True
-                self.dtype = torch.bfloat16
+                self.dtype = cpu_amp
 
         self._fast = None
+        self._gate = _InferenceGate()
 
         # 2. Place on device with graceful fallback to CPU on memory error
         fell_back_from = fell_back_why = None
@@ -930,6 +1082,8 @@ class Agent(HookRegistry):
 
     def _infer(self, b: Dict):
         """Run the forward pass under autocast, degrading gracefully on OOM or unsupported autocast."""
+        if self._compiled and self._fast is None and self.device.type == "cuda":
+            b = _pad_cuda_compile_batch(b, self.tok.pad_token_id)
         use_amp = self._amp_enabled_for(b["input_ids"].shape[0])
 
         if self._fast is not None and b["input_ids"].shape[1] > self._fast.max_len:
@@ -956,7 +1110,8 @@ class Agent(HookRegistry):
                 )
 
         try:
-            out = run()
+            with self._gate.read_lock():
+                out = run()
         except (RuntimeError, torch.cuda.OutOfMemoryError) as e:
             low = str(e).lower()
             # An OOM is `torch.cuda.OutOfMemoryError` or says so in its message. The bare
@@ -966,13 +1121,16 @@ class Agent(HookRegistry):
                 print("Warning: GPU memory exceeded during inference. Retrying this request on CPU...")
                 # Scoped, not permanent: the demotion used to rewrite device/dtype/amp and move
                 # the model for the life of the process, so one oversized request left every
-                # later call ~10-15x slower on CPU. Demote under the lock, answer this request
-                # on CPU, then put the runtime back the way it was.
-                with _OOM_FALLBACK_LOCK:
+                # later call ~10-15x slower on CPU. Demote under the write lock (#649) so any
+                # concurrent in-flight GPU requests finish before the model is moved to CPU,
+                # and put the runtime back before allowing new requests to start.
+                with self._gate.write_lock(), _OOM_FALLBACK_LOCK:
                     # Recorded on entry, under the same lock as the demotion: the count and
                     # reason must be readable by /health without racing a concurrent fallback.
                     self.cpu_fallback_count += 1
                     self.last_fallback_reason = str(e)
+                    if self.device.type == "cpu":
+                        return run()
                     held_device, held_dtype, held_amp = self.device, self.dtype, self.amp_enabled
                     had_fast = self._fast is not None
                     # Only our batch scope can retain BF16 copies after this failed forward.
@@ -998,15 +1156,16 @@ class Agent(HookRegistry):
                 # request in full precision. One miss must not turn AMP off; a build that
                 # lacks the op fails the same way every time, so after a short streak the
                 # process drops to full precision instead of paying for two forwards (#351).
-                try:
-                    return run(enabled=False)
-                finally:
-                    self._amp_failures += 1
-                    if self._amp_failures >= _AMP_FAIL_LIMIT:
-                        print("Warning: autocast failed %d times in a row. Disabling mixed precision."
-                              % self._amp_failures)
-                        self.amp_enabled = False
-                        self.dtype = torch.float32
+                with self._gate.read_lock():
+                    try:
+                        return run(enabled=False)
+                    finally:
+                        self._amp_failures += 1
+                        if self._amp_failures >= _AMP_FAIL_LIMIT:
+                            print("Warning: autocast failed %d times in a row. Disabling mixed precision."
+                                  % self._amp_failures)
+                            self.amp_enabled = False
+                            self.dtype = torch.float32
             raise
         else:
             self._amp_failures = 0
@@ -1268,8 +1427,7 @@ class Agent(HookRegistry):
             ctx.elapsed_ms = (time.perf_counter() - ctx.started_at) * 1000.0
             if ctx.results is not None:
                 ctx.usage = aggregate_usage(ctx.results)
-                if mc is not None:
-                    flag_low_confidence(ctx.results, mc)
+                apply_confidence_gate(ctx.results, mc)
             try:
                 dispatch(active, "on_predict_end", ctx, raise_errors=raise_errors, lock=self._hooks_lock, timeout=timeout)
             except BaseException as hook_exc:
@@ -1307,6 +1465,8 @@ class Agent(HookRegistry):
         document is decisive. Each answer therefore carries `answer["window"]` — the deciding
         window's `index`, `token_start`/`token_end` into the tokenized state, and the window `count`
         — so a caller can inspect the span the answer came from rather than trust the raw number.
+        That span is the one the model read, not merely the one asked for: the window is capped at
+        the room the questions leave, so what is handed to `predict_batch` is not cut short again.
 
         A state that already fits one window is passed straight to `system_one` (identical output).
 
@@ -1324,15 +1484,24 @@ class Agent(HookRegistry):
             above describe this method's windows, not the text the model read
 
         Args:
-            window: state tokens per window. Defaults to the per-question state budget
-                    (`max_len - head_max_len - 8`) -- the most a window can hold for every question.
+            window: state tokens per window. Defaults to the checkpoint's state budget
+                    (`max_len - head_max_len - 8`), and either way is capped at the room the
+                    questions leave for the state inside `max_len` -- the smallest room of them,
+                    because one list of windows is scored for every question. A wider window is
+                    re-truncated on the way to the model, so it is clamped instead, with a
+                    `RuntimeWarning` when the caller is the one who asked for it. Options are what
+                    make the room small: on the English checkpoint a 2-option question leaves 483
+                    tokens for the state and a 100-option one leaves 100.
                     A smaller window isolates a localized signal better (a short deciding span is a
                     larger fraction of its window, so that window classifies it clearly), at the
                     cost of more windows; the large default favors context and throughput. `noul`
                     is robust to this, `choice`/`score` benefit from a smaller window when the
                     deciding span is a small part of a long, otherwise-neutral document.
-            stride: token step between windows. Defaults to `window // 2` (50% overlap), so a span
-                    near a boundary still lands whole inside some window.
+            stride: token step between windows. Defaults to half the *effective* window (50%
+                    overlap), so a span near a boundary still lands whole inside some window. A
+                    stride past the effective window is refused rather than clamped: the tokens
+                    between each pair of windows would be read by no window at all, which is the
+                    failure this method exists to prevent.
             aggregate: "auto" (the per-type rules above) is the only mode for now.
             batch_size: cap on windows per forward pass, to bound memory on very long states.
             lang: per-language temperature selection, as in `system_one`.
@@ -1342,6 +1511,11 @@ class Agent(HookRegistry):
             on_predict_end (PredictHookArg): A per-call end hook, as in `system_one`.
             hooks_raise: Override the Agent's `hooks_raise` for this call.
             hooks_timeout: Override the Agent's `hooks_timeout` for this call.
+
+        Raises:
+            ValueError: `aggregate` is anything but "auto"; the questions' options fill the whole
+                    sequence, leaving no room for the state; or `stride` steps past the effective
+                    window, so tokens between two windows would be read by nothing.
 
         Returns a single result dict, the same shape as `system_one`, with `usage["windows"]` added.
         The key is always present and counts the windows the model scored to produce the answer: `1`
@@ -1371,7 +1545,21 @@ class Agent(HookRegistry):
                        "hooks_timeout": hooks_timeout}
         max_len = self.cfg.get("max_len", 512)
         head_max_len = self.cfg.get("head_max_len", 192)
-        budget = window if (window and window > 0) else max(64, max_len - head_max_len - 8)
+        # Size the window against the room these questions actually leave, not the config alone:
+        # every window is decoded and scored as a normal state, so a window wider than the room
+        # was re-truncated by `build_sequence` on the way in and the tail of it reached no model
+        # -- while `answer["window"]` reported the whole span. Measured on the English checkpoint
+        # (max_len=512, head_max_len=192, config budget 312): a 2-option question leaves room for
+        # 483 tokens, 48 options leave 308, and 100 -- `serve`'s documented maximum -- leave 100.
+        # At 87 options the room (152) fell below the 156-token default stride, so the windows
+        # stopped overlapping and part of the document was read by no window at all: measured on a
+        # 920-token document at 100 options, 420 of its tokens reached no window.
+        ids = list(questions.keys())
+        for qid in ids:
+            self._check_question(qid, questions[qid])
+        internal = {qid: self._to_internal(questions[qid]) for qid in ids}
+        budget, step, _ = window_budget(self.tok, [internal[qid] for qid in ids], max_len,
+                                        head_max_len, window=window, stride=stride)
 
         state_ids = self.tok(serialize_state(state).replace(self.tok.mask_token, " "),
                              add_special_tokens=False)["input_ids"]
@@ -1387,10 +1575,14 @@ class Agent(HookRegistry):
             # Why 0 for a hook answer here: the state did fit one window, but no window was scored,
             # which is the same fact the multi-window path reports as 0. Reading 1 would make a
             # cached answer and a served answer agree on how much of the input the model saw.
+            # The same budget check as the multi-window path. Without it a document short enough to
+            # fit one window was silently truncated by a re-budgeting hook and still reported
+            # `windows: 1`, i.e. "the model read all of it" -- measured, 138 of 240 state tokens
+            # never reached the model, while a longer document on the identical input hard-failed.
+            _check_scan_budget(self, evidence, budget, max_len, head_max_len, questions)
             single["usage"] = {**(single.get("usage") or {}), "windows": 0 if evidence["answered"] else 1}
             return single
 
-        step = stride if (stride and stride > 0) else max(1, budget // 2)
         windows, starts = [], []
         i, n = 0, len(state_ids)
         while i < n:
@@ -1407,8 +1599,13 @@ class Agent(HookRegistry):
         # `list(windows)`, not `windows`: `ctx.states` is the list the hook receives, so a hook that
         # mutates it in place (`append`, `sort`) would otherwise also grow the split this call
         # attributes answers to, and the counts would agree while `starts` no longer lined up.
-        results = self.predict_batch(list(windows), questions, batch_size=batch_size, lang=lang,
+        # Bound one forward pass to what the un-capped scan would have used; see
+        # `window_batch_cap`. An explicit batch_size is honoured untouched.
+        cap = window_batch_cap(len(windows), budget, max(64, max_len - head_max_len - 8),
+                               batch_size)
+        results = self.predict_batch(list(windows), questions, batch_size=cap, lang=lang,
                                      **_with_start_probe(hook_kwargs, probe))
+        _check_scan_budget(self, evidence, budget, max_len, head_max_len, questions)
 
         if evidence["answered"]:
             # The hook replaced the call before any window was scored. Aggregating over its payload
@@ -1497,7 +1694,11 @@ class Agent(HookRegistry):
                     usage[key] = val
         usage["output_tokens"] = 0
         usage["windows"] = len(results)
-        return {"model": "laya-rl-agent", "answers": answers, "usage": usage}
+        result = {"model": "laya-rl-agent", "answers": answers, "usage": usage}
+        # `predict_long` accepts no `min_confidence` -- the window loop has no single confidence to
+        # gate on -- so every answer reports that it ran ungated rather than reporting nothing.
+        apply_confidence_gate([result], None)
+        return result
 
     @torch.no_grad()
     def system_one(self, state: Union[str, dict, list], questions: Dict[str, Dict[str, Any]], lang: Optional[str] = None,
@@ -1643,6 +1844,26 @@ class Agent(HookRegistry):
 RLAgent = Agent
 
 
+def _is_local_checkpoint_arg(model_id_or_path: str) -> bool:
+    """True when `model_id_or_path` should be treated as a local path, not a registry name.
+
+    A bare word with no path separator reads as a name/alias. Only treat it as a path when
+    it looks like one (contains a separator, or starts with `.` / `~`) or when the named
+    directory actually holds a Laya checkpoint (`rl_agent_config.json`). That way
+    `load("laya")` resolves the alias from the repo root, while `load("./laya")` and a
+    real checkpoint directory still load from disk.
+    """
+    if not model_id_or_path:
+        return False
+    if model_id_or_path.startswith((".", "~")):
+        return True
+    if os.sep in model_id_or_path or "/" in model_id_or_path or "\\" in model_id_or_path:
+        return True
+    return os.path.isdir(model_id_or_path) and os.path.isfile(
+        os.path.join(model_id_or_path, "rl_agent_config.json")
+    )
+
+
 def load(model_id_or_path: str = "convaiinnovations/laya", device: Optional[str] = None,
          token: Optional[str] = None, subfolder: Optional[str] = None, fast: bool = False,
          compile: bool = False,
@@ -1661,10 +1882,31 @@ def load(model_id_or_path: str = "convaiinnovations/laya", device: Optional[str]
         laya.load("convaiinnovations/laya", fast=True)                # TileLang GPU fast path
         laya.load("convaiinnovations/laya", compile=True)              # torch.compile the model
 
+    `model_id_or_path` also accepts a checkpoint name or alias -- the same ones
+    `Router` resolves, so both entry points read one table:
+
+        laya.load("typed-decisions")
+        laya.load("ml")                                               # multilingual
+
+    Anything else (a Hub repo id, a local directory) is passed to `Agent` unchanged.
+
     `revision`/`expected_sha256` pin and verify the downloaded artifacts; see `Agent`.
     `hooks` / `on_predict_start` / `on_predict_end` observe or shape every prediction; see
     `laya.hooks`. `calibration` is the same optional JSON path accepted by `Agent`.
     """
+    # A registry name or alias resolves to the same (repo, subfolder) the Router would
+    # pick, instead of being handed to the Hub as a repo id. A caller who spelled out a
+    # subfolder is loading that subfolder of whatever repo they named, so the name is only
+    # resolved when it is the whole argument. Treat the argument as a local path only when
+    # it looks like one (separator, or starts with `.`/`~`) or when the directory actually
+    # holds a checkpoint (`rl_agent_config.json`); a bare word like `laya` therefore
+    # resolves the alias even when a same-named package directory sits in the cwd.
+    if subfolder is None and not _is_local_checkpoint_arg(model_id_or_path):
+        from .router import resolve_model_spec
+
+        spec = resolve_model_spec(model_id_or_path)
+        if spec is not None:
+            model_id_or_path, subfolder = spec
     return Agent(model_id_or_path, device=device, token=token, subfolder=subfolder, fast=fast,
                  compile=compile,
                  revision=revision, expected_sha256=expected_sha256,

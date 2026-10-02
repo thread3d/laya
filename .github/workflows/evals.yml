@@ -14,9 +14,22 @@ on:
 permissions:
   contents: read
 
+# A run here is never obsolete. `github.ref` is the default branch for `schedule` and for a
+# `workflow_dispatch` on it, so the weekly baseline and a manual re-run shared this group, as
+# do two dispatches on one ref, and `cancel-in-progress: true` made whichever started second
+# kill the first. That job spends 60 minutes downloading weights and the dataset, and a
+# cancelled run uploads no report, so the cancellation reads as a clean gate.
+#
+# `release: published` is the one trigger that never collided: its ref is the tag
+# (`refs/tags/<tag_name>`), so each release already had a group of its own.
+#
+# The group is left as it is. Same-ref runs are the same 60-minute comparison against the same
+# committed baseline, so serialising them is right; only the cancellation was wrong. (Adding
+# `${{ github.run_id }}` would also stop GitHub dropping a *queued* run when a third invocation
+# arrives, at the cost of letting several run at once -- a maintainer's call, not this file's.)
 concurrency:
   group: evals-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   english-regression:
