@@ -239,7 +239,9 @@ def train_rlcd(
         if target_device.type == "mps":
             raise RuntimeError(
                 "MPS has no distributed backend, so torchrun is not supported on it; "
-                "run single-process (omit torchrun) or use LAYA_DEVICE=cpu for a gloo run")
+                "run single-process (omit torchrun), use LAYA_DEVICE=cpu for a gloo run, or use "
+                "the standalone Apple Silicon path in "
+                "notebooks/laya_finetune_typed_decisions_mps.py")
         import torch.distributed as dist
         if not dist.is_initialized():
             # NCCL for CUDA/ROCm (ROCm ships RCCL under the same name); gloo for CPU.
@@ -309,7 +311,14 @@ def train_rlcd(
     calib_items = [it for i, it in enumerate(items) if i in calib_idx]
     train_items = [it for i, it in enumerate(items) if i not in calib_idx]
 
-    my_items = train_items[rank::world_size] if world_size > 1 else list(train_items)
+    if world_size > 1:
+        # Trim before sharding so every rank gets the same count (drops at most world_size-1
+        # items). Unequal counts give ranks unequal micro-batch counts, and DDP deadlocks on the
+        # unmatched all-reduce (#678).
+        train_items = train_items[: len(train_items) // world_size * world_size]
+        my_items = train_items[rank::world_size]
+    else:
+        my_items = list(train_items)
     micro_batch = max(1, min(micro_batch, len(my_items)))
 
     enc_params = [p for n, p in train_model.named_parameters() if "encoder." in n]
