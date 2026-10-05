@@ -52,6 +52,7 @@ SCRIPT_SUITES = [
     "tests/test_imports.py",
     "tests/test_compose_env.py",
     "tests/test_audit_scope.py",
+    "tests/test_gitleaks_allowlist.py",
     "tests/test_doc_tables.py",
     "tests/test_env_docs.py",
     "tests/test_tokenizer_cache.py",

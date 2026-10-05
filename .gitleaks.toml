@@ -1,0 +1,28 @@
+# gitleaks configuration.
+#
+# The default ruleset stays in force; this file records reviewed false positives only, so a
+# new finding anywhere still fails the secret scan.
+[extend]
+useDefault = true
+
+# `generic-api-key` matches the artifact digests the zh_reliability benchmark pins:
+#
+#     "tokenizer/tokenizer.json": "609d8f4c067cd3950f88594c5a802616cea245823836ef5848ee4fc40aab5b6f"
+#
+# The rule fires because the key contains "token" and the value carries enough entropy to look
+# like a key, but 64 lowercase-hex characters under a tokenizer file name are a SHA-256 digest,
+# exactly what the benchmark exists to record. The benchmark was reverted in commit 2c73632
+# (PR #392) for two CI failures, so the file is no longer in HEAD -- but the weekly scheduled
+# run scans all history and keeps finding it.
+#
+# Scope this by the shape of the line, not by the file path. The action pins gitleaks 8.24.3,
+# which predates `condition` and treats a path+regex entry as OR rather than AND; a path entry
+# would therefore hide *any* secret ever placed in that file, while the digest shape is the only
+# thing that is actually benign. The singular `[allowlist]` form is deliberate: 8.24.3 silently
+# ignores `[[allowlists]]` and would go on failing.
+[allowlist]
+description = "SHA-256 digests of tokenizer files pinned by the zh_reliability benchmark (#392)"
+regexTarget = "line"
+regexes = [
+  '''"tokenizer/tokenizer(_config)?\.json"\s*:\s*"[0-9a-f]{64}"''',
+]
