@@ -11,14 +11,22 @@ import threading
 from types import SimpleNamespace
 
 import torch
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from laya._compile import compile_model, independent_dims  # noqa: E402
+from laya._compile import compile_model, independent_dims, _fx_config  # noqa: E402
 from laya.agent import Agent, _pad_cuda_compile_batch  # noqa: E402
 from laya.common import DecisionModel  # noqa: E402
 
-fx_config = torch.fx.experimental._config
+# `torch.fx.experimental._config` only exists where duck sizing does; `laya._compile` degrades
+# to a no-op without it (torch 2.2, the macOS/Intel pin), so the tests that observe the setting
+# skip rather than assert on a knob this torch does not have.
+fx_config = _fx_config()
+requires_fx_config = pytest.mark.skipif(
+    fx_config is None,
+    reason="the compile path (duck sizing, and transformers' CPU compile support) needs a "
+           "newer torch than the pinned 2.2; it falls back to eager there")
 
 # rows x tokens x markers; the first has rows == markers, which duck sizing would tie together
 SHAPES = [(4, 40, 4), (4, 57, 4), (3, 70, 4), (5, 33, 2), (2, 90, 3), (8, 130, 5), (6, 61, 6), (7, 45, 3)]
@@ -80,11 +88,12 @@ def test_cuda_compile_padding_masks_only_the_new_tail():
     assert _pad_cuda_compile_batch(padded, 0) is padded
 
 
+@requires_fx_config
 def test_one_graph_across_shapes_and_same_outputs():
     torch._dynamo.reset()
     model = tiny_model()
     agent = compiled_agent(model)
-    before = fx_config.use_duck_shape
+    before = fx_config.use_duck_shape if fx_config is not None else None
     start = graphs()
     with torch.no_grad():
         for shape in SHAPES:
@@ -96,9 +105,11 @@ def test_one_graph_across_shapes_and_same_outputs():
     # stock torch.compile(model) builds 4 graphs for these shapes (static, then automatic dynamic,
     # then two duck-sizing recompiles); dynamic=True with independent dimensions builds one
     assert graphs() - start == 1, graphs() - start
-    assert fx_config.use_duck_shape is before
+    if fx_config is not None:
+        assert fx_config.use_duck_shape is before
 
 
+@requires_fx_config
 def test_warmup_builds_every_graph_before_the_first_request():
     torch._dynamo.reset()
     agent = compiled_agent(tiny_model())
@@ -114,6 +125,7 @@ def test_warmup_builds_every_graph_before_the_first_request():
     assert graphs() - start == 2, graphs() - start
 
 
+@requires_fx_config
 def test_duck_shape_restored_after_errors_and_nesting():
     before = fx_config.use_duck_shape
     with independent_dims():
@@ -130,6 +142,7 @@ def test_duck_shape_restored_after_errors_and_nesting():
     assert fx_config.use_duck_shape is before
 
 
+@requires_fx_config
 def test_duck_shape_restored_across_threads():
     before = fx_config.use_duck_shape
     inside, left, release = threading.Barrier(4), threading.Barrier(4), threading.Event()
@@ -156,6 +169,7 @@ def test_duck_shape_restored_across_threads():
     assert fx_config.use_duck_shape is before
 
 
+@requires_fx_config
 def test_eager_agent_leaves_the_setting_alone():
     agent = Agent.__new__(Agent)
     agent.device = torch.device("cpu")
@@ -232,6 +246,7 @@ def test_constructor_warms_only_the_active_compiled_path():
             cache_spy.assert_not_called()
 
 
+@requires_fx_config
 def test_missing_compiler_preserves_wrapper_and_warns_only_during_automatic_warmup():
     import json
     import tempfile

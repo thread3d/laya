@@ -19,6 +19,25 @@ QTYPES = {"choice": 0, "score": 1, "noul": 2}
 QTYPE_NAMES = {v: k for k, v in QTYPES.items()}
 _DEFAULT_NOUL_LABELS = {"false": "false", "true": "true"}
 
+
+def _autocast_enabled(device_type: str) -> bool:
+    """Whether an autocast scope covers `device_type`.
+
+    `torch.is_autocast_enabled` only accepted a `device_type` from torch 2.4; before that it
+    reported CUDA alone and CPU and MPS had no autocast to report, so the no-argument call is
+    the whole answer on an older torch. This package supports `torch>=2.0.0`, and the
+    macOS/Intel stack pins 2.2 (`LOCAL_SETUP.md`), where the device-aware call is a TypeError.
+    """
+    try:
+        return torch.is_autocast_enabled(device_type)
+    except TypeError:
+        # torch < 2.4 took no `device_type`: the no-argument call reports CUDA alone, CPU has
+        # its own predicate, and MPS had no autocast to report.
+        if device_type == "cpu":
+            return torch.is_autocast_cpu_enabled()
+        return torch.is_autocast_enabled()
+
+
 # A fast tokenizer is not read-only: `truncation=True` / `padding=True` make it call
 # `enable_truncation` / `enable_padding`, which mutates the shared Rust object. One tokenizer is
 # parsed per checkpoint directory and shared by every Agent that wants it, so concurrent
@@ -542,7 +561,7 @@ class DecisionModel(nn.Module):
         act_input = torch.cat([pooled, feats], -1)
         # Explicit-dtype exports run without autocast; keep the confidence maths in fp32,
         # then match the head's weights. Autocast already chooses the linear's input dtype.
-        if not torch.is_autocast_enabled(h.device.type):
+        if not _autocast_enabled(h.device.type):
             act_input = act_input.to(self.act_head[0].weight.dtype)
         act_logits = self.act_head(act_input)
         return logits, act_logits

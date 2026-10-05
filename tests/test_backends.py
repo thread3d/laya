@@ -177,13 +177,19 @@ check_true("auto fallback/names resolved compile, not auto",
            len(w) == 1 and "backend 'compile'" in str(w[0].message) and "backend 'auto'" not in str(w[0].message))
 
 cuda_agent = fake_agent("cuda")
-cfg = torch.fx.experimental._config
-prior_duck = cfg.use_duck_shape
+# `torch.fx.experimental._config` only exists where symbolic shapes do; `laya._compile`
+# degrades to a no-op without it (torch 2.2, the macOS/Intel pin), so the duck-shape
+# assertions are made only where there is a setting to observe.
+from laya._compile import _fx_config  # noqa: E402
+
+cfg = _fx_config()
+prior_duck = cfg.use_duck_shape if cfg is not None else None
 
 def compile_stub(fn, **kwargs):
     check("compile/reuses dynamic helper", kwargs, {"dynamic": True, "mode": "reduce-overhead"})
     def call(*args):
-        check("compile/independent dimensions during forward", cfg.use_duck_shape, False)
+        if cfg is not None:
+            check("compile/independent dimensions during forward", cfg.use_duck_shape, False)
         return fn(*args)
     return call
 
@@ -191,7 +197,8 @@ with patch.object(torch, "compile", side_effect=compile_stub):
     be = backends.install(cuda_agent, "compile", strict=True, warmup=False)
     actual = cuda_agent.model(**b)
     check_true("compile/padding sliced away", torch.equal(actual[0], ref))
-    check("compile/duck shape restored after forward", cfg.use_duck_shape, prior_duck)
+    if cfg is not None:
+        check("compile/duck shape restored after forward", cfg.use_duck_shape, prior_duck)
     be.uninstall()
     check_true("compile/uninstall restores stock", untouched(cuda_agent.model))
 with patch.object(torch, "compile", side_effect=compile_stub), \
