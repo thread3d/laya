@@ -101,6 +101,13 @@ def test_action_head_explicit_dtype_and_autocast():
         for amp in (None, torch.bfloat16, torch.float16):
             if device == "cpu" and amp == torch.float16:
                 continue
+            # A bf16 forward on a Windows CPU can die with an uncatchable SIGILL on recent
+            # torch builds (pytorch/pytorch#152385); sentence-transformers and TabPFN skip
+            # the same combination. It takes the whole `windows-latest` lane down, and
+            # Linux/macOS CPU and CUDA still run the bf16 legs.
+            if os.name == "nt" and device == "cpu" and (
+                    weights == torch.bfloat16 or amp == torch.bfloat16):
+                continue
             model = _tiny_model().to(device=device, dtype=weights)
             inputs = tuple(t.to(device) for t in _inputs(2, 10, 4))
             captured = []
