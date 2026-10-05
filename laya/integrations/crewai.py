@@ -57,6 +57,7 @@ class LayaTaskGuardError(ValueError):
 from ._controls import budget_kwargs as _budget_kwargs, hook_kwargs as _hook_kwargs  # noqa: E402
 from ._controls import decision_kwargs as _decision_kwargs  # noqa: E402
 from ._controls import predict_kwargs as _predict_kwargs, reject_remote_hooks as _reject_remote_hooks  # noqa: E402
+from ._guard import score_violation_probability as _score_violation_probability  # noqa: E402
 from ..confidence import _gate_confidence  # noqa: E402
 
 # One class for every integration, so `except LayaLowConfidenceError` catches all of them.
@@ -448,6 +449,8 @@ class LayaTaskGuard:
         hooks_raise: Optional[bool] = None,
         hooks_timeout: Optional[float] = None,
     ):
+        if not 0.0 <= threshold <= 1.0:
+            raise ValueError("threshold must be a probability in [0, 1]; got %r" % (threshold,))
         self.questions = questions
         self.action = action
         self.rejection_message = rejection_message
@@ -504,11 +507,17 @@ class LayaTaskGuard:
                     "probability": ans["noul"],
                     "confidence": ans.get("confidence", 0.0),
                 }
-            elif t == "score" and ans.get("score", 0.0) >= self.threshold:
-                violations[qid] = {
-                    "score": ans["score"],
-                    "confidence": ans.get("confidence", 0.0),
-                }
+            elif t == "score":
+                # `score` is the expected level (0..k-1), not a probability: gate on the
+                # probability that the level is at or above the middle of the scale.
+                levels = len(qdefs.get(qid, {}).get("criteria") or [])
+                p_violation = _score_violation_probability(ans, levels)
+                if p_violation >= self.threshold:
+                    violations[qid] = {
+                        "score": ans.get("score", 0.0),
+                        "probability": round(p_violation, 4),
+                        "confidence": ans.get("confidence", 0.0),
+                    }
 
         is_safe = len(violations) == 0
 

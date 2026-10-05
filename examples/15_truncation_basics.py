@@ -2,14 +2,15 @@
 
 Builds a document whose key facts sit at the start and at the end, prints the checkpoint's
 window, and shows that truncation keeps the head: the start question is answered and the
-end question is not.
+end question is not. Then reads the `usage` report that says so, because the answers do not.
 """
 from _common import banner, device_line, heading, load
 
 banner("15", "When the state does not fit", """
     Every call gets a fixed window: `max_len` tokens for the whole sequence, of which the
     question text and its options may take up to `head_max_len`. The state gets what is
-    left, and a state longer than that is cut down to its head with no warning.
+    left, and a state longer than that is cut down to its head. The answers do not say so;
+    the usage report does.
 
     The document below is a long case file with one key fact in its first sentence and a
     different key fact in its closing line. Two questions are asked about it -- one whose
@@ -69,18 +70,32 @@ for qid in QUESTIONS:
     print("   %-18s (%-32s)  noul=%.3f  conf=%.3f"
           % (qid, where, answer["noul"], answer["confidence"]))
 
-print("\n   usage: %d input tokens for %d questions in this call" % (result["usage"]["input_tokens"],
+usage = result["usage"]
+print("\n   usage: %d input tokens for %d questions in this call" % (usage["input_tokens"],
                                                                      len(QUESTIONS)))
 alone = agent.predict(document, {"cancel_threat": QUESTIONS["cancel_threat"]})
 print("   the same document with one question: %d input tokens -- exactly max_len=%d"
       % (alone["usage"]["input_tokens"], max_len))
 print("   so usage[\"input_tokens\"] is the batch total across the questions in the call:")
 print("   each question contributes its own (capped) sequence.")
+print("   and the token counts say nothing about the cut. The keys after them are the report:")
+print("   `truncated`             : %s" % usage["truncated"])
+print("   `state_tokens`          : %d tokens of state were tokenized" % usage["state_tokens"])
+print("   `state_tokens_dropped`  : %d of them never reached the model"
+      % usage["state_tokens_dropped"])
+print("   `truncated_questions`   : %s"
+      % (", ".join("`%s`" % qid for qid in usage["truncated_questions"]) or "none"))
+fits = agent.predict("CASE HEADER: invoice #4411 was charged twice. Please refund it.", QUESTIONS)
+print("   a state that fits the window: `truncated`=%s, `state_tokens_dropped`=%d, "
+      "`truncated_questions`=%s" % (fits["usage"]["truncated"], fits["usage"]["state_tokens_dropped"],
+                                    fits["usage"]["truncated_questions"]))
 
 print("""
    `duplicate_invoice` reads the head and answers %.3f. `cancel_threat` answers %.3f with
    confidence %.3f -- the model is sure no cancellation is mentioned, because the only
-   mention was cut off. Truncation is silent in both directions: nothing warns you, and
-   the answer looks as certain as any other. Raising the window at runtime is example 37.
+   mention was cut off. Neither answer shows it: a truncated answer looks exactly as
+   certain as a well-founded one. `truncated` is what says so, and `truncated_questions`
+   names which of them were built on the cut, so a caller reads the report instead of
+   estimating from the length of what it sent. Raising the window at runtime is example 37.
    """ % (result["answers"]["duplicate_invoice"]["noul"], result["answers"]["cancel_threat"]["noul"],
           result["answers"]["cancel_threat"]["confidence"]))

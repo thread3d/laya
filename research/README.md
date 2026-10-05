@@ -148,7 +148,7 @@ not sample", not as a per-cell ranking.*
 **Routing takes Laya from 23 to 48 of 51 languages.** On MASSIVE intent (20 options, random =
 0.050) the English checkpoint macro-averages 0.227 and clears 3x random on 23 of 51 languages;
 the multilingual checkpoint reaches 0.401 and clears it on 48. The multilingual figures are the
-re-run, not the committed sweep — see `results/cpu_51_language_sweep_refreshed.json` below.
+re-run, not the committed sweep — see `results/cpu_51_language_sweep_refreshed.json` above.
 
 **The English checkpoint's confidence gives no warning when it cannot read the input.** Khmer:
 0.000 accuracy at 0.952 mean confidence — that is the *raw* temperature; as served, after the

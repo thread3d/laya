@@ -2,19 +2,23 @@
 
 Laya gives every request a fixed window: the option head takes `head_max_len` and the state gets
 the rest of `max_len`. A state larger than that is truncated. This example measures how much of
-a long multilingual document survives at the default, then raises the window at runtime.
+a long multilingual document survives at the default, raises the window at runtime, and then
+shows that which *end* of the state survives is decided by the state's own type.
 """
-from _common import banner, device_line, load
-from laya.common import build_sequence, serialize_state
+from _common import banner, device_line, heading, load
+from laya.common import build_sequence, serialize_state, state_room
 
 banner("37", "Long documents and truncation", """
     `laya-multilingual` defaults to max_len=1024 (head_max_len=256). The configured split
     reserves up to 256 tokens for the option head, leaving 768 for the state in the worst case
     (a small question uses less, so the measured room is a little larger). `build_sequence`
     fills that window with `state[:room]` -- the *head* of the document is kept and the tail is
-    dropped. `build_sequence` has a `truncate_left=True` switch to keep the tail instead, but
-    `predict`/`system_one` does not expose it. Anything longer than the window is invisible to
-    the model, and nothing warns you.
+    dropped. Which end that is comes from the state's own type, not from a parameter: `predict`
+    passes `truncate_left=isinstance(state, list)`, so a *list* of turns is clamped from the other
+    side and keeps its tail, while a string or dict keeps its head. `state_room` documents the same
+    split. And the cut is not invisible to the caller: every call reports it in `usage` --
+    `truncated`, `state_tokens`, `state_tokens_dropped`, `truncated_questions` -- which this
+    example prints below.
 
     mmBERT is a RoPE encoder and supports up to 8192 tokens, so the window can be widened at
     runtime: `agent.cfg` is a plain dict and `system_one` reads it on every call. We raise
@@ -83,6 +87,7 @@ def head_and_room(agent, question, max_len, head_max_len):
 
 agent = load("multilingual")
 device_line(agent)
+default_cfg = dict(agent.cfg)
 doc = build_document()
 doc_tokens = len(agent.tok(serialize_state(doc), add_special_tokens=False)["input_ids"])
 print("   document: %d ticket records, %d characters, %d tokens (multilingual tokenizer)"
@@ -100,18 +105,68 @@ for head_max_len, max_len in ((256, 1024), (512, 8192)):
               % (qid, head, room, visible, doc_tokens, 100 * visible // doc_tokens,
                  "  TAIL DROPPED" if visible < doc_tokens else "  full document"))
     result = agent.predict(doc, QUESTIONS)
+    usage = result["usage"]
     print("   usage: %d input tokens across %d questions (batch total), %d output tokens"
-          % (result["usage"]["input_tokens"], len(QUESTIONS), result["usage"]["output_tokens"]))
+          % (usage["input_tokens"], len(QUESTIONS), usage["output_tokens"]))
     for qid, a in result["answers"].items():
         if a["type"] == "noul":
             print("   %-12s noul=%.3f  conf=%.3f" % (qid, a["noul"], a["confidence"]))
         else:
             print("   %-12s score=%.2f/3  conf=%.3f" % (qid, a["score"], a["confidence"]))
+    # The answers above do not look cut off -- `truncated` is the only thing that says so.
+    print("   the call reports the clamp: `truncated`=%s, `state_tokens`=%d,"
+          " `state_tokens_dropped`=%d, `truncated_questions`=%s"
+          % (usage["truncated"], usage["state_tokens"], usage["state_tokens_dropped"],
+             ", ".join("`%s`" % qid for qid in usage["truncated_questions"]) or "none"))
 
 first, second = visible_by_config["needs_human"]
 print("\n   widening the window moved the visible document from %d to %d tokens: the tail is"
       % (first, second))
-print("   only recoverable by setting the budget *before* the forward pass, not after.")
+print("   recoverable by setting the budget *before* the forward pass, not after -- and by")
+print("   handing the state over as a list, which is the section below.")
 print("   the head stayed 36/48 tokens even at head_max_len=512 -- it is a ceiling, not a")
 print("   reservation, and the unused head room flows back to the state.")
+
+# --- which end of the state survives: the same tokens, two different types -------------------
+heading("which end of the state survives")
+agent.cfg["head_max_len"], agent.cfg["max_len"] = default_cfg["head_max_len"], default_cfg["max_len"]
+max_len, head_max_len = agent.cfg["max_len"], agent.cfg["head_max_len"]
+
+CLOSING = "CLOSING NOTE: the last record of this export mentions the auditors."
+turns = [rec["body"] for rec in doc["records"]] + [CLOSING]
+turns_text = serialize_state(turns)          # the exact characters a list state serializes to
+TAIL_Q = {"asked_last": {"type": "noul",
+                         "instructions": "Does the closing note of this export mention the auditors?"}}
+# `predict` picks the clamp side with `truncate_left = isinstance(state, list)`, on both agents.
+# Rebuild that slice here so the two words that decide it -- first and last -- can be looked at.
+q = {"t": "noul", "ins": TAIL_Q["asked_last"]["instructions"], "crit": None}
+room = state_room(agent.tok, q, max_len, head_max_len)
+print("   %d state tokens, %d of them fit (`state_room`), so %d are dropped either way."
+      % (len(agent.tok(turns_text, add_special_tokens=False)["input_ids"]), room,
+         len(agent.tok(turns_text, add_special_tokens=False)["input_ids"]) - room))
+for label, state in (("a string", turns_text), ("a list", turns)):
+    tokens = agent.tok(serialize_state(state), add_special_tokens=False)["input_ids"]
+    left = isinstance(state, list)
+    kept = tokens[max(0, len(tokens) - room):] if left else tokens[:room]
+    answer = agent.predict(state, TAIL_Q)
+    usage = answer["usage"]
+    print("   the same %d tokens as %-9s: `truncate_left` = isinstance(state, list) -> %s,"
+          " so `state_tokens_dropped`=%d (my slice: %d)"
+          % (len(tokens), label, left, usage["state_tokens_dropped"], len(tokens) - len(kept)))
+    print("   %swhat the model actually read starts %r and ends %r"
+          % (" " * 24, agent.tok.decode(kept)[:44], agent.tok.decode(kept)[-44:]))
+    print("   %sthe closing note is in it: %s   noul=%.3f  conf=%.3f"
+          % (" " * 24, "auditors" in agent.tok.decode(kept),
+             answer["answers"]["asked_last"]["noul"], answer["answers"]["asked_last"]["confidence"]))
+
+print("""
+   Same characters, same `state_tokens`, same `state_tokens_dropped` -- the type alone decided
+   which end of it the model read. The string kept its head, so the auditors sentence never
+   reached the model; the list was clamped from the left, so it did. `truncate_left` is not a
+   parameter a caller passes: `predict` takes it from `isinstance(state, list)`, and `state_room`
+   is what tells you how much of either end fits.
+
+   And the answers disagree with that: both say yes, because a wall of angry tickets is enough to
+   make the head fire whatever survived in it. That is the reason the report exists. `truncated`
+   and `truncated_questions` are the only part of this result that says the evidence was cut.""")
 

@@ -47,7 +47,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -e . datasets
+          # `onnx` for the torch/ONNX parity suite, `serve` + httpx for the demo-server
+          # suite. Both download weights, which is why they live in this lane and not in PR CI.
+          pip install -e ".[onnx,serve]" datasets httpx pytest
 
       - name: Evaluate the English checkpoint on MASSIVE English
         run: |
@@ -59,6 +61,21 @@ jobs:
           python research/evals/check_regression.py report.json \
             research/results/eval_english_51_languages.json \
             research/evals/thresholds.json
+
+      # `tests/test_onnx.py` performs a real export and a numerical parity check, and the export
+      # downloads `convaiinnovations/laya`; it is skip-guarded on `onnxruntime`, so no workflow
+      # running it means torch<->ONNX parity and the dynamic-shape export (#695) have no automated
+      # check anywhere while `AGENTS.md` presents the suite as the ONNX check. The weight-free
+      # `tests/test_onnx_quantize.py` stays in the PR `onnx-export` job.
+      - name: Torch/ONNX numerical parity
+        run: python -m pytest tests/test_onnx.py -q
+
+      # The demo server's renderer and escaping, and the `/health`, `/models`, `/presets` and `/gui`
+      # wiring, are otherwise unguarded: no workflow referenced this suite, which by its own
+      # comments is what caught the `None`-criteria and missing `python-multipart` bugs. It loads
+      # the English weights only, which this lane has already downloaded.
+      - name: Demo server smoke tests
+        run: python tests/test_server_example.py
 
       - name: Upload the report
         if: always()

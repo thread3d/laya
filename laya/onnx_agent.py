@@ -187,6 +187,9 @@ class ONNXAgent(HookRegistry):
         self.temperature = [clamp_temperature(t) for t in self.temperature_raw]
         self.temperature_by_options = {k: clamp_temperature(v)
                                        for k, v in self.temperature_by_options_raw.items()}
+        # Optional histogram-binning map installed by `load_calibration`; absent/None means
+        # answer_confidence is the temperature-scaled one, same as the PyTorch Agent.
+        self.binning_map = None
         # Per-language temperature overrides, through the same helper the PyTorch Agent uses, so a
         # caller can hand the same `lang_temperatures` to either backend and read the same
         # confidence -- including the same error for the same malformed input.
@@ -644,6 +647,9 @@ class ONNXAgent(HookRegistry):
                         lang: Optional[str] = None) -> Dict[str, Any]:
         """Decode the `len(ids)` head rows starting at `offset` into this state's answers."""
         answers = {}
+        binning_map = getattr(self, "binning_map", None)
+        if binning_map:
+            from .calibrate import apply_binning_map
         for r, qid in enumerate(ids):
             q = internal[qid]
             k = len(items[r]["markers"])
@@ -663,7 +669,14 @@ class ONNXAgent(HookRegistry):
             # `answer_confidence` is the calibrated max(p) confidence, reported on every question
             # type so a caller can gate across types on one number -- matching the PyTorch Agent,
             # whose output ONNX callers otherwise cannot read (KeyError on cross-backend swap).
-            ans_conf = round(answer_confidence(p, k), 4)
+            ans_raw = answer_confidence(p, k)
+            lang_override = bool(lang and lang.split("-")[0].lower() in self.lang_temperatures)
+            if binning_map and not lang_override:
+                ans_conf = round(
+                    apply_binning_map(ans_raw, temp_bucket(qt, k), binning_map), 4
+                )
+            else:
+                ans_conf = round(ans_raw, 4)
             ext = {"act_probability": round(float(act[offset + r, 0]), 4)}
 
             if q["t"] == "choice":

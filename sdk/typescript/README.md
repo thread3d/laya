@@ -41,7 +41,7 @@ Set `LAYA_PRELOAD=0` to defer loading until the first prediction. Initial loads
 download weights and need sufficient memory and disk space. The client timeout
 defaults to 120 seconds; the example allows 10 minutes for a cold load. Server
 configuration uses environment variables, not command-line flags. See the
-[server guide](../../README.md#self-hosting-http-server-jev-compatible).
+[server guide](https://github.com/NandhaKishorM/laya/blob/main/README.md#self-hosting-http-server-jev-compatible).
 
 ## Install in another JavaScript project
 
@@ -117,8 +117,13 @@ result.answers.urgency.score;      // number: expected rubric index, from 0 to 2
 result.answers.refund.noul;        // number: P(true), from 0 to 1
 result.answers.department.probabilities.billing;
 result.answers.department.confidence;
+result.answers.department.answer_confidence; // number: max(p), the same quantity on every type
+result.answers.urgency.abstention;           // 'passed' | 'abstained' | 'unevaluated', with minConfidence
+result.answers.urgency.low_confidence;       // true only on an answer that fell below it
 result.answers.department.action?.act_probability; // Laya-only metadata
 result.usage.input_tokens;
+result.usage.truncated;              // boolean: the state did not fit the room left for it
+result.usage.truncated_questions;    // string[]: the questions whose own window was cut
 ```
 
 Choice criteria also accept an array of unique labels, serialized as an option-to-null
@@ -131,6 +136,15 @@ changing during serialization. Empty questions or criteria are rejected.
 Response fields retain Python's spelling (`input_tokens`, `act_probability`,
 etc.). Scores use zero-based rubric levels. Confidence and accuracy have the
 same calibration limits as the Python model; see the root README.
+
+`usage` is the whole record `/v1/systemone` reports: `input_tokens`,
+`output_tokens` (always 0), `state_tokens`, `state_tokens_dropped`,
+`truncated` and `truncated_questions`. How much of a state the model reads is a
+token budget that moves with `max_len`, `head_max_len` and each question's own
+option prompt, so these are the only fields that show a cut: the answer itself
+is unchanged when evidence is dropped. `options` is added only when some
+question's options no longer have a token span each. See the `usage` table in
+`docs/http-api.md` for what each key measures.
 
 ## Local model selection
 
@@ -145,18 +159,18 @@ await laya.predict(state, questions, { model: 'multilingual' });
 ```
 
 Laya accepts its local checkpoint aliases. The HTTP endpoint forwards the
-per-request controls documented in the [HTTP API](../../docs/http-api.md)
+per-request controls documented in the [HTTP API](https://github.com/NandhaKishorM/laya/blob/main/docs/http-api.md)
 reference, and this client exposes them as options on `predict()`:
 
 | option | wire field | meaning |
 |---|---|---|
-| `model` | `model` | checkpoint name or alias for this request |
+| `model` | `model` | checkpoint name or alias for this request; a path or unpublished Hub id is a 422 from the server |
 | `task` | `task` | force a workflow; an unknown name is a 422 naming it |
 | `lang` | `lang` | a language code that skips detection when it names a language |
 | `langGuess` | `lang_guess` | a code from your own LID, consulted before detection |
 | `maxLen` | `max_len` | total token window for this request (server-capped) |
 | `headMaxLen` | `head_max_len` | token window the option prompt shares, same cap |
-| `minConfidence` | `min_confidence` | abstention threshold in `[0, 1]`; low-confidence answers are marked, not dropped |
+| `minConfidence` | `min_confidence` | abstention gate: one threshold in `[0, 1]`, or a per-bucket map of option-count bucket to threshold; low-confidence answers are marked, not dropped |
 
 ```js
 await laya.predict(state, questions, { task: 'typed', minConfidence: 0.8 });
@@ -170,7 +184,12 @@ automatic workflow routing.
 
 Laya returns `model`, `answers`, and `usage`, with optional `routing`, answer
 `action`, and Noul `confidence` metadata. Those fields are validated when
-present. Choice and Score confidence remains required. `health()` is never
+present. Choice and Score confidence remains required. Every answer also carries
+`answer_confidence` (`max(p)`), the one confidence that means the same thing on all
+three question types; when you pass `minConfidence`, each answer of that call additionally
+reports `abstention` and `abstention_threshold`, and the ones below the threshold carry
+`low_confidence: true`. With `minConfidence` unset none of those three keys appear — absence is
+how a caller tells an ungated run from a cleared gate. `health()` is never
 called by `predict()`.
 
 ## Which JavaScript client?

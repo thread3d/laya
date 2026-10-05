@@ -342,6 +342,14 @@ def _overrides(task: Any, lang: Any, max_len: Any, head_max_len: Any) -> dict:
     return {name: value for name, value in values.items() if value is not None}
 
 
+def _raise_if_remote_error(exc: BaseException) -> None:
+    """Turn transport failures into the ToolError the client can read."""
+    from .remote import RemoteError
+
+    if isinstance(exc, RemoteError):
+        raise ToolError(exc.code, exc.message) from exc
+
+
 def _normalize_answers(raw: Any) -> dict:
     if not isinstance(raw, dict):
         raise ToolError("internal_error", "predict returned non-object answers")
@@ -457,7 +465,11 @@ def laya_predict(
         return router.predict(state_d, questions_d, model=model_name, **budget)
 
     started = time.perf_counter()
-    result = _run()
+    try:
+        result = _run()
+    except Exception as exc:
+        _raise_if_remote_error(exc)
+        raise
     latency_ms = (time.perf_counter() - started) * 1000.0
 
     norm = _normalize_result(result)
@@ -589,6 +601,13 @@ def _resident_or_load(router: Any, name: str) -> Any:
     resident = router_agent(router, name)
     if resident is not None:
         return resident
+    if hasattr(router, "base_url") and hasattr(router, "health"):
+        raise ToolError(
+            "unsupported_remote",
+            "laya_shortlist embeds options with the answering checkpoint in-process; it is not "
+            "available when LAYA_BASE_URL points the MCP server at a remote laya-serve. Use "
+            "laya_predict with head_max_len raised, or run the MCP server without LAYA_BASE_URL.",
+        )
     load = getattr(router, "load", None)
     if load is None:
         raise ToolError("models_not_ready", f"checkpoint {name!r} is not loaded")
@@ -657,6 +676,15 @@ def laya_shortlist(
     (``lang_guess`` only routes, so like ``task`` it is stripped before the answering pass);
     ``min_confidence`` flags a kept-label answer the checkpoint is unsure of.
     """
+    # Before the heavy imports below: a remote router has no in-process encoder to embed with,
+    # and the refusal should not cost the MCP process a torch import on the way to saying so.
+    if router is not None and agent is None and hasattr(router, "base_url") and hasattr(router, "health"):
+        raise ToolError(
+            "unsupported_remote",
+            "laya_shortlist embeds options with the answering checkpoint in-process; it is not "
+            "available when LAYA_BASE_URL points the MCP server at a remote laya-serve. Use "
+            "laya_predict with head_max_len raised, or run the MCP server without LAYA_BASE_URL.",
+        )
     # Lazy: keeps numpy/shortlist out of module import for laya.mcp.tools.
     from laya.shortlist import (
         DEFAULT_SHORTLIST_K,
@@ -822,7 +850,39 @@ def laya_preset(
     )
 
 
+def _remote_status(router: Any, preload: bool) -> dict:
+    """``laya_status`` for a remote router: the server's own /health, no torch import here."""
+    versions: dict[str, str | None] = {"laya": None}
+    try:
+        versions["laya"] = getattr(__import__("laya"), "__version__", "unknown")
+    except Exception:
+        pass
+    out: dict[str, Any] = {
+        "mode": "remote",
+        "base_url": router.base_url,
+        "router_preload": False,
+        "router_ready": True,
+        "package_versions": versions,
+    }
+    try:
+        health = router.health()
+    except Exception as exc:  # noqa: BLE001 -- the status tool reports, it never raises
+        out["server"] = None
+        out["server_error"] = f"{type(exc).__name__}: {exc}"
+        out["loaded"] = []
+        return out
+    out["server"] = health
+    loaded = health.get("loaded")
+    out["loaded"] = [v for v in loaded if isinstance(v, str)] if isinstance(loaded, list) else []
+    for key in ("device", "device_is_preference", "checkpoint_devices"):
+        if key in health:
+            out[key] = health[key]
+    return out
+
+
 def laya_status(*, router: Any = None, loaded: list[str] | None = None, preload: bool = True) -> dict:
+    if router is not None and hasattr(router, "base_url") and hasattr(router, "health"):
+        return _remote_status(router, preload)
     report = device_report()
     versions: dict[str, str | None] = {
         "laya": None,
@@ -918,7 +978,11 @@ def _validate_batch_item(request: Any, i: int) -> dict:
         if key in request:
             item[key] = _validate_batch_str(request[key], "%s[%r]" % (where, key))
     if "lang_guess" in request:
-        item["lang_guess"] = request["lang_guess"]
+        # Type-check it the way the single-request path does (`validate_lang_guess`), instead of
+        # passing it through raw: a non-string (e.g. a JSON object) otherwise reached
+        # `_english_from_code(dict)`, stringified to something that matches no English subtag, and
+        # silently routed that item to the multilingual checkpoint instead of raising cleanly.
+        item["lang_guess"] = validate_lang_guess(request["lang_guess"])
     # `Router.predict_batch` reads both off the request dict and splits requests that ask for
     # different budgets into separate forward passes, so an item that names one must keep it.
     for key in ("max_len", "head_max_len"):
@@ -1011,6 +1075,12 @@ def laya_predict_batch(
     """
     items = validate_batch_requests(requests)
     size = _validate_batch_size(batch_size)
+    # Validate the call-level controls up front, the way every sibling tool does, so a bad value is
+    # a clean ToolError the client can read -- not an `internal_error: ValueError` that escapes the
+    # TypeError-only handler below (min_confidence), and not a silent 1-second hook deadline from
+    # core's `float(True) == 1.0` (hooks_timeout).
+    mc = validate_min_confidence(min_confidence)
+    ht = _validate_hooks_timeout(hooks_timeout)
     if router is None:
         raise ToolError("models_not_ready", "Router is not loaded")
     if not hasattr(router, "predict_batch"):
@@ -1021,14 +1091,18 @@ def laya_predict_batch(
         kwargs = {}
         if size is not None:
             kwargs["batch_size"] = size
-        if hooks_timeout is not None:
-            kwargs["hooks_timeout"] = hooks_timeout
-        if min_confidence is not None:
-            kwargs["min_confidence"] = min_confidence
+        if ht is not None:
+            kwargs["hooks_timeout"] = ht
+        if mc is not None:
+            kwargs["min_confidence"] = mc
         if sort_by_length:
             kwargs["sort_by_length"] = True
         results = router.predict_batch(items, **kwargs)
-    except TypeError as exc:
+    except Exception as exc:
+        _raise_if_remote_error(exc)
+        if not isinstance(exc, TypeError):
+            raise
+
         # A Router without batch support raises at the call itself; anything
         # else is a real bug and must surface unchanged.
         raise ToolError(
@@ -1151,6 +1225,9 @@ def laya_decide(
                             model=model_name, min_confidence=min_conf)
     except SchemaError as exc:
         raise ToolError("invalid_schema", str(exc)) from exc
+    except Exception as exc:
+        _raise_if_remote_error(exc)
+        raise
     latency_ms = (time.perf_counter() - started) * 1000.0
 
     answers = _normalize_answers(details.answers)

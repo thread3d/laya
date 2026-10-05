@@ -5,7 +5,7 @@ raise when you might expect them to. Nothing here is inferred from the documenta
 """
 import os
 
-from _common import laya, MODELS, banner, device_line, heading, load
+from _common import LOCAL_MODELS, banner, device_line, heading, laya, load
 
 from laya.router import Router
 
@@ -14,7 +14,7 @@ banner("39", "Error handling", """
 
       1. an unknown model name passed to `Router`  -> ValueError, before anything loads;
       2. `laya.load` on a missing local path       -> FileNotFoundError;
-      3. a `choice` question with empty criteria   -> a low-level RuntimeError, not an answer;
+      3. a `choice` question with empty criteria   -> ValueError naming it, before the model runs;
       4. a question whose options do not fit       -> ValueError, but only once they overflow;
       5. a `noul` whose probability is near 0.5    -> a perfectly ordinary answer, not an error.
 
@@ -33,7 +33,10 @@ except ValueError as e:
 print("   -> the name is normalised in the constructor, so a typo fails before any weights load.")
 
 heading("2. laya.load on a path that does not exist")
-missing = os.path.join(os.path.dirname(MODELS["english"]), "does-not-exist")
+# `LOCAL_MODELS` is the directory each checkpoint would live in; `MODELS` is the `Router` spec,
+# which `_common.checkpoint` returns as `(repo, subfolder)` when `models/` is not in the checkout.
+# A path has to come from the first one.
+missing = os.path.join(LOCAL_MODELS["english"], "does-not-exist")
 try:
     laya.load(missing)
     print("   no exception raised")
@@ -52,8 +55,10 @@ for criteria in ({}, []):
         print("   criteria=%r -> no exception, answer=%r" % (criteria, answer["answers"]["q"]))
     except Exception as e:
         print("   criteria=%r -> %s: %s" % (criteria, type(e).__name__, e))
-print("   -> both the empty dict and the empty list reach the scorer with zero options and blow")
-print("      up in top-k. No answer dict is returned; treat an empty schema as a caller bug.")
+print("   -> neither form reaches the decision head. `Agent._check_question` runs inside")
+print("      `predict_batch`, before the state is encoded, and raises ValueError naming the")
+print("      question and what to add -- so an empty schema is a caller bug with a message that")
+print("      says which of twenty questions to fix, not a low-level crash to pattern-match.")
 two = agent.predict(TICKET, {"q": {"type": "choice", "instructions": "Pick one",
                                    "criteria": {"a": None, "b": None}}})["answers"]["q"]
 print("   (a two-option question with None descriptions is fine: a=%.3f b=%.3f)"

@@ -1094,6 +1094,427 @@ check("threads/hot-path loads keep agents consistent", agents_len, 1)
 check("threads/hot-path order intact", order, ["english"])
 
 
+def _cold_build_does_not_hold_lifecycle_lock():
+    """A cold build must not stall `loaded` or a resident checkpoint for its whole duration.
+
+    The build runs a download plus construction, seconds to minutes. Held under `_lock`, it made
+    `GET /health` (which reads `loaded`) and every request for an already-resident checkpoint wait
+    for it, so a liveness probe timed out during a lazy load.
+    """
+    import laya.agent as _agent_mod
+    building, release = threading.Event(), threading.Event()
+    constructions = []
+
+    class _BlockingAgent:
+        def __init__(self, *args, **kwargs):
+            constructions.append(1)
+            building.set()
+            release.wait(5)
+
+    old = _agent_mod.Agent
+    _agent_mod.Agent = _BlockingAgent
+    try:
+        r = Router(max_loaded=3)
+        resident = _Stub("english")
+        r.attach("english", resident)
+        loaders = [threading.Thread(target=r.load, args=("multilingual",)) for _ in range(2)]
+        for t in loaders:
+            t.start()
+        building.wait(5)
+        timings = {}
+        for label, call in (("loaded", lambda: r.loaded),
+                            ("resident load", lambda: r.load("english"))):
+            done = threading.Event()
+            threading.Thread(target=lambda c=call, d=done: (c(), d.set()), daemon=True).start()
+            timings[label] = done.wait(1.0)
+        release.set()
+        for t in loaders:
+            t.join(5)
+        loaded_after, built = sorted(r.loaded), len(constructions)
+        # An unload issued while a build is in flight waits for it, so the build cannot land after it.
+        building.clear()
+        release.clear()
+        threading.Thread(target=r.load, args=("typed-decisions",), daemon=True).start()
+        building.wait(5)
+        unloader = threading.Thread(target=r.unload, args=("typed-decisions",))
+        unloader.start()
+        _time.sleep(0.1)
+        release.set()
+        unloader.join(5)
+        timings["unload waits for the build"] = "typed-decisions" not in r.loaded
+        return timings, built, loaded_after
+    finally:
+        release.set()
+        _agent_mod.Agent = old
+
+timings, built, resident_after = _cold_build_does_not_hold_lifecycle_lock()
+check("threads/loaded answers during a cold build", timings["loaded"], True)
+check("threads/resident checkpoint answers during a cold build", timings["resident load"], True)
+check("threads/concurrent cold loads still build once", built, 1)
+check("threads/cold build lands in the LRU", resident_after, ["english", "multilingual"])
+check("threads/unload during a cold build frees it", timings["unload waits for the build"], True)
+
+
+def _on_load_reenters_router(target, hooks_concurrent):
+    """An `on_load` hook may call `router.load()` again without deadlocking.
+
+    `_build_lock` is not re-entrant, so this holds only while `load()` dispatches `on_load`
+    after releasing it. Returns whether the outer load finished, the agent the hook got back,
+    the outer agent, and what ended up loaded.
+    """
+    import laya.agent as _agent_mod
+
+    class _FastAgent:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    got = []
+
+    class _ReentrantHook:
+        def on_load(self, ctx):
+            if ctx.model == "multilingual" and not got:
+                got.append(ctx.router.load(target))
+
+    old = _agent_mod.Agent
+    _agent_mod.Agent = _FastAgent
+    try:
+        r = Router(max_loaded=3, hooks=[_ReentrantHook()], hooks_concurrent=hooks_concurrent)
+        outer = []
+        t = threading.Thread(target=lambda: outer.append(r.load("multilingual")), daemon=True)
+        t.start()
+        t.join(5)
+        return not t.is_alive(), got[0] if got else None, outer[0] if outer else None, sorted(r.loaded)
+    finally:
+        _agent_mod.Agent = old
+
+for concurrent in (True, False):
+    tag = "concurrent" if concurrent else "serialised"
+    finished, inner, outer, loaded = _on_load_reenters_router("multilingual", concurrent)
+    check(f"threads/on_load reloading the same checkpoint does not deadlock ({tag})", finished, True)
+    check(f"threads/on_load reload returns the resident agent ({tag})",
+          inner is not None and inner is outer, True)
+    finished, inner, outer, loaded = _on_load_reenters_router("typed-decisions", concurrent)
+    check(f"threads/on_load loading another checkpoint does not deadlock ({tag})", finished, True)
+    check(f"threads/on_load can load another checkpoint ({tag})", loaded, ["multilingual", "typed-decisions"])
+
+
+def _test_per_checkpoint_unload_granularity():
+    """unload("english") must not wait for an in-flight build of multilingual.
+
+    unload("multilingual") must wait for its own in-flight build, and resident access
+    (r.loaded and r.load("english")) must remain non-blocking while multilingual builds.
+    """
+    import laya.agent as _agent_mod
+    multi_building = threading.Event()
+    multi_release = threading.Event()
+
+    class _ControllableAgent:
+        def __init__(self, repo, *args, **kwargs):
+            if "multilingual" in repo or kwargs.get("subfolder") == "multilingual":
+                multi_building.set()
+                multi_release.wait(10)
+
+        def system_one(self, state, questions):
+            return {"model": "fake", "answers": {}, "usage": {}}
+
+    old = _agent_mod.Agent
+    _agent_mod.Agent = _ControllableAgent
+    try:
+        r = Router(max_loaded=3)
+        resident = _Stub("english")
+        r.attach("english", resident)
+
+        multi_loader = threading.Thread(target=r.load, args=("multilingual",), daemon=True)
+        multi_loader.start()
+        multi_building.wait(5)
+
+        # 1. unload("english") must complete immediately without waiting for multilingual build
+        english_unload_done = threading.Event()
+        threading.Thread(target=lambda: (r.unload("english"), english_unload_done.set()), daemon=True).start()
+        unloaded_english_fast = english_unload_done.wait(1.0)
+        english_resident = "english" in r.loaded
+
+        # 7. loaded and resident access remain non-blocking
+        r.attach("english", resident)
+        loaded_done = threading.Event()
+        threading.Thread(target=lambda: (r.loaded, loaded_done.set()), daemon=True).start()
+        loaded_fast = loaded_done.wait(1.0)
+
+        resident_load_done = threading.Event()
+        threading.Thread(target=lambda: (r.load("english"), resident_load_done.set()), daemon=True).start()
+        resident_load_fast = resident_load_done.wait(1.0)
+
+        # 2. unload("multilingual") waits for multilingual build
+        multi_unload_done = threading.Event()
+        multi_unloader = threading.Thread(
+            target=lambda: (r.unload("multilingual"), multi_unload_done.set()), daemon=True
+        )
+        multi_unloader.start()
+        unloaded_multi_early = multi_unload_done.wait(0.1)
+
+        multi_release.set()
+        multi_loader.join(5)
+        multi_unloader.join(5)
+
+        unloaded_multi_finished = multi_unload_done.wait(1.0)
+        multi_resident_after = "multilingual" in r.loaded
+
+        return (
+            unloaded_english_fast,
+            english_resident,
+            loaded_fast,
+            resident_load_fast,
+            unloaded_multi_early,
+            unloaded_multi_finished,
+            multi_resident_after,
+        )
+    finally:
+        multi_release.set()
+        _agent_mod.Agent = old
+
+(
+    unloaded_en_fast,
+    en_resident,
+    loaded_fast,
+    resident_load_fast,
+    unloaded_multi_early,
+    unloaded_multi_finished,
+    multi_resident_after,
+) = _test_per_checkpoint_unload_granularity()
+check("threads/unload english does not wait for multilingual build", unloaded_en_fast, True)
+check("threads/english is evicted after unload", en_resident, False)
+check("threads/loaded property is non-blocking during build", loaded_fast, True)
+check("threads/resident load is non-blocking during build", resident_load_fast, True)
+check("threads/unload multilingual waits for in-flight build", unloaded_multi_early, False)
+check("threads/unload multilingual completes after build", unloaded_multi_finished, True)
+check("threads/multilingual not resident after unload", multi_resident_after, False)
+
+
+def _test_concurrent_load_same_checkpoint_dedup():
+    """Concurrent loads for the same checkpoint must construct exactly one Agent."""
+    import laya.agent as _agent_mod
+    build_started = threading.Event()
+    build_release = threading.Event()
+    constructions = []
+
+    class _SlowAgent:
+        def __init__(self, *args, **kwargs):
+            constructions.append(1)
+            build_started.set()
+            build_release.wait(5)
+
+    old = _agent_mod.Agent
+    _agent_mod.Agent = _SlowAgent
+    try:
+        r = Router(max_loaded=3)
+        got = []
+        threads = [
+            threading.Thread(target=lambda: got.append(r.load("multilingual")), daemon=True)
+            for _ in range(5)
+        ]
+        for t in threads:
+            t.start()
+
+        build_started.wait(5)
+        build_release.set()
+        for t in threads:
+            t.join(5)
+
+        return len(constructions), len({id(a) for a in got}), len(got)
+    finally:
+        build_release.set()
+        _agent_mod.Agent = old
+
+built_count, unique_agents, total_callers = _test_concurrent_load_same_checkpoint_dedup()
+check("threads/concurrent loads construct exactly one Agent", built_count, 1)
+check("threads/concurrent callers receive identical Agent instance", unique_agents, 1)
+check("threads/all concurrent callers complete", total_callers, 5)
+
+
+def _test_attach_during_build_wins():
+    """attach() called while a build is in flight must win without being overwritten."""
+    import laya.agent as _agent_mod
+    build_started = threading.Event()
+    build_release = threading.Event()
+
+    class _ControllableAgent:
+        def __init__(self, *args, **kwargs):
+            build_started.set()
+            build_release.wait(5)
+
+    old = _agent_mod.Agent
+    _agent_mod.Agent = _ControllableAgent
+    try:
+        r = Router(max_loaded=3)
+        attached_agent = _Stub("english")
+        loader_result = []
+
+        loader = threading.Thread(target=lambda: loader_result.append(r.load("english")), daemon=True)
+        loader.start()
+
+        build_started.wait(5)
+        r.attach("english", attached_agent)
+
+        build_release.set()
+        loader.join(5)
+
+        subsequent = r.load("english")
+        return (
+            loader_result[0] is attached_agent,
+            subsequent is attached_agent,
+            r._agents.get("english") is attached_agent,
+        )
+    finally:
+        build_release.set()
+        _agent_mod.Agent = old
+
+loader_won, subsequent_won, resident_won = _test_attach_during_build_wins()
+check("threads/attach during build wins for in-flight loader", loader_won, True)
+check("threads/attach during build wins for subsequent load", subsequent_won, True)
+check("threads/attach during build remains resident", resident_won, True)
+
+
+def _test_failed_build_cleans_inflight_and_allows_retry():
+    """Failed builds clean up in-flight state, propagate exceptions, and allow retry."""
+    import laya.agent as _agent_mod
+    fail_first = [True]
+
+    class _FailingAgent:
+        def __init__(self, *args, **kwargs):
+            if fail_first[0]:
+                raise ValueError("corrupted weights download")
+            self.model = "ok"
+
+    old = _agent_mod.Agent
+    _agent_mod.Agent = _FailingAgent
+    try:
+        r = Router(max_loaded=3)
+        errors = []
+
+        def _loader(err_list):
+            try:
+                r.load("english")
+            except ValueError as e:
+                err_list.append(str(e))
+
+        t1 = threading.Thread(target=_loader, args=(errors,), daemon=True)
+        t2 = threading.Thread(target=_loader, args=(errors,), daemon=True)
+        t1.start()
+        t2.start()
+        t1.join(5)
+        t2.join(5)
+
+        inflight_cleared = "english" not in r._loading
+        not_resident = "english" not in r._agents
+
+        fail_first[0] = False
+        retried_agent = r.load("english")
+        retried_resident = "english" in r.loaded
+
+        return (
+            len(errors),
+            errors[0] if errors else None,
+            inflight_cleared,
+            not_resident,
+            retried_agent.model,
+            retried_resident,
+        )
+    finally:
+        _agent_mod.Agent = old
+
+err_count, first_err, inflight_cleared, not_res, retried_model, retried_res = (
+    _test_failed_build_cleans_inflight_and_allows_retry()
+)
+check("threads/failed build raises to concurrent loaders", err_count, 2)
+check("threads/failed build error message preserved", first_err, "corrupted weights download")
+check("threads/failed build cleans _loading registry", inflight_cleared, True)
+check("threads/failed build does not leave model resident", not_res, True)
+check("threads/subsequent load retries and succeeds", retried_model, "ok")
+check("threads/retried load lands in resident set", retried_res, True)
+
+
+def _test_waiting_callers_no_deadlock():
+    """Concurrent mix of loads and unloads on same and different models must not deadlock."""
+    import laya.agent as _agent_mod
+
+    class _FastAgent:
+        def __init__(self, *args, **kwargs):
+            _time.sleep(0.005)
+
+    old = _agent_mod.Agent
+    _agent_mod.Agent = _FastAgent
+    try:
+        r = Router(max_loaded=3)
+        models = ["english", "multilingual", "typed-decisions"]
+        threads = []
+        for _ in range(6):
+            for m in models:
+                threads.append(threading.Thread(target=r.load, args=(m,)))
+                threads.append(threading.Thread(target=r.unload, args=(m,)))
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(5)
+        all_finished = not any(t.is_alive() for t in threads)
+        loading_clean = len(r._loading) == 0
+        return all_finished, loading_clean
+    finally:
+        _agent_mod.Agent = old
+
+no_hang, loading_empty = _test_waiting_callers_no_deadlock()
+check("threads/concurrent load and unload callers do not deadlock", no_hang, True)
+check("threads/all in-flight markers cleared after completion", loading_empty, True)
+
+
+def _test_unload_reload_sequence_no_resurrection():
+    """An older in-flight build cannot resurrect the model after an unload/reload sequence."""
+    import laya.agent as _agent_mod
+    first_build_started = threading.Event()
+    first_build_release = threading.Event()
+    agent_instances = []
+
+    class _SequencedAgent:
+        def __init__(self, *args, **kwargs):
+            agent_instances.append(self)
+            if len(agent_instances) == 1:
+                first_build_started.set()
+                first_build_release.wait(5)
+
+    old = _agent_mod.Agent
+    _agent_mod.Agent = _SequencedAgent
+    try:
+        r = Router(max_loaded=3)
+        t_load = threading.Thread(target=r.load, args=("english",), daemon=True)
+        t_load.start()
+        first_build_started.wait(5)
+
+        unload_done = threading.Event()
+        t_unload = threading.Thread(target=lambda: (r.unload("english"), unload_done.set()), daemon=True)
+        t_unload.start()
+
+        first_build_release.set()
+        t_load.join(5)
+        t_unload.join(5)
+
+        unloaded_ok = unload_done.is_set()
+        not_resident_after_unload = "english" not in r.loaded
+
+        c_agent = r.load("english")
+        is_new_agent = c_agent is agent_instances[1] and c_agent is not agent_instances[0]
+        resident_final = "english" in r.loaded
+
+        return unloaded_ok, not_resident_after_unload, is_new_agent, resident_final
+    finally:
+        first_build_release.set()
+        _agent_mod.Agent = old
+
+unloaded_ok, not_res_after, is_new_agent, res_final = _test_unload_reload_sequence_no_resurrection()
+check("threads/unload in-flight build finishes successfully", unloaded_ok, True)
+check("threads/model not resident after unload completes", not_res_after, True)
+check("threads/reload builds new instance without resurrection", is_new_agent, True)
+check("threads/reload lands in resident set", res_final, True)
+
+
 
 # --------------------------------------------------------------------- unlisted scripts
 # `detect_script` counts an alphabetic character only when one of `_SCRIPT_RANGES` claims

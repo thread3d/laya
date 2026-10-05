@@ -116,9 +116,10 @@ Each result is what `predict` returns for that request, so Router-level predict 
 request here too: every request gets its own `PredictContext`, `run_id` and `elapsed_ms`.
 
 ```
-Router.predict_batch(requests, batch_size=...)
+Router.predict_batch(requests, batch_size=..., hooks=...)
   │
-  ├─ route_batch(requests) ──► on_route, once per request   (no checkpoint loaded yet)
+  ├─ active = installed hooks + per-call hooks          (installed first; None and [] add nothing)
+  ├─ route_batch(requests, hooks=per-call) ──► on_route, once per request   (no checkpoint loaded yet)
   │
   └─ for each checkpoint, in order of first appearance:
        │
@@ -142,7 +143,7 @@ Key points:
 - Every start hook of a checkpoint's requests runs before any of their end hooks, because they
   share forward passes. A cache that fills in `on_predict_end` therefore cannot serve a duplicate
   state within the same checkpoint group; it can across calls.
-- For the same reason the requests end in reverse of the order they started, so a hook that sets
+- For the same reason the requests end in the reverse of the order they started, so a hook that sets
   something in start and resets it in end (a `contextvars` value, an OpenTelemetry
   `context.attach` / `detach`) unwinds to the value it found.
 - A start hook that replaces `ctx.states`, `ctx.questions` or the token budget changes its own

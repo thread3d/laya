@@ -531,6 +531,36 @@ check("batch/router last_decision",
 check("batch/router empty inputs", batch_router_node.batch([]), [])
 check("batch/router empty skips the runner", len(batch_agent.batch_calls), 1)
 
+# batch() must forward `lang` and `min_confidence` the same way invoke() does, or the two paths
+# answer differently for a runnable configured with them. Agent convention: both are call kwargs.
+_crit = {"billing": "invoices, refunds", "technical": "bugs, errors"}
+ba_ctrl = MockBatchAgent(mock_router_response)
+LayaRouter(criteria=_crit, agent=ba_ctrl, lang="de", min_confidence=0.4).batch(ROUTER_INPUTS)
+check("batch/agent forwards lang", ba_ctrl.batch_calls[0]["kwargs"].get("lang"), "de")
+check("batch/agent forwards min_confidence", ba_ctrl.batch_calls[0]["kwargs"].get("min_confidence"), 0.4)
+
+# Router convention: lang rides on each request item; min_confidence is a call-level argument.
+rl_ctrl = MockRouterLike(mock_router_response)
+LayaRouter(criteria=_crit, agent=rl_ctrl, lang="de", min_confidence=0.4).batch(ROUTER_INPUTS)
+_reqs = rl_ctrl.batch_calls[0]["requests"]
+_kw = rl_ctrl.batch_calls[0]["kwargs"]
+check("batch/router item carries lang", all(r.get("lang") == "de" for r in _reqs), True)
+check("batch/router min_confidence is call-level", _kw.get("min_confidence"), 0.4)
+check("batch/router min_confidence not duplicated onto items",
+      any("min_confidence" in r for r in _reqs), False)
+check("batch/router lang not duplicated as a call kwarg", "lang" in _kw, False)
+
+# min_confidence=0.0 is a real gate (abstain over nothing), not an absence -- it must survive batch.
+ba_zero = MockBatchAgent(mock_router_response)
+LayaRouter(criteria=_crit, agent=ba_zero, min_confidence=0.0).batch(ROUTER_INPUTS)
+check("batch/agent keeps min_confidence=0.0", ba_zero.batch_calls[0]["kwargs"].get("min_confidence"), 0.0)
+# and an unset control stays unset -- no lang/min_confidence keys leak in
+ba_none = MockBatchAgent(mock_router_response)
+LayaRouter(criteria=_crit, agent=ba_none).batch(ROUTER_INPUTS)
+check("batch/agent omits unset controls",
+      ("lang" in ba_none.batch_calls[0]["kwargs"]) or ("min_confidence" in ba_none.batch_calls[0]["kwargs"]),
+      False)
+
 # LangChain hands batch() one config, a list of per-input configs (what RunnableSequence
 # and RunnableParallel do), or None. All three must reach the same outputs.
 one_config = {"tags": ["t"], "max_concurrency": 2}

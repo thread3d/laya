@@ -205,7 +205,7 @@ _src = inspect.getsource(_agent.Agent.__init__)
 check_true("fallback/flag is initialised", "fell_back_from = fell_back_why = None" in _src)
 check_true("fallback/warns only on a real fallback", "if fell_back_from is not None:" in _src)
 check_true("fallback/reports the underlying reason", "Reason: %s" in _src)
-check_true("fallback/keeps the actionable advice", "download.pytorch.org/whl/nightly" in _src)
+check_true("fallback/keeps the actionable advice", "download.pytorch.org/whl/cu130" in _src)
 check_true("fallback/no bare cuda probe for the warning",
            "torch.cuda.is_available() or getattr(torch.version" not in _src)
 
@@ -353,6 +353,18 @@ for label, qdef in [
                                        "criteria": [True, 1]}),
     ("choice with an unhashable label", {"type": "choice", "instructions": "Which team?",
                                          "criteria": [("billing", ["tech"]), "sales"]}),
+    # Hashable but not a scalar: the old deny-list (`list`, `dict`, `set`, `bytearray`) let these
+    # through to `_to_internal`, whose `{label: None}` key survived to `json.dumps` and raised
+    # `TypeError: keys must be str, int, float, bool or None, not tuple` -- a 500 "inference failed"
+    # over HTTP for what is a caller error, and an unusable answer key in-process.
+    ("choice with a tuple label", {"type": "choice", "instructions": "Which team?",
+                                   "criteria": [("billing", "tech"), "sales"]}),
+    ("choice with a frozenset label", {"type": "choice", "instructions": "Which team?",
+                                       "criteria": [frozenset({"billing", "tech"}), "sales"]}),
+    ("choice with a bytes label", {"type": "choice", "instructions": "Which team?",
+                                   "criteria": [b"billing", "sales"]}),
+    ("choice with a complex label", {"type": "choice", "instructions": "Which team?",
+                                     "criteria": [1 + 2j, "sales"]}),
 ]:
     try:
         agent.system_one(STATE, {"q": qdef})

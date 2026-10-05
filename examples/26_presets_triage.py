@@ -11,7 +11,7 @@ banner("26", "Preset: support triage", """
     forward pass. It mixes all three primitives -- a multi-way choice, two yes/no
     probabilities, and an ordinal score -- so a single call fills a whole triage record.
 
-    The ticket below is an enterprise customer who has been double charged for three
+    The ticket below is from an enterprise customer who has been double charged for three
     months, had tickets ignored, and threatens to leave. Every field except `is_urgent`
     comes back decisive.
     """)

@@ -7,6 +7,7 @@ with `_encode_state` / `_forward` / `_decode_answers` stubbed). The Router path 
 Run: python tests/test_hooks.py
 """
 import contextvars
+import inspect
 import os
 import sys
 import threading
@@ -428,6 +429,21 @@ check_true("hooks_installed/add_hook inside: and it is the one that was added",
 log.clear()
 f.predict_batch(["s0"], QUESTIONS)
 check("hooks_installed/add_hook inside: still fires after the block", log, ["added-inside"])
+
+# sequences are flattened, matching add_hook and the hooks= parameter
+log = []
+f = make_fake()
+with f.hooks_installed([Tag(log, "x"), Tag(log, "y")]):
+    f.predict_batch(["s0"], QUESTIONS)
+f.predict_batch(["s0"], QUESTIONS)
+check("hooks_installed/list of hooks fires during the block", log, ["x", "y"])
+check("hooks_installed/list of hooks removed after the block", len(f.hooks), 0)
+
+log = []
+f = make_fake()
+with f.hooks_installed((Tag(log, "a"),), Tag(log, "b")):
+    f.predict_batch(["s0"], QUESTIONS)
+check("hooks_installed/tuple arg and varargs mix in order", log, ["a", "b"])
 
 # and the same hook passed twice is the same case with no pre-install at all
 log = []
@@ -1478,31 +1494,42 @@ from laya.hooks import validate_timeout  # noqa: E402
 
 check_raises("timeout/zero is rejected", ValueError, lambda: validate_timeout(0))
 check_raises("timeout/negative is rejected", ValueError, lambda: validate_timeout(-0.5))
+check_raises("timeout/NaN is rejected", ValueError, lambda: validate_timeout(float("nan")))
+check_raises("timeout/infinity is rejected", ValueError, lambda: validate_timeout(float("inf")))
+check_raises("timeout/-infinity is rejected", ValueError, lambda: validate_timeout(float("-inf")))
 check("timeout/positive passes through", validate_timeout(1.5), 1.5)
 check("timeout/None means no limit", validate_timeout(None), None)
 
 f = make_fake()
 check_raises("timeout/zero per call is rejected", ValueError,
              lambda: f.predict_batch(["s0"], QUESTIONS, hooks_timeout=0))
+check_raises("timeout/NaN per call is rejected", ValueError,
+             lambda: f.predict_batch(["s0"], QUESTIONS, hooks_timeout=float("nan")))
+check_raises("timeout/infinity per call is rejected", ValueError,
+             lambda: f.predict_batch(["s0"], QUESTIONS, hooks_timeout=float("inf")))
 
 not_running = asyncio.new_event_loop()
 try:
+    c = _seven()
     check_raises("async/a non-running loop is rejected", ValueError,
-                 lambda: run_coroutine_sync(_seven(), loop=not_running))
+                 lambda: run_coroutine_sync(c, loop=not_running))
+    check_true("async/a non-running loop closes the coroutine",
+               inspect.getcoroutinestate(c) == "CORO_CLOSED")
 finally:
     not_running.close()
 
 
 async def _own_loop():
     own = asyncio.get_running_loop()
+    c = _seven()
     try:
-        run_coroutine_sync(_seven(), loop=own)
+        run_coroutine_sync(c, loop=own)
     except ValueError:
-        return "raised"
+        return "closed" if inspect.getcoroutinestate(c) == "CORO_CLOSED" else "raised"
     return "no"
 
 
-check("async/the calling thread's own loop is rejected", asyncio.run(_own_loop()), "raised")
+check("async/the calling thread's own loop is rejected", asyncio.run(_own_loop()), "closed")
 check_raises("async/AsyncHook rejects an object with no events", TypeError,
              lambda: AsyncHook(object()))
 
@@ -1579,6 +1606,95 @@ check("timeout/predict_batch without hooks still batches", [c[0] for c in plain_
 # The forwarded value is still validated by route(), exactly like a direct route() call.
 check_raises("timeout/route_batch rejects a zero per-call timeout", ValueError,
              lambda: Router().route_batch([req("a")], hooks_timeout=0))
+
+
+# ------------------------------------------- per-call hooks on Router.predict_batch and route_batch (#909)
+per_call_events = []
+
+
+class PerCallTrace:
+    def on_predict_start(self, ctx):
+        per_call_events.append(("start", ctx.states[0]))
+
+    def on_predict_end(self, ctx):
+        per_call_events.append(("end", ctx.states[0]))
+
+    def on_route(self, ctx):
+        per_call_events.append(("route", ctx.states[0]))
+
+
+r_batch, en_batch, _ = batch_router()
+
+# 1. per-call hooks on predict_batch
+r_batch.predict_batch([req("call1"), req("call2")], hooks=[PerCallTrace()])
+check("router_batch/per-call hooks execute for all requests",
+      per_call_events,
+      [("route", "call1"), ("route", "call2"),
+       ("start", "call1"), ("start", "call2"),
+       ("end", "call2"), ("end", "call1")])
+
+per_call_events.clear()
+
+# 2. per-call convenience callables on predict_start and predict_end
+seen_starts = []
+seen_ends = []
+r_batch.predict_batch([req("cb1")],
+                      on_predict_start=lambda c: seen_starts.append(c.states[0]),
+                      on_predict_end=lambda c: seen_ends.append(c.states[0]))
+check("router_batch/per-call callables execute", (seen_starts, seen_ends), (["cb1"], ["cb1"]))
+
+# 3. per-call hooks on route_batch
+route_trace = []
+
+
+class RouteTrace:
+    def on_route(self, ctx):
+        route_trace.append(ctx.states[0])
+
+
+r_batch.route_batch([req("rb1"), req("rb2")], hooks=[RouteTrace()])
+check("router_batch/route_batch per-call hooks execute", route_trace, ["rb1", "rb2"])
+
+# 4. per-call hooks_raise policy
+class FailingStartHook:
+    def on_predict_start(self, ctx):
+        raise ValueError("failing hook")
+
+
+check_raises("router_batch/hooks_raise=True propagates exception",
+             ValueError,
+             lambda: r_batch.predict_batch([req("fail1")], hooks=[FailingStartHook()], hooks_raise=True))
+
+with warnings.catch_warnings(record=True) as _warns:
+    warnings.simplefilter("always")
+    res = r_batch.predict_batch([req("warn1")], hooks=[FailingStartHook()], hooks_raise=False)
+    check("router_batch/hooks_raise=False returns result", len(res), 1)
+    check_true("router_batch/hooks_raise=False warns", any("failing hook" in str(w.message) for w in _warns))
+
+# 5. positional and keyword-only hook controls (#909 review)
+r_pos, _, _ = batch_router()
+
+# route_batch keeps hooks_timeout positional-or-keyword
+pos_decisions = r_pos.route_batch([req("pos1")], 1.0)
+check("router_batch/route_batch positional hooks_timeout", len(pos_decisions), 1)
+
+# route_batch takes hooks as keyword-only
+kw_decisions = r_pos.route_batch([req("pos1")], 1.0, hooks=[RouteTrace()])
+check("router_batch/route_batch keyword-only hooks", len(kw_decisions), 1)
+
+# predict_batch preserves hooks_timeout positional prefix from main
+pos_results = r_pos.predict_batch([req("pos2")], 8, 1.0, hooks=[PerCallTrace()])
+check("router_batch/predict_batch positional hooks_timeout", len(pos_results), 1)
+
+# predict_batch takes per-call hooks as keyword-only
+kw_results = r_pos.predict_batch([req("pos2")], 8, hooks=[PerCallTrace()])
+check("router_batch/predict_batch keyword-only hooks", len(kw_results), 1)
+
+# keyword-only enforcement: passing hook controls positionally raises TypeError
+check_raises("router_batch/route_batch rejects positional hooks", TypeError,
+             lambda: r_pos.route_batch([req("pos1")], 1.0, [RouteTrace()]))
+check_raises("router_batch/predict_batch rejects positional hooks", TypeError,
+             lambda: r_pos.predict_batch([req("pos2")], 8, 1.0, None, False, [PerCallTrace()]))
 
 
 # --------------------------------------------------------------- report

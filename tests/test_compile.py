@@ -173,6 +173,197 @@ def test_eager_agent_leaves_the_setting_alone():
     assert seen == [fx_config.use_duck_shape]
 
 
+def test_constructor_warms_only_the_active_compiled_path():
+    import json
+    import tempfile
+    from pathlib import Path
+    from unittest.mock import patch
+    import laya.agent as module
+    from laya import load
+
+    model = tiny_model()
+    events = []
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        (root / "rl_agent_config.json").write_text(json.dumps({"encoder": "unused", "head_layers": 1}))
+        (root / "model.safetensors").touch()
+        with patch.object(module, "build_model", side_effect=lambda *a, **kw: events.append("model") or model), \
+             patch.object(module, "_load_tokenizer", return_value=SimpleNamespace(cls_token_id=1)), \
+             patch("safetensors.torch.load_file", return_value=model.state_dict()), \
+             patch.object(module, "compile_model", side_effect=lambda m, **kw: m) as compile_spy, \
+             patch.object(module, "configure_cache", side_effect=lambda: events.append("cache")) as cache_spy, \
+             patch.object(Agent, "accelerate"), \
+             patch.object(Agent, "warmup", autospec=True) as warm:
+            agent = load(directory, device="cpu", compile=True)
+            warm.assert_called_once_with(agent)
+            assert not agent.model.training and agent._compiled
+            warm.reset_mock()
+            load(directory, device="cpu", compile=True, compile_warmup=False)
+            load(directory, device="cpu", compile=False)
+            load(directory, device="cpu", compile=True, fast=True)
+            warm.assert_not_called()
+            assert compile_spy.call_count == 2
+            agent.warmup()
+            warm.assert_called_once_with(agent)
+            cache_spy.assert_not_called()
+            events.clear()
+            load(directory, device="cpu", compile=True, compile_cache=True, compile_warmup=False)
+            assert events == ["cache", "model"]
+            cache_spy.assert_called_once_with()
+            cache_spy.reset_mock()
+            compile_spy.reset_mock()
+            load(directory, device="cpu", compile=False, compile_cache=True)
+            load(directory, device="cpu", compile=True, fast=True, compile_cache=True)
+            compile_spy.assert_not_called()
+            reduced = load(directory, device="cpu", compile=True, compile_warmup=False,
+                           compile_mode="reduce-overhead")
+            assert reduced._reduce_overhead
+            assert compile_spy.call_args.kwargs == {"mode": "reduce-overhead"}
+            compile_spy.reset_mock()
+            load(directory, device="cpu", compile=False, compile_mode="reduce-overhead")
+            load(directory, device="cpu", compile=True, fast=True, compile_mode="reduce-overhead")
+            compile_spy.assert_not_called()
+            try:
+                load(directory, device="cpu", compile=True, compile_mode="typo")
+            except ValueError as error:
+                assert "compile_mode" in str(error)
+            else:
+                raise AssertionError("invalid mode accepted")
+            cache_spy.assert_not_called()
+
+
+def test_missing_compiler_preserves_wrapper_and_warns_only_during_automatic_warmup():
+    import json
+    import tempfile
+    import warnings
+    from pathlib import Path
+    from unittest.mock import patch
+    from torch._inductor.exc import InvalidCxxCompiler
+    from torch._dynamo.eval_frame import OptimizedModule
+    import laya.agent as module
+    from laya import load
+
+    attempts = []
+
+    def missing_compiler(graph, inputs, **kwargs):
+        attempts.append(True)
+        # Torch versions differ: some take the compiler, others read cpp.cxx.
+        with torch._inductor.config.patch({"cpp.cxx": ("laya-missing-cxx",)}):
+            try:
+                error = InvalidCxxCompiler()
+            except TypeError:
+                error = InvalidCxxCompiler("laya-missing-cxx")
+        raise error
+
+    def compile_without_toolchain(model, **kwargs):
+        return compile_model(model, backend=missing_compiler, **kwargs)
+
+    torch._dynamo.reset()
+    model = tiny_model()
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        (root / "rl_agent_config.json").write_text(json.dumps({"encoder": "unused", "head_layers": 1}))
+        (root / "model.safetensors").touch()
+        with patch.object(module, "build_model", return_value=model), \
+             patch.object(module, "_load_tokenizer", return_value=SimpleNamespace(cls_token_id=1)), \
+             patch("safetensors.torch.load_file", return_value=model.state_dict()), \
+             patch.object(module, "compile_model", side_effect=compile_without_toolchain):
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                agent = load(directory, device="cpu", compile=True, compile_mode="reduce-overhead")
+            assert attempts, "automatic warm-up never reached the compile backend"
+            assert any(issubclass(w.category, RuntimeWarning)
+                       and "InvalidCxxCompiler" in str(w.message)
+                       and "laya-missing-cxx" in str(w.message)
+                       and "keeping the compiled model" in str(w.message) for w in caught)
+            wrapped = agent.model
+            assert isinstance(wrapped, OptimizedModule) and wrapped._orig_mod is model
+            assert agent._compiled and agent._reduce_overhead
+            assert model.encoder.config.reference_compile is True
+            for operation in (lambda: agent._infer(batch(2, 16, 3)), agent.warmup):
+                calls = len(attempts)
+                try:
+                    operation()
+                except Exception as error:
+                    assert "InvalidCxxCompiler" in str(error) and "laya-missing-cxx" in str(error)
+                else:
+                    raise AssertionError("request or explicit warmup swallowed the compiler failure")
+                assert len(attempts) > calls
+                assert agent.model is wrapped and agent._compiled and agent._reduce_overhead
+                assert model.encoder.config.reference_compile is True
+            calls = len(attempts)
+
+            explicit = load(directory, device="cpu", compile=True, compile_warmup=False)
+            assert len(attempts) == calls
+            try:
+                explicit.warmup()
+            except Exception as error:
+                assert "InvalidCxxCompiler" in str(error) and "laya-missing-cxx" in str(error)
+            else:
+                raise AssertionError("explicit warmup swallowed the compiler failure")
+            assert len(attempts) > calls and explicit._compiled
+    torch._dynamo.reset()
+
+
+def test_persistent_cache_is_opt_in_and_respects_the_environment():
+    import tempfile
+    from pathlib import Path
+    from unittest.mock import patch
+    from laya._compile import configure_cache
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        # Keep mixed separators in the inputs: Windows accepts them, and joining
+        # child names need not preserve the spelling produced by pathlib.
+        with patch.dict(os.environ, {"XDG_CACHE_HOME": directory + "/xdg"}, clear=True), \
+             patch("os.path.expanduser", return_value=directory + "/.cache"), \
+             patch("torch.compile") as compiler:
+            compile_model(object())
+            assert "TORCHINDUCTOR_CACHE_DIR" not in os.environ
+            configure_cache()
+            expected = root / "xdg" / "laya" / "torchinductor"
+            assert Path(os.environ["TORCHINDUCTOR_CACHE_DIR"]) == expected
+            assert expected.is_dir()
+            assert compiler.call_args.kwargs == {"dynamic": True}
+            # A caller-selected directory always wins, including after repeated loads.
+            os.environ["TORCHINDUCTOR_CACHE_DIR"] = directory + "/explicit"
+            assert Path(configure_cache()) == root / "explicit"
+            assert Path(configure_cache()) == root / "explicit"
+            assert (root / "explicit").is_dir()
+            del os.environ["TORCHINDUCTOR_CACHE_DIR"]
+            os.environ["XDG_CACHE_HOME"] = "relative-is-invalid"
+            expected = root / ".cache" / "laya" / "torchinductor"
+            assert Path(configure_cache()) == expected
+            assert expected.is_dir()
+            del os.environ["TORCHINDUCTOR_CACHE_DIR"]
+            del os.environ["XDG_CACHE_HOME"]
+            assert Path(configure_cache()) == expected
+            assert expected.is_dir()
+
+
+def test_cuda_graph_step_marks_each_forward_and_releases_after_failure():
+    from unittest.mock import patch
+    from laya._compile import cuda_graph_step
+
+    with patch("torch.compiler.cudagraph_mark_step_begin") as mark:
+        try:
+            with cuda_graph_step():
+                raise RuntimeError("forward failed")
+        except RuntimeError:
+            pass
+        with cuda_graph_step():
+            pass
+        assert mark.call_count == 2
+    with patch.object(torch, "compiler", None):
+        try:
+            with cuda_graph_step():
+                pass
+        except RuntimeError as error:
+            assert "requires torch.compiler.cudagraph_mark_step_begin" in str(error)
+        else:
+            raise AssertionError("unsupported CUDA graph step API accepted")
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

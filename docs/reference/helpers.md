@@ -42,6 +42,10 @@
 
 ::: laya.confidence.check_min_confidence
 
+::: laya.confidence.check_min_confidence_map
+
+::: laya.confidence.resolve_min_confidence
+
 ::: laya.confidence.flag_low_confidence
 
 ::: laya.confidence.apply_confidence_gate
@@ -61,6 +65,13 @@
 ::: laya.calibrate.fit_one_temperature
 
 ::: laya.calibrate.fit_temperature_map
+
+::: laya.calibrate.fit_abstention_thresholds
+::: laya.calibrate.fit_binning_map
+
+::: laya.calibrate.apply_binning_map
+
+::: laya.agent.Agent.fit_binning
 
 ::: laya.common.render_options
 

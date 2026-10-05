@@ -23,7 +23,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import laya  # noqa: E402
-from laya import Agent, AsyncHook, BaseHook, PredictContext, PredictHook, Router, load  # noqa: E402
+from laya import Agent, BaseHook, PredictContext, PredictHook, Router, load  # noqa: E402
 from laya.hooks import HOOK_EVENTS, Hook  # noqa: E402
 from laya.onnx_agent import ONNXAgent  # noqa: E402
 from laya.router import _question_schema  # noqa: E402
@@ -75,6 +75,11 @@ for label, fn in (("Agent.__init__", Agent.__init__), ("load", load),
     for param, default in HOOK_KEYS.items():
         check_param(label, fn, param, default)
 
+for label, fn in (("Agent.__init__", Agent.__init__), ("load", load)):
+    check_param(label, fn, "compile_warmup", True)
+    check_param(label, fn, "compile_cache", False)
+    check_param(label, fn, "compile_mode", "default")
+
 # Router keeps lang_guess and explicit per-model revisions too
 check_param("Router.__init__", Router.__init__, "lang_guess", None)
 check_param("Router.__init__", Router.__init__, "revisions", None)
@@ -100,15 +105,37 @@ except ValueError as exc:
 # load() forwards Agent's own construction options, so none of them is reachable only
 # through the class; tests/test_download.py asserts that against both signatures.
 check_param("load", load, "compile", False)
+check_param("load", load, "backend", None)
+check_param("load", load, "onnx_path", None)
+check_param("Agent.__init__", Agent.__init__, "backend", None)
+check_param("Agent.set_backend", Agent.set_backend, "name", "auto")
+check_param("Agent.set_backend", Agent.set_backend, "strict", False)
+check_true("Agent.backend is a property", isinstance(Agent.backend, property))
+check_true("Agent.backend_object is a property", isinstance(Agent.backend_object, property))
 
 # ONNXAgent downloads the same Hub artifacts as Agent, so it authenticates the same way
 check_param("ONNXAgent.__init__", ONNXAgent.__init__, "token", None)
 
 # --------------------------------------------------------------- predict surfaces
+from laya.mcp.remote import RemoteRouter  # noqa: E402
+
+check_true("RemoteRouter/is a Router", issubclass(RemoteRouter, Router))
+check_param("RemoteRouter.__init__", RemoteRouter.__init__, "base_url", inspect.Parameter.empty)
+check_param("RemoteRouter.__init__", RemoteRouter.__init__, "api_key", None)
+check_param("RemoteRouter.__init__", RemoteRouter.__init__, "timeout", None)
+for method in ("predict", "predict_batch"):
+    check("RemoteRouter/%s signature" % method,
+          [(p.name, p.kind, p.default) for p in sig(getattr(RemoteRouter, method)).values()],
+          [(p.name, p.kind, p.default) for p in sig(getattr(Router, method)).values()])
+for method in ("route", "route_batch"):
+    check_true("RemoteRouter/%s stays local" % method,
+               getattr(RemoteRouter, method) is getattr(Router, method))
+
 for label, fn in (("Agent.predict_batch", Agent.predict_batch),
                   ("Agent.system_one", Agent.system_one),
                   ("Agent.predict_long", Agent.predict_long),
                   ("Router.predict", Router.predict),
+                  ("Router.predict_batch", Router.predict_batch),
                   ("Router.predict_long", Router.predict_long),
                   ("ONNXAgent.system_one", ONNXAgent.system_one)):
     check_param(label, fn, "hooks", None)
@@ -139,8 +166,6 @@ for label, fn in (("Agent.predict_batch", Agent.predict_batch),
 
 # Router.predict_batch has no call-level budget: a heterogeneous batch sets it per request, and
 # the request keys `max_len` / `head_max_len` are read into each request's PredictContext.
-check_param("Router.predict_batch", Router.predict_batch, "batch_size", None)
-check_param("Router.predict_batch", Router.predict_batch, "hooks_timeout", None)
 for param in ("max_len", "head_max_len"):
     check("Router.predict_batch/%s is per-request, not a call argument" % param,
           param in sig(Router.predict_batch), False)
@@ -150,10 +175,28 @@ for param in ("max_len", "head_max_len"):
 check_param("shortlist_choice", laya.shortlist_choice, "return_scores", False,
             inspect.Parameter.KEYWORD_ONLY)
 
-# route() takes per-call hooks so a hook can pin a checkpoint for one call
-check_param("Router.route", Router.route, "hooks", None)
-check_param("Router.route", Router.route, "hooks_raise", None)
-check_param("Router.route", Router.route, "hooks_timeout", None)
+# route() and route_batch() take per-call hooks so a hook can pin a checkpoint for one call
+for label, fn in (("Router.route", Router.route),
+                  ("Router.route_batch", Router.route_batch)):
+    check_param(label, fn, "hooks", None)
+    check_param(label, fn, "hooks_raise", None)
+    check_param(label, fn, "hooks_timeout", None)
+
+# Positional compatibility: hook parameters are keyword-only to protect positional callers
+check("Router.route_batch/positional prefix",
+      [p.name for p in sig(Router.route_batch).values()
+       if p.kind != inspect.Parameter.KEYWORD_ONLY and p.name != "self"],
+      ["requests", "hooks_timeout"])
+check("Router.predict_batch/positional prefix",
+      [p.name for p in sig(Router.predict_batch).values()
+       if p.kind != inspect.Parameter.KEYWORD_ONLY and p.name != "self"],
+      ["requests", "batch_size", "hooks_timeout", "min_confidence", "sort_by_length"])
+for param in ("hooks", "hooks_raise"):
+    check("Router.route_batch/%s is keyword-only" % param,
+          sig(Router.route_batch)[param].kind, inspect.Parameter.KEYWORD_ONLY)
+for param in ("hooks", "on_predict_start", "on_predict_end", "hooks_raise"):
+    check("Router.predict_batch/%s is keyword-only" % param,
+          sig(Router.predict_batch)[param].kind, inspect.Parameter.KEYWORD_ONLY)
 
 # --------------------------------------------------------------- aliases
 check_true("Agent.predict is Agent.system_one", Agent.predict is Agent.system_one)
@@ -201,9 +244,20 @@ for event in HOOK_EVENTS:
 
 # process-wide default registry lives in laya.hooks (not the top level)
 for helper in ("default_hooks", "set_default_hooks", "add_default_hook", "clear_default_hooks",
-               "compose_hooks"):
+               "compose_hooks", "validate_timeout"):
     check_true("laya.hooks/%s exists" % helper, callable(getattr(__import__("laya.hooks", fromlist=[helper]), helper, None)))
 check_true("defaults/not exported at top level", not hasattr(laya, "set_default_hooks"))
+
+from laya.hooks import validate_timeout  # noqa: E402
+
+check("validate_timeout/None", validate_timeout(None), None)
+check("validate_timeout/positive float", validate_timeout(1.5), 1.5)
+for bad in (0, -1, float("nan"), float("inf"), float("-inf")):
+    try:
+        validate_timeout(bad)
+        FAIL.append("validate_timeout/%r accepted; want ValueError" % (bad,))
+    except ValueError:
+        PASS.append("validate_timeout/%r rejected" % (bad,))
 
 # --------------------------------------------------------------- class defaults
 for label, cls in (("Agent", Agent), ("Router", Router), ("ONNXAgent", ONNXAgent)):
@@ -221,6 +275,21 @@ for label, cls in (("Agent", Agent), ("ONNXAgent", ONNXAgent)):
 for label, cls in (("Agent", Agent), ("Router", Router), ("ONNXAgent", ONNXAgent)):
     for method in ("add_hook", "remove_hook", "hooks_installed"):
         check_true("%s/%s exists" % (label, method), callable(getattr(cls, method, None)))
+
+
+class _ApiProbeHook(BaseHook):
+    pass
+
+
+for label, cls in (("Agent", Agent), ("Router", Router), ("ONNXAgent", ONNXAgent)):
+    reg = cls.__new__(cls)
+    reg.hooks = ()
+    h1, h2 = _ApiProbeHook(), _ApiProbeHook()
+    with reg.hooks_installed([h1, h2]):
+        check("%s/hooks_installed accepts a list" % label, tuple(reg.hooks), (h1, h2))
+    check("%s/hooks_installed restores hooks after list block" % label, tuple(reg.hooks), ())
+    with reg.hooks_installed((h1,), h2):
+        check("%s/hooks_installed accepts mixed sequence and vararg" % label, tuple(reg.hooks), (h1, h2))
 
 # The LangChain runnables batch: laya.integrations.langchain's own suite checks what
 # batch() returns, so these lines pin only the caller-visible shape. A rename, or losing
@@ -877,6 +946,22 @@ check_param("evaluate_shortlist", evaluate_shortlist, "k", 20)
 check_param("evaluate_shortlist", evaluate_shortlist, "dataset_path", None)
 for param in ("checkpoint_id", "embedder_id"):
     check_param("evaluate_shortlist", evaluate_shortlist, param, inspect.Parameter.empty)
+
+
+# Pin the optional TileLang entry points without importing the fast extra in CI.
+import ast  # noqa: E402
+
+with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "laya", "tl_kernels.py")) as f:
+    _tl_defs = {node.name: node for node in ast.parse(f.read()).body if isinstance(node, ast.FunctionDef)}
+for _name in ("gemm_kernel", "gemm_geglu_kernel", "add_ln_kernel", "rope_kernel", "attn_kernel"):
+    _args = _tl_defs[_name].args
+    check("%s/cpu keyword-only" % _name, [arg.arg for arg in _args.kwonlyargs], ["cpu"])
+    check("%s/cpu default" % _name, ast.literal_eval(_args.kw_defaults[0]), False)
+    check("%s/GPU dtype default" % _name, ast.literal_eval(_args.defaults[-1]), "bfloat16")
+_args = _tl_defs["compile_cpu"].args
+check("compile_cpu/arguments", [arg.arg for arg in _args.args], ["kernel"])
+check("compile_cpu/varargs", _args.vararg.arg, "args")
+check("compile_cpu/kwargs", _args.kwarg.arg, "kwargs")
 
 
 print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))

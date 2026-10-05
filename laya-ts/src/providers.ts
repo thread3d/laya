@@ -475,11 +475,13 @@ export async function createNodeProvider(
   modelDir: string,
   opts?: ProviderOptions,
 ): Promise<SessionProvider> {
-  const spec = "onnxruntime-" + "node";
-  const ort: any = await import(/* @vite-ignore */ spec);
-  applyNumThreads(ort, opts?.numThreads);
   const fs: typeof import("node:fs/promises") = await import("node:fs/promises");
   const path: typeof import("node:path") = await import("node:path");
+  // Verify the artifacts and their digests BEFORE importing the native runtime. `onnxruntime-node`
+  // is an optional dependency, so a caller that names a bad or missing artifact must still get that
+  // error on a machine where npm skipped the native module; importing it first masked the digest
+  // check with `Cannot find package 'onnxruntime-node'` (an intermittent `laya-ts` CI failure). A
+  // mismatch also should not pay for loading the runtime.
   for (const f of ["encoder.onnx", "head.onnx"]) {
     const p = path.join(modelDir, f);
     try {
@@ -489,6 +491,9 @@ export async function createNodeProvider(
     }
     if (opts?.expectedSha256) await expectDigest(f, await fs.readFile(p), opts.expectedSha256);
   }
+  const spec = "onnxruntime-" + "node";
+  const ort: any = await import(/* @vite-ignore */ spec);
+  applyNumThreads(ort, opts?.numThreads);
   const dev = String(opts?.device ?? "cpu").toLowerCase();
   const want = dev === "cuda" ? "cuda" : dev === "dml" ? "dml" : "cpu";
   const make = async (ep: string) => {

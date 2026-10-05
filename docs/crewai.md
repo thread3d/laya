@@ -97,6 +97,8 @@ except LayaTaskGuardError as e:
     print(f"Blocked by LayaTaskGuard! Violations: {e.violations}")
 ```
 
+`threshold` is a violation probability in [0, 1], and a value outside that range raises `ValueError`. For a `score` question such as `harm_severity`, it applies to the probability that the level is at or above the middle of the scale (`serious` or `severe`), not to the expected level in `score`, so a mostly `minor` answer does not block on its own.
+
 ---
 
 ## 3. Calibrated Confidence Gating
@@ -159,7 +161,7 @@ to their own agent; both repeats gave the same count.
 | Tasks on their own agent | 2/59 | 7/59 | 16/59 |
 | Median ms per task | 146 | 190 | 265 |
 
-Before this, the same run could not be asked at all: `LayaCrewRouter.__init__() got an unexpected
+Before this, the same run could not be made at all: `LayaCrewRouter.__init__() got an unexpected
 keyword argument 'max_len'`.
 
 Absolute accuracy is not the claim here -- the checkpoint is not a MASSIVE classifier and 59 similar

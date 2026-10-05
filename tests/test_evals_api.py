@@ -43,10 +43,17 @@ check_true("ScoreWithin names its tolerance", evals.ScoreWithin(0.25).name == "s
 
 # --------------------------------------------------------------- exports / callables
 for name in ("Dataset", "Example", "EvalError", "EvalReport", "evaluate", "ece", "assert_regression",
-             "REPORT_SCHEMA", "questions_fingerprint", "file_fingerprint"):
+             "REPORT_SCHEMA", "questions_fingerprint", "file_fingerprint",
+             "brier", "aurc", "selective_accuracy", "is_confidence_metric",
+             # `_eval_policy` imports these three, so they are a contract between two modules in
+             # this package, not internals -- a rename would break the release gate, not just a
+             # caller.
+             "is_coverage_metric", "coverage_definition_conflict",
+             "COVERAGE_METRIC_DEFINITION"):
     check_true("laya.evals.%s exists" % name, hasattr(evals, name))
 
 check("REPORT_SCHEMA", evals.REPORT_SCHEMA, "laya-evals-report/1")
+check("the coverage-cut definition this code computes", evals.COVERAGE_METRIC_DEFINITION, 2)
 check_true("EvalReport.comparable_to is part of the report contract",
            callable(getattr(evals.EvalReport, "comparable_to", None)))
 check("EvalReport fields are unchanged", [f.name for f in dataclasses.fields(evals.EvalReport)],

@@ -44,11 +44,13 @@ def shortlist_choice(
     When ``k`` is at least the number of labels, every label is returned in its
     original order and ``embed_fn`` is not called.
 
-    Ties keep the earlier label. A zero vector scores 0 and does not outrank a
-    label that came before it.
+    Ties keep the earlier label. Ranking is a signed cosine, not a similarity floor:
+    a label that scores 0 -- no signal at all, or a non-finite vector treated as one
+    -- does outrank an earlier label that scored negative, and ``k`` drops the
+    negative labels first.
 
     With ``return_scores=True`` the return is the ``(labels, scores)`` pair, where
-    ``scores`` holds the cosine similarity per kept label in rank order -- the same
+    ``scores`` holds the signed cosine per kept label in rank order -- the same
     values ``predict_shortlist`` reports in its ``shortlist`` metadata. ``scores``
     is ``None`` when nothing was dropped, exactly as in that metadata.
     """
@@ -74,8 +76,11 @@ def predict_shortlist(
 
     The returned dict is the model result plus a ``shortlist`` entry. Probabilities
     on a shortlisted choice are over the kept labels only. ``shortlist[qid]`` holds
-    ``labels`` (rank order), ``scores`` (cosine, or ``None`` when nothing was
-    dropped), ``k``, ``n``, and ``passthrough``.
+    ``labels``, ``scores``, ``k``, ``n``, and ``passthrough``. ``labels`` is the rank
+    order a shortlist produced, or the criteria order itself when ``passthrough`` is
+    set and no ranking ran; ``scores`` is the signed cosine of each kept label in that
+    order -- negative included, never clamped to 0 -- or ``None`` when nothing was
+    dropped.
 
     Extra keyword arguments are forwarded to ``predict`` / ``system_one`` (for
     example ``model=`` on a ``Router``).

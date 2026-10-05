@@ -146,7 +146,7 @@ One honest caveat: Python cannot interrupt a thread, so a timed-out hook keeps r
 background. The timeout bounds how long the request waits, not how long the hook lives. Use it to
 keep a served request responsive, not to reclaim the work. For a hook that can hang, also give the
 underlying call its own timeout (a socket or HTTP timeout). Because the thread cannot be
-reclaimed, a hook that hangs on every call grows threads one per call; give a hook that can hang
+reclaimed, a hook that hangs on every call grows one thread per call; give a hook that can hang
 its own bound rather than relying on `hooks_timeout` to stop it.
 
 For an async hook, the coroutine runs on the event loop; a timeout on the calling side still

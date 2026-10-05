@@ -539,7 +539,12 @@ class DecisionModel(nn.Module):
             top2 = torch.cat([top1, torch.zeros_like(top1)], dim=-1)
         feats = torch.stack([top2[:, 0], top2[:, 0] - top2[:, 1], ent, k / 255.0], -1)
         pooled = h[:, 0].float()
-        act_logits = self.act_head(torch.cat([pooled, feats], -1))
+        act_input = torch.cat([pooled, feats], -1)
+        # Explicit-dtype exports run without autocast; keep the confidence maths in fp32,
+        # then match the head's weights. Autocast already chooses the linear's input dtype.
+        if not torch.is_autocast_enabled(h.device.type):
+            act_input = act_input.to(self.act_head[0].weight.dtype)
+        act_logits = self.act_head(act_input)
         return logits, act_logits
 
 

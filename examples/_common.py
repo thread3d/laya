@@ -2,7 +2,7 @@
 
 Each example is a standalone script:
 
-    .venv/bin/python examples/01_hello_world_decision.py
+    .venv/bin/python examples/02_hello_world_decision.py
 
 Run it from anywhere -- paths resolve from this file, and Python puts the examples/ directory
 on `sys.path` automatically, so `from _common import ...` just works.

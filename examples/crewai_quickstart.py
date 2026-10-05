@@ -1,7 +1,7 @@
 """Laya System 1 decision engine: CrewAI Integration Quickstart.
 
 Demonstrates:
-1. Sub-35ms task delegation across specialized CrewAI agents (replaces LLM manager).
+1. Sub-35ms task delegation across specialized CrewAI agents (replaces LLM managers).
 2. Calibrated confidence threshold fallback gating to a human supervisor or lead agent.
 3. Pre-execution task guardrails (LayaTaskGuard) screening malicious prompts.
 4. Edge/Serverless deployment against remote laya-serve HTTP instances.

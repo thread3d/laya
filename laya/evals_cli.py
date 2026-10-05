@@ -96,9 +96,13 @@ def _parse_pairs(pairs: Optional[Sequence[str]]) -> Dict[str, float]:
         if not name or not raw:
             raise EvalError("expected NAME=VALUE, got %r" % pair)
         try:
-            out[name.strip()] = float(raw)
+            number = float(raw)
         except ValueError:
             raise EvalError("%r is not a number in %r" % (raw, pair))
+        # float() accepts "nan", and a NaN limit or tolerance would disable the gate it names.
+        if math.isnan(number):
+            raise EvalError("%r is not a number in %r" % (raw, pair))
+        out[name.strip()] = number
     return out
 
 
@@ -232,12 +236,16 @@ def _check_thresholds(overall: Dict[str, float], mins: Dict[str, float],
         value = overall.get(name)
         if value is None:
             failures.append("metric %r is not in the report" % name)
+        elif math.isnan(value):
+            failures.append("metric %r is NaN" % name)
         elif value < limit:
             failures.append("%s=%.4f is below the minimum %.4f" % (name, value, limit))
     for name, limit in maxs.items():
         value = overall.get(name)
         if value is None:
             failures.append("metric %r is not in the report" % name)
+        elif math.isnan(value):
+            failures.append("metric %r is NaN" % name)
         elif value > limit:
             failures.append("%s=%.4f is above the maximum %.4f" % (name, value, limit))
     return failures
@@ -247,6 +255,12 @@ def _print_deltas(deltas: Dict[str, Dict[str, Any]]) -> None:
     for metric, delta in sorted(deltas.items()):
         if delta.get("missing"):
             print("%-18s baseline=%.4f missing from the report" % (metric, delta["baseline"]))
+            continue
+        if delta.get("incomparable"):
+            # The diff is NaN by construction here, and "diff=+nan" on its own is not a
+            # diagnosis: print the reason the comparison was refused, not just its symptom.
+            print("%-18s baseline=%.4f value=%.4f not compared: %s"
+                  % (metric, delta["baseline"], delta["value"], delta["incomparable"]))
             continue
         print("%-18s baseline=%.4f value=%.4f diff=%+.4f (tol %.4f)"
               % (metric, delta["baseline"], delta["value"], delta["diff"], delta["tolerance"]))

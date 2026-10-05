@@ -158,7 +158,7 @@ Laya does not open a network port.
 | `laya_decide` | Answers a JSON-schema-shaped decision in one forward pass and returns the decided values with per-field confidence, instead of an answer map to parse. Schema properties may be enum choices, booleans, or integers with a minimum and maximum; free strings, arrays, and nested objects are rejected by path. | `state`, `schema`, optional `model` |
 
 The three batch and schema tools exist because the same operations are available on the SDK and
-`laya-serve`: reaching for many requests, or for a caller that already knows the answer shape,
+`laya-serve`: handling many requests, or serving a caller that already knows the answer shape,
 does not require dropping to Python. For the schema-driven form in more depth, see
 [Schema-driven decisions](structured.md).
 
@@ -229,10 +229,48 @@ the server is ready.
 | `LAYA_THREADS` | PyTorch default | Caps Torch intra-op threads for CPU inference; keep it at or below the physical core count. |
 | `LAYA_AUTO_TASK` | `0` | Set to `1` to let a request auto-route to the `typed-decisions` checkpoint. Same meaning as in `laya.serve`; it does not preload that checkpoint, so `LAYA_MODELS` still decides what is built at startup. |
 | `LAYA_DEFAULT_MODEL` | `english` | The checkpoint a state with no language evidence falls back to, same meaning as in `laya.serve`. Unlike `laya.serve`, an unresolvable name does not stop the server: it comes back as a `router construction failed` tool error on the next call, because a stdio server has no startup to refuse. |
+| `LAYA_BASE_URL` | unset | Send predictions to a `laya-serve` on your own hardware instead of loading checkpoints in each MCP process. A bare `host:port` is read as HTTP. |
+| `LAYA_REMOTE_TIMEOUT` | `300` | HTTP timeout in seconds when `LAYA_BASE_URL` is set, including the server's cold load. Invalid or non-positive values use the default. |
 
-The stock `laya-mcp-server` launcher creates its Router without installing hooks. If you need
-prediction hooks, use a custom launcher that installs them, for example with
-`laya.hooks.set_default_hooks`, before the server builds its Router. The environment variables
+### Share one model server across MCP sessions
+
+Run one local HTTP server and point each MCP client's environment at it:
+
+```bash
+LAYA_HOST=127.0.0.1 LAYA_PRELOAD=0 LAYA_IDLE_UNLOAD_SECONDS=300 laya-serve
+```
+
+```json
+{
+  "mcpServers": {
+    "laya": {
+      "command": "laya-mcp-server",
+      "env": {"LAYA_BASE_URL": "http://127.0.0.1:8000"}
+    }
+  }
+}
+```
+
+Install `laya[serve]` where the HTTP server runs. MCP still uses stdio with the editor; its
+prediction tools use HTTP to reach your server. `laya_predict`, `laya_predict_batch`, `laya_decide`
+and `laya_preset` use the server's original state, instructions and option descriptions.
+Heterogeneous batches send one `/v1/systemone` request per item, preserving input order;
+`batch_size` and `sort_by_length` do not change the server's execution. `laya_status` reports the
+server's `/health`; `laya_route` and `laya_route_batch` stay local and need no model or HTTP request.
+The MCP process imports no torch and loads no checkpoint, including when `LAYA_THREADS` or
+`LAYA_PRELOAD` is set.
+
+Set the same `LAYA_API_KEY` in both processes when the server requires a bearer token. Keep
+`LAYA_DEFAULT_MODEL` and `LAYA_AUTO_TASK` aligned so local routing previews match the server's
+actual routing. Device and preload settings belong to the HTTP server. The first call after an
+idle unload waits for a cold load; raise `LAYA_REMOTE_TIMEOUT` if that takes longer than 300 seconds.
+`laya_shortlist` and prediction hook overrides return `unsupported_remote`, since their code needs
+the model process. HTTP errors retain the server's detail text as MCP tool errors. With
+`LAYA_BASE_URL` unset, the MCP server keeps loading checkpoints in its own process.
+
+The stock `laya-mcp-server` launcher creates its Router without installing hooks. Install prediction
+hooks in the process that runs inference: the MCP process in local mode, or the HTTP server in
+shared-server mode. A custom launcher can use `laya.hooks.set_default_hooks` before building its Router. The environment variables
 above configure model lifecycle, not hook registration. The client still decides when to call a
 tool and what to do with the returned decision.
 

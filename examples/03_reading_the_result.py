@@ -24,10 +24,10 @@ banner("03", "Reading the result", """
 
     `usage` is the part readers misread: `input_tokens` is the whole batch, with the state
     counted once per question, so it grows with the number of questions rather than being a
-    context length. `output_tokens` is always 0 -- Laya never generates text. The four keys
-    after them are how much of your state the model actually read: `state_tokens` is the whole
+    context length. `output_tokens` is always 0 -- Laya never generates text. The keys after
+    them are how much of your state the model actually read: `state_tokens` is the whole
     serialized state, `state_tokens_dropped` the most of it any one question's head gave up,
-    and `truncated` / `truncated_questions` name the questions that gave something up. A seventh
+    and `truncated` / `truncated_questions` name the questions that gave something up. One more
     key, `options`, appears only when the head budget was tight enough to leave some question's
     options sharing a token span -- that question can no longer tell those options apart, and
     `usage["options"]` is where the call says so.

@@ -96,6 +96,22 @@ missing_from_ci = [
 ]
 check("ci/tests every advertised Python version", missing_from_ci, [])
 
+# ------------------------------------------------- workflows pin every action by a full SHA
+# `.github/dependabot.yml` states the policy, and every job but `typescript-sdk` followed it. That
+# job runs `npm ci` and starts a live server, so a moved major tag executes in a privileged job --
+# the supply-chain risk the pins exist to remove. Enforced here so the next `uses:` cannot float.
+_workflow_dir = os.path.join(ROOT, ".github", "workflows")
+_unpinned = []
+for _wf_name in sorted(os.listdir(_workflow_dir)):
+    if not _wf_name.endswith((".yml", ".yaml")):
+        continue
+    _wf_text = read(os.path.join(".github", "workflows", _wf_name))
+    for _line_no, _line in enumerate(_wf_text.splitlines(), 1):
+        _uses = re.search(r"\buses:\s*(\S+)", _line)
+        if _uses and not re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", _uses.group(1)):
+            _unpinned.append("%s:%d %s" % (_wf_name, _line_no, _uses.group(1)))
+check("workflows/pin every action by SHA", _unpinned, [])
+
 # Every test in tests/ must be wired into CI workflows (ci.yml or docker.yml),
 # unless explicitly exempted with a documented rationale (#399).
 def _clean_command_line(line):
@@ -174,13 +190,24 @@ def _invoked_workflow_tests(yaml_text):
 
 
 docker_workflow = read(os.path.join(".github", "workflows", "docker.yml"))
-registered_test_files = _invoked_workflow_tests(workflow) | _invoked_workflow_tests(docker_workflow)
+release_workflow = read(os.path.join(".github", "workflows", "release.yml"))
+# The Linux `test` job and the release gate both invoke `scripts/test_suites.py` instead of naming
+# their suites inline, so that shared list is a source of suite names too. Without this the
+# "every suite is wired" check would fail for every suite the workflows no longer name.
+shared_suites = read(os.path.join("scripts", "test_suites.py"))
+registered_test_files = (
+    _invoked_workflow_tests(workflow)
+    | _invoked_workflow_tests(docker_workflow)
+    | set(re.findall(r"\btests/(test_[a-zA-Z0-9_]+\.py)\b", shared_suites))
+)
 
 EXEMPT_TEST_SUITES = {
     "test_local_e2e.py": "Requires local checkpoints under ~/laya_models (AGENTS.md)",
     "test_mcp_local_e2e.py": "Requires local checkpoints under ~/laya_models (AGENTS.md)",
     "test_onnx.py": "Requires onnx extra; skip-guarded on lane without it (AGENTS.md)",
     "test_fast.py": "Requires CUDA and tilelang extra (AGENTS.md)",
+    "test_fast_cpu.py": "Requires tilelang extra and a C++ compiler; optional CUDA parity",
+    "test_compile_cuda.py": "Requires CUDA; CI installs CPU-only torch",
     "test_server_example.py": "Requires cached or downloaded weights for examples/server.py",
 }
 
@@ -193,6 +220,10 @@ untested_suites = [
     if f not in EXEMPT_TEST_SUITES and f not in registered_test_files
 ]
 check("ci/wires every non-exempt test suite", untested_suites, [])
+# The point of the shared list is that CI and the publish gate run the same suites. Both invoking
+# the script is the entire mechanism, so assert neither workflow dropped back to an inline list.
+check_true("ci and the release gate share one suite list",
+           "scripts/test_suites.py" in workflow and "scripts/test_suites.py" in release_workflow, "")
 
 
 # --------------------------------------------------------------- markdown links
@@ -249,6 +280,19 @@ for _path in _md:
 
 check("md/no link to a file that does not exist", _broken_files, [])
 check("md/no anchor that matches no heading", _broken_anchors, [])
+
+# ------------------------------------------------- published READMEs link absolutely
+# `pyproject.toml` uses README.md as the PyPI long description, and PyPI renders it standalone, so a
+# repo-relative target 404s there; the same is true of the npm-published `sdk/typescript` and
+# `laya-ts` READMEs. The check above only proves the target exists in-repo, which is exactly why
+# this went unnoticed -- a relative link is a local success and a published failure.
+for _pub in ("README.md", "sdk/typescript/README.md", "laya-ts/README.md"):
+    if not os.path.exists(os.path.join(ROOT, _pub)):
+        continue
+    _rel = [u for _, u in re.findall(r"\[([^\]]*)\]\(([^)\s]+?)(?:\s+\"[^\"]*\")?\)", read(_pub))
+            if not u.startswith(("http://", "https://", "mailto:", "data:", "#"))]
+    check("published/%s links absolutely" % _pub, _rel, [])
+
 # ---------------------------------------------------------------- Compose layout
 # `compose.http.yaml` is an override, so it is merged onto `compose.yaml` rather than
 # read on its own. These checks are textual because the suite takes no third-party
@@ -441,7 +485,9 @@ check_true("nix/module still joins models into LAYA_MODELS",
 #
 # This set is derived from the whole package, not from `laya/serve.py`. Reading serve.py alone is
 # a scope error that passed: the three runtime knobs below were invisible to it. A deployment unit
-# configures a *process*, and the process is `laya`.
+# configures a *process*. The MCP launcher and remote transport are separate entry points;
+# their exclusive variables do not configure the HTTP service. Shared helpers (mcp/device.py
+# included) still count, so excluding those two entry points does not hide device controls.
 #
 # Both regexes carry `[A-Z0-9_]` for the same reason: `LAYA_SHA256_DIGESTS`. `[A-Z_]+` matches a
 # prefix of that name, so a narrower pattern reports no gap rather than the one it cannot see.
@@ -451,7 +497,7 @@ _READ_PATTERNS = (r'environ\.get\("(LAYA_[A-Z0-9_]+)"', r'_env_bool\("(LAYA_[A-Z
                   r'environ\["(LAYA_[A-Z0-9_]+)"\]', r'_ENV_KEY = "(LAYA_[A-Z0-9_]+)"')
 
 
-def env_reads():
+def env_reads(excluded_paths=()):
     """Every `LAYA_*` name the package looks up, by walking laya/ rather than listing files."""
     found = set()
     for root, dirs, files in os.walk(os.path.join(ROOT, "laya")):
@@ -460,13 +506,17 @@ def env_reads():
             if not name.endswith(".py"):
                 continue
             rel = os.path.relpath(os.path.join(root, name), ROOT)
+            if rel.replace(os.sep, "/") in excluded_paths:
+                continue
             src = read(rel)
             for pat in _READ_PATTERNS:
                 found.update(re.findall(pat, src))
     return found
 
 
-read_names = env_reads()
+read_names = env_reads(("laya/mcp/server.py", "laya/mcp/remote.py"))
+check("nix/only the two MCP transport variables are excluded from the HTTP process",
+      sorted(env_reads() - read_names), ["LAYA_BASE_URL", "LAYA_REMOTE_TIMEOUT"])
 # An assignment only. The `models` description names `LAYA_MODELS` in prose, and prose that
 # mentions a variable sets nothing.
 assigned = sorted(set(re.findall(r'\b(LAYA_[A-Z0-9_]+)\s*=', nix_module))
@@ -485,7 +535,7 @@ check_true("nix/the derivation reaches a digit-bearing env var",
 # shell-quoting claim holds -- nothing in CI evaluates a NixOS module, so every check here is
 # textual. Listing the exception keeps the gap asserted at exactly one name.
 UNWIRED = {"LAYA_SHA256_DIGESTS"}
-check("nix/module reaches every env var laya reads",
+check("nix/module reaches every env var the HTTP process reads",
       sorted(read_names - set(assigned) - UNWIRED), [])
 # The other direction is the silent failure: a misspelled name is a perfectly good string,
 # systemd exports it, no Python ever looks at it, and the operator's setting does nothing.
@@ -525,7 +575,7 @@ def option_type(opt):
 # Every new knob is opt-in: unset means the unit exports nothing and the runtime's own default
 # applies, so a host that ignores them gets today's behaviour byte for byte.
 for opt in ("rootPath", "logLevel", "maxConcurrent", "cudaAmp", "cpuAmp", "mpsAmpMinRows",
-            "maxLoaded", "maxTokenBudget", "revision", "defaultModel"):
+            "maxLoaded", "maxTokenBudget", "revision", "defaultModel", "idleUnloadSeconds"):
     _t = option_text(opt)
     check_true("nix/module declares %s" % opt, _t != "", "option not found")
     check_true("nix/%s is opt-in (nullOr, default null)" % opt,
@@ -534,6 +584,9 @@ for opt in ("rootPath", "logLevel", "maxConcurrent", "cudaAmp", "cpuAmp", "mpsAm
     check_true("nix/%s is guarded by a != null optionalAttrs" % opt,
                re.search(r"lib\.optionalAttrs \(cfg\.%s != null\)" % opt, nix_module) is not None,
                "the unit would export the variable even when the host left it unset")
+
+check("nix/idleUnloadSeconds accepts zero to disable unloading",
+      option_type("idleUnloadSeconds"), "lib.types.nullOr lib.types.ints.unsigned")
 
 # The same lesson as `models`, stated for the whole module: no option may carry a closed list of
 # names that somebody else validates. uvicorn checks the log level, laya checks the checkpoint

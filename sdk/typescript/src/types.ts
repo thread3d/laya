@@ -23,6 +23,15 @@ export type ModelName = 'english' | 'multilingual' | 'typed-decisions';
 export type ModelAlias = ModelName | 'en' | 'laya' | 'default' | 'multi' | 'ml' | 'laya-multilingual'
   | 'typed' | 'typed_decisions' | 'laya-typed-decisions' | 'decisions';
 
+/** Per-option-count abstention thresholds: `bucket -> threshold`, keyed by core's `temp_bucket`
+ *  spelling (`"choice:2"`, `"choice:3-5"`, `"score:6-10"`, `"noul:2"`, ...) plus an optional
+ *  `"default"` for buckets the map does not name. One threshold does not transfer across option
+ *  counts, so each bucket is gated at the level its own calibration earns; fit one with
+ *  `laya.calibrate.fit_abstention_thresholds`. Every value is a threshold in `[0, 1]`. */
+export type MinConfidenceMap = Record<string, number>;
+/** The abstention gate: one threshold for every answer, or a per-bucket map. */
+export type MinConfidence = number | MinConfidenceMap;
+
 export interface RequestOptions {
   /** Abort waiting for the response. Running inference may still finish on the server. */
   signal?: AbortSignal;
@@ -45,14 +54,30 @@ export interface PredictOptions extends RequestOptions {
   maxLen?: number;
   /** Token window the option prompt shares, same cap. */
   headMaxLen?: number;
-  /** Abstention threshold in `[0, 1]`; an answer whose `answer_confidence` falls below
-   *  it comes back marked `low_confidence`, with the answer itself kept. */
-  minConfidence?: number;
+  /** Abstention gate: either one threshold in `[0, 1]` for every answer, or a
+   *  per-bucket map so each option count is gated at the level its own calibration earns.
+   *  An answer whose `answer_confidence` falls below its threshold comes back marked
+   *  `low_confidence`, with the answer itself kept. */
+  minConfidence?: MinConfidence;
 }
 
 interface AnswerBase {
   /** Optional action metadata returned by Laya. */
   action?: { act_probability: number };
+  /** The probability mass on the answer actually reported (`max(p)`). Unlike `confidence`, which
+   *  means normalized entropy on `choice` and `score` and `max(p_yes, p_no)` on `noul`, this is
+   *  the same quantity on all three types, so one threshold gates across them. */
+  answer_confidence: number;
+  /** Set by the abstention gate on the answers that fell below `minConfidence`, and only then:
+   *  `flag_low_confidence` writes `True` and never writes the key otherwise. */
+  low_confidence?: true;
+  /** How the gate decided this answer, reported on every answer of a gated call. Absent means no
+   *  gate ran (`minConfidence` unset); `unevaluated` means a gate ran and this answer carried no
+   *  usable confidence, which the boolean above cannot tell apart from a pass. */
+  abstention?: 'passed' | 'abstained' | 'unevaluated';
+  /** The threshold that produced `abstention`, echoed on the same answers: the gate consumes
+   *  `minConfidence`, so without this a batch run cannot be re-split by the threshold it used. */
+  abstention_threshold?: number;
 }
 export interface ChoiceAnswer<Label extends string = string> extends AnswerBase {
   type: 'choice';
@@ -89,6 +114,10 @@ export interface LanguageDetection {
   language_undecided: boolean;
   diacritic_rate: number;
   non_latin_fraction: number;
+  /** The line or field that made a mostly-English state non-English (#384), null otherwise.
+   *  A state can read as English overall because an English stack trace or template is longer
+   *  than the customer's message; this names the segment that was not. */
+  mixed_segment: string | null;
 }
 export interface RouteDecision {
   model: ModelName;
@@ -97,10 +126,43 @@ export interface RouteDecision {
   detection: LanguageDetection | null;
   workflow: string | null;
 }
+/** One question whose options no longer have a token span each after the head budget (#538). */
+export interface OptionCollapse {
+  /** Options the question defines, not the option markers that reached the sequence. */
+  total: number;
+  /** Of those, the ones still carrying a span of their own. */
+  distinct: number;
+  /** Tokens the budget allowed each option, or null when none was capped. */
+  tokens_per_option: number | null;
+}
+/** What the forward pass was built from, as `/v1/systemone` reports it.
+ *
+ *  How much of a state the model reads is a token budget, not a character count, and the budget
+ *  moves with `max_len`, `head_max_len` and each question's own option prompt (#174). A truncated
+ *  answer is still an answer, so these keys are the only place the cut is visible: nothing in
+ *  `answers` changes when evidence is dropped.
+ */
+export interface Usage {
+  /** Non-pad tokens of the state's rows, one row per question, so it grows with the questions. */
+  input_tokens: number;
+  /** Always 0: the head answers in one pass and generates nothing. */
+  output_tokens: number;
+  /** Tokens the whole serialized state needs. */
+  state_tokens: number;
+  /** Tokens of it at least one question did not get: the worst case over the questions, since
+   *  each leaves the state a different room. */
+  state_tokens_dropped: number;
+  /** Whether that worst case dropped anything. */
+  truncated: boolean;
+  /** The ids whose own window was cut, empty when none was. */
+  truncated_questions: string[];
+  /** Present only when some question's options were collapsed, keyed by question id. */
+  options?: Record<string, OptionCollapse>;
+}
 export interface Prediction<Q extends Questions = Questions> {
   model: string;
   answers: Answers<Q>;
-  usage: { input_tokens: number; output_tokens: number };
+  usage: Usage;
   /** Optional routing metadata returned by Laya. */
   routing?: RouteDecision;
 }

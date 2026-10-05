@@ -70,6 +70,11 @@ MAX_CHOICE_OPTIONS = getattr(_laya_serve, "MAX_CHOICE_OPTIONS", 100)
 MAX_SCORE_LEVELS = getattr(_laya_serve, "MAX_SCORE_LEVELS", 32)
 MAX_TOTAL_OPTIONS = getattr(_laya_serve, "MAX_TOTAL_OPTIONS", 512)
 DEFAULT_MAX_TOKEN_BUDGET = getattr(_laya_serve, "DEFAULT_MAX_TOKEN_BUDGET", 8192)
+# `/predict/batch` collates `states x questions` rows into one tensor and each row costs its width,
+# so the field caps multiply and `max_len` multiplies again. Same getattr as the rest: a batch this
+# demo answers but `laya.serve` refuses would break the parity its own test file states.
+DEFAULT_MAX_BATCH_TOKENS = getattr(_laya_serve, "DEFAULT_MAX_BATCH_TOKENS", 131072)
+_BATCH_ROW_TOKENS_ASSUMED = getattr(_laya_serve, "_BATCH_ROW_TOKENS_ASSUMED", 512)
 
 # The set of controls a client may put on the body, and the set that must be refused rather than
 # silently dropped -- both read from `laya.serve` so the demo cannot drift from the server it
@@ -176,6 +181,24 @@ def _check_model(v: Optional[str]) -> Optional[str]:
 # detail a caller sees on `main` are the same as the shipped server's.
 _resolve_max_token_budget = getattr(_laya_serve, "_resolve_max_token_budget",
                                     lambda: DEFAULT_MAX_TOKEN_BUDGET)
+_resolve_max_batch_tokens = getattr(_laya_serve, "_resolve_max_batch_tokens",
+                                    lambda: DEFAULT_MAX_BATCH_TOKENS)
+
+
+def _fallback_batch_chunk_size(n_states, n_questions, max_len=None):
+    if n_states <= 0 or n_questions <= 0:
+        return None
+    width = (max_len if isinstance(max_len, int) and not isinstance(max_len, bool) and max_len > 0
+             else _BATCH_ROW_TOKENS_ASSUMED)
+    budget = _resolve_max_batch_tokens()
+    if n_states * n_questions * width <= budget:
+        return None
+    return max(1, min(n_states, max(1, budget // width) // n_questions))
+
+
+# The planner itself comes from laya.serve when it is there, so the demo splits a batch exactly as the
+# shipped server does rather than keeping a second copy of the arithmetic.
+_batch_chunk_size = getattr(_laya_serve, "_batch_chunk_size", _fallback_batch_chunk_size)
 
 
 def _fallback_refuse_body_refusals(body: Dict[str, Any]) -> None:
@@ -609,6 +632,13 @@ def predict_batch(req: BatchRequest) -> Dict[str, Any]:
     shape = {}
     if req.batch_size is not None:
         shape["batch_size"] = req.batch_size
+    else:
+        # Split the batch so one forward pass stays inside laya.serve's token budget, read by the same
+        # getattr as every other bound here. None when the request already fits, so the call is
+        # unchanged -- `predict_batch` warns that batch shapes can move floating-point results.
+        planned = _batch_chunk_size(len(req.states), len(req.questions), req.max_len)
+        if planned is not None:
+            shape["batch_size"] = planned
     if req.sort_by_length:
         shape["sort_by_length"] = True
     if req.min_confidence is not None:

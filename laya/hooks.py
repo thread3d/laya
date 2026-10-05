@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import inspect
+import math
 import threading
 import time
 import uuid
@@ -245,12 +246,14 @@ def validate_timeout(value: Optional[float]) -> Optional[float]:
     A non-positive timeout is rejected here rather than left to
     ``thread.join``: ``join(0)`` and ``join(-1)`` return before the hook has
     started, so the outcome of a fast hook with such a value is a race.
+    Non-finite values are rejected too: ``join(nan)`` raises ``ValueError`` and
+    ``join(inf)`` raises ``OverflowError`` instead of waiting.
     """
     if value is None:
         return None
     timeout = float(value)
-    if timeout <= 0:
-        raise ValueError("hooks_timeout must be a positive number or None; got %r" % (value,))
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("hooks_timeout must be a positive finite number or None; got %r" % (value,))
     return timeout
 
 
@@ -284,12 +287,16 @@ def run_coroutine_sync(coro: Awaitable[Any], loop: Optional[asyncio.AbstractEven
     """
     if loop is not None:
         if not loop.is_running():
+            if asyncio.iscoroutine(coro):
+                coro.close()
             raise ValueError("run_coroutine_sync: the loop passed is not running")
         try:
             running = asyncio.get_running_loop()
         except RuntimeError:
             running = None
         if loop is running:
+            if asyncio.iscoroutine(coro):
+                coro.close()
             raise ValueError(
                 "run_coroutine_sync: the loop passed is running in the calling thread; "
                 "blocking on it would deadlock"
@@ -390,8 +397,11 @@ class HookRegistry:
 
             with agent.hooks_installed(tracer):
                 agent.system_one(state, questions)
+
+        Each argument is one hook or a sequence of them, matching `add_hook` and the
+        `hooks=` parameter, so `hooks_installed([tracer, meter])` works too.
         """
-        added = normalise_hooks(list(hooks))
+        added = normalise_hooks([hook for arg in hooks for hook in _as_sequence(arg)])
         self._extend_hooks(added)
         try:
             yield self

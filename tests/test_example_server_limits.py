@@ -290,6 +290,66 @@ def main():
         s, d = serve_verdict(st, qs), demo_verdict(st, qs)
         ok("parity with laya.serve: %s" % label, s == d, "serve=%s demo=%s" % (s, d))
 
+    # The BATCH shape, which these parity cases could not reach: every case above drives
+    # `_check_request_limits` with one state, so nothing compared how the two surfaces SIZE a batch.
+    # `laya.serve` splits a batch so one forward pass stays inside its token budget rather than
+    # refusing it, and the demo must split it identically -- it binds the planner from `laya.serve` by
+    # getattr, so this checks the binding took AND that the plan reaches the call.
+    serve_plan = _serve_mod._batch_chunk_size
+    demo_plan = demo._batch_chunk_size
+
+    tiny = {"q": {"type": "noul", "instructions": "True?"}}
+    four = dict(("q%03d" % i, tiny["q"]) for i in range(4))
+    thirty_two = dict(("q%03d" % i, tiny["q"]) for i in range(32))
+    many = dict(("q%03d" % i, tiny["q"]) for i in range(MAX_QUESTIONS))
+    wide = _serve_mod.DEFAULT_MAX_TOKEN_BUDGET
+    for label, ns, nq, mlen in [
+            ("an ordinary batch fits, no split", 2, len(four), None),
+            ("64 states x 4 questions fits", 64, len(four), None),
+            ("8 states x 32 questions fits", 8, len(thirty_two), None),
+            ("9 states x 32 questions splits", 9, len(thirty_two), None),
+            ("64 states x 64 questions splits", 64, len(many), None),
+            ("a wide max_len splits harder", 8, len(thirty_two), wide),
+            ("a wide max_len with few rows fits", 2, 1, wide)]:
+        a, b = serve_plan(ns, nq, mlen), demo_plan(ns, nq, mlen)
+        ok("batch plan parity with laya.serve: %s" % label, a == b, "serve=%r demo=%r" % (a, b))
+
+    # Equal on both sides is not enough -- they bind the same function, so both could be wrong
+    # together. The plan itself has to be the right shape.
+    ok("batch plan/a fitting batch is not split", serve_plan(8, len(thirty_two)) is None,
+       repr(serve_plan(8, len(thirty_two))))
+    split = serve_plan(64, len(many))
+    ok("batch plan/an oversized batch is split", split is not None and split >= 1, repr(split))
+    ok("batch plan/one pass fits the budget",
+       split * len(many) * _serve_mod._BATCH_ROW_TOKENS_ASSUMED
+       <= _serve_mod.DEFAULT_MAX_BATCH_TOKENS,
+       "%r states x %d questions" % (split, len(many)))
+
+    # And the demo's route sends it, rather than computing it and dropping it.
+    sent = {}
+    real_router = demo._router
+
+    class _Recorder:
+        def predict_batch(self, requests, **kwargs):
+            sent.update(kwargs)
+            sent["n"] = len(requests)
+            return [{"model": "m", "answers": {}, "usage": {"input_tokens": 1}} for _ in requests]
+
+    demo._router = lambda: _Recorder()
+    try:
+        code = client.post("/predict/batch",
+                           json={"states": ["hi"] * 64, "questions": many}).status_code
+        ok("batch plan/the demo answers an oversized batch instead of refusing it", code == 200, code)
+        ok("batch plan/the demo forwards the planned batch_size",
+           sent.get("batch_size") == serve_plan(64, len(many)),
+           "sent=%r planned=%r" % (sent.get("batch_size"), serve_plan(64, len(many))))
+        ok("batch plan/every state is still sent", sent.get("n") == 64, sent.get("n"))
+        sent.clear()
+        client.post("/predict/batch", json={"states": ["hi"] * 2, "questions": four})
+        ok("batch plan/a fitting batch is passed no batch_size", "batch_size" not in sent, sent)
+    finally:
+        demo._router = real_router
+
     # Parity alone cannot see a bug both surfaces share, and `getattr` guarantees they share one:
     # with `_state_length` measuring `str(state)` again, both agree on accepting a state that
     # serializes to 99 988 characters and every parity check above stays green (measured: 0 of them

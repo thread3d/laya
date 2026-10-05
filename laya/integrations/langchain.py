@@ -34,6 +34,7 @@ from ._controls import budget_kwargs as _budget_kwargs, hook_kwargs as _hook_kwa
 from ._controls import decision_kwargs as _decision_kwargs
 from ._controls import predict_kwargs as _predict_kwargs
 from ._controls import reject_remote_hooks as _reject_remote_hooks
+from ._guard import score_violation_probability as _score_violation_probability
 
 
 class LayaGuardrailError(ValueError):
@@ -270,20 +271,28 @@ def _execute_batch(
     model: Optional[str] = None,
     max_len: Optional[int] = None,
     head_max_len: Optional[int] = None,
+    lang: Optional[str] = None,
+    min_confidence: Optional[float] = None,
     hook_kwargs: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """Evaluate one question set over many states, packing them into shared forward passes.
 
     The local sibling of `_execute_decision`; results come back in input order. `Agent`
     and `Router` disagree about how `predict_batch` is called (states plus one question
-    set, versus one request dict each), so both forms are built here. The token budget
-    rides on each request for a Router and as call arguments for an Agent.
+    set, versus one request dict each), so both forms are built here. The token budget,
+    `lang` and `min_confidence` ride the same way they do on `_execute_decision`, so
+    `.batch()` answers identically to `.invoke()` instead of silently dropping them.
     """
     runner = agent if agent is not None else _get_default_router()
-    overrides = _predict_kwargs(model, max_len, head_max_len)
     if hasattr(runner, "route_batch"):
-        requests = [dict({"state": state, "questions": questions}, **overrides) for state in states]
-        return runner.predict_batch(requests)
+        # Router: `lang` is a per-request control it lifts off each item, `min_confidence` is a
+        # call-level argument -- the same split laya-serve's batch endpoint makes between
+        # BATCH_BODY_ITEM_CONTROLS and BATCH_BODY_CALL_CONTROLS.
+        item_overrides = _predict_kwargs(model, max_len, head_max_len, lang)
+        requests = [dict({"state": state, "questions": questions}, **item_overrides) for state in states]
+        return runner.predict_batch(requests, **_decision_kwargs(None, min_confidence))
+    # Agent: `lang` and `min_confidence` are both call-level keyword arguments of `predict_batch`.
+    overrides = _predict_kwargs(model, max_len, head_max_len, lang, min_confidence)
     return runner.predict_batch(list(states), questions, **overrides, **(hook_kwargs or {}))
 
 
@@ -351,7 +360,9 @@ class _BatchedRunnable:
         states = [_extract_text(item, self.state_key) for item in inputs]
         results = _execute_batch(
             states, self._questions(), agent=self.agent, model=self.model,
-            max_len=self.max_len, head_max_len=self.head_max_len, hook_kwargs=hook_kwargs,
+            max_len=self.max_len, head_max_len=self.head_max_len,
+            lang=getattr(self, "lang", None), min_confidence=getattr(self, "min_confidence", None),
+            hook_kwargs=hook_kwargs,
         )
         return [self._finish(result, item) for result, item in zip(results, inputs)]
 
@@ -654,16 +665,9 @@ class LayaGuardrail(_BatchedRunnable, RunnableSerializable):
                 }
             elif t == "score":
                 # `score` is the expected level (0..k-1), not a probability: gate on the
-                # probability that the level is at or above the middle of the scale. Without
-                # a distribution, the normalised expected level stands in for it.
-                probs = ans.get("probabilities") or {}
-                k = len(probs) or len(self._questions().get(qid, {}).get("criteria") or [])
-                if k < 2:
-                    p_violation = 0.0
-                elif probs:
-                    p_violation = sum(float(probs.get(str(i), 0.0)) for i in range(k // 2, k))
-                else:
-                    p_violation = ans.get("score", 0.0) / (k - 1)
+                # probability that the level is at or above the middle of the scale.
+                levels = len(self._questions().get(qid, {}).get("criteria") or [])
+                p_violation = _score_violation_probability(ans, levels)
                 if p_violation >= self.threshold:
                     violations[qid] = {
                         "score": ans.get("score", 0.0),

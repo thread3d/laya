@@ -943,7 +943,7 @@ def test_batch_validation():
     # The message that lists the accepted keys must list the ones the validator keeps --
     # a client reads that list as the schema. Both directions, derived from the validator.
     probe = {"state": STATE, "questions": QUESTIONS, "model": "english", "task": "massive",
-             "lang": "en", "lang_guess": False, "max_len": 5, "head_max_len": 5}
+             "lang": "en", "lang_guess": "de", "max_len": 5, "head_max_len": 5}
     kept = set(validate_batch_requests([probe])[0])
     ok("batch/validation_covers_every_override",
        kept == {"state", "questions"} | set(BATCH_ITEM_OVERRIDES), repr(sorted(kept)))
@@ -976,6 +976,20 @@ def test_batch_predict():
                                                  router=router),
                       "invalid_questions")
     ok("batch/predict_not_called_on_bad_input", router.predict_batch_calls == [])
+
+    # A batch item's lang_guess is type-checked like the single-request path, not passed through
+    # raw -- a non-string otherwise reached core and silently misrouted the item.
+    router = BatchRouter()
+    expect_tool_error("batch/predict_item_lang_guess_type",
+                      lambda: laya_predict_batch([{"state": STATE, "questions": QUESTIONS,
+                                                   "lang_guess": {"not": "a string"}}], router=router),
+                      "invalid_lang_guess")
+    ok("batch/predict_bad_lang_guess_not_called", router.predict_batch_calls == [])
+    router = BatchRouter()
+    laya_predict_batch([{"state": STATE, "questions": QUESTIONS, "lang_guess": "de"}], router=router)
+    ok("batch/predict_item_lang_guess_forwarded",
+       router.predict_batch_calls[0][0][0].get("lang_guess") == "de",
+       repr(router.predict_batch_calls[0][0][0]))
 
     router = BatchRouter()
     out = laya_predict_batch(BATCH_REQUESTS, batch_size=8, router=router)
@@ -1046,6 +1060,21 @@ def test_batch_predict():
     ok("batch/defaults_not_in_kwargs", "hooks_timeout" not in kwargs and 
        "min_confidence" not in kwargs and "sort_by_length" not in kwargs, repr(kwargs))
     
+    # Call-level controls are validated up front like every sibling tool: a bad value is a clean
+    # ToolError, not an internal_error that escaped the TypeError-only handler, and not a silent
+    # 1-second hook deadline from core's float(True) == 1.0.
+    expect_tool_error("batch/min_confidence_out_of_range",
+                      lambda: laya_predict_batch(BATCH_REQUESTS, min_confidence=1.5, router=BatchRouter()),
+                      "invalid_min_confidence")
+    expect_tool_error("batch/hooks_timeout_bool_rejected",
+                      lambda: laya_predict_batch(BATCH_REQUESTS, hooks_timeout=True, router=BatchRouter()),
+                      "invalid_hooks_timeout")
+    # min_confidence=0.0 is a real gate (abstain over nothing) and must still be forwarded.
+    router = BatchRouter()
+    laya_predict_batch(BATCH_REQUESTS, min_confidence=0.0, router=router)
+    _, kwargs = router.predict_batch_calls[0][1], router.predict_batch_calls[0][2]
+    ok("batch/min_confidence_zero_forwarded", kwargs.get("min_confidence") == 0.0, repr(kwargs))
+
     expect_tool_error("batch/predict_count_mismatch",
                       lambda: laya_predict_batch(BATCH_REQUESTS, router=ShortRouter()),
                       "internal_error")
@@ -2180,7 +2209,11 @@ def test_batch_item_shape_as_documented():
         ok("schema/%s_item_shape" % tool, want in (by_name[tool].description or ""),
            "documents %r" % want)
 
-    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text()
+    # `encoding="utf-8"` explicitly: the README is UTF-8 and contains non-ASCII (the language
+    # examples), while `Path.read_text()` defaults to the locale encoding -- cp1252 on the Windows
+    # runner, where the decode raised `UnicodeDecodeError` and this suite failed. It went unseen
+    # because the Windows lane ran this file without the `mcp` extra, so it skipped at the top.
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
     marker = "one tool call takes an array of `{"
     ok("docs/readme_names_the_batch_shape", marker in readme, "sentence not found")
     if marker in readme:

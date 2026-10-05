@@ -90,8 +90,8 @@ def route_request(user_prompt: str):
 
 Conversational voice agents (WebRTC, telephony) operate under strict turn-taking constraints: delays in
 detecting when a user speaks or interrupts create unnatural conversational dead air. Waiting for a full
-generative model to produce its first token introduces avoidable lag when the caller simply acknowledged or
-interrupted.
+generative model to produce its first token introduces avoidable lag when the caller simply acknowledges or
+interrupts.
 
 Laya can be placed directly after Speech-to-Text (STT) transcription to classify conversational flow and
 user intent in a single forward pass: triggering quick filler audio or halting audio playback immediately

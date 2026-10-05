@@ -281,7 +281,7 @@ or quietly makes the call worse:
 
 * A start hook's `ctx.head_max_len` *replaces* the budget for the call. What is in force before it
   is the caller's own per-call value, or the checkpoint default in `ctx.agent.cfg` -- so compare
-  against that, and writing a plain number can lower the budget a caller already set.
+  against that: writing a plain number can lower the budget a caller already set.
 * One call answers every question it carries, so size on the widest of them rather than on
   whichever happens to come first.
 * Once the options no longer fit the head, `laya/common.py` gives each of them

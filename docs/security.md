@@ -173,9 +173,6 @@ docker compose -f compose.yaml -f compose.http.yaml up laya-serve
 There is no `_FILE` variant of this variable: that indirection exists for secrets, and a digest map
 is not one.
 
-An unset or empty variable means no verification, so this is safe to leave out of environments that
-do not need it. Malformed JSON raises rather than silently skipping the check.
-
 **Name each checkpoint when a process loads more than one.** The variable takes two shapes, and the
 value types say which:
 

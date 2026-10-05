@@ -10,6 +10,10 @@ import os
 import sys
 import tempfile
 import warnings
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from threading import Barrier
+from unittest.mock import patch
 
 import numpy as np
 
@@ -21,18 +25,23 @@ from laya.calibrate import (  # noqa: E402
     ECE_HOLDOUT_FRAC,
     MIN_BUCKET_N,
     MIN_TYPE_N,
+    MIN_BINNING_BUCKET_N,
     _ece_report,
     _ece_split,
     _iter_records,
+    _softmax,
+    apply_binning_map,
     apply_calibration_payload,
+    fit_binning_map,
     calibration_payload,
     fit_one_temperature,
     fit_temperature_map,
     fit_temperatures,
     records_from_labeled,
 )
-from laya.common import QTYPES, TEMP_MAX, TEMP_MIN, temp_bucket  # noqa: E402
+from laya.common import QTYPES, TEMP_MAX, TEMP_MIN, ece_score, temp_bucket  # noqa: E402
 import laya.calibrate as _calibrate  # noqa: E402
+import laya.agent as _agent_module  # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -211,6 +220,59 @@ check("ece/fit deterministic", again_fit_map["report"], fitted["report"])
 
 
 # --------------------------------------------------------------- live Agent map + JSON round-trip
+
+def _refuses_records(name, records, fragment):
+    try:
+        fit_temperature_map(records)
+    except ValueError as exc:
+        check_true("records/" + name, fragment in str(exc), str(exc))
+    except Exception as exc:
+        FAIL.append("records/%s: raised %r, want ValueError" % (name, exc))
+    else:
+        FAIL.append("records/%s: invalid input was accepted" % name)
+
+
+for name, record, field in (
+    ("scalar record", 3, "record"),
+    ("wrong record length", (0, [1, 2]), "record"),
+    ("bool type", (True, [1, 2], [1, 0]), "qtype"),
+    ("fractional type", (0.9, [1, 2], [1, 0]), "qtype"),
+    ("unknown type", (3, [1, 2], [1, 0]), "qtype"),
+    ("negative type", (-1, [1, 2], [1, 0]), "qtype"),
+    ("bool width", (0, [1, 2], [1, 0], True), "k"),
+    ("null width", (0, [1, 2], [1, 0], None), "k"),
+    ("fractional width", (0, [1, 2], [1, 0], 1.9), "k"),
+    ("zero width", (0, [1, 2], [1, 0], 0), "k"),
+    ("oversized width", (0, [1, 2], [1, 0], 3), "k"),
+    ("empty vectors", (0, [], []), "k"),
+    ("matrix logits", (0, [[1, 2]], [1, 0]), "logits"),
+    ("matrix target", (0, [1, 2], [[1, 0]]), "target"),
+    ("text logits", (0, ["1", "2"], [1, 0]), "logits"),
+    ("nan logits", (0, [np.nan, 2], [1, 0]), "logits"),
+    ("infinite target", (0, [1, 2], [np.inf, 0]), "target"),
+    ("unequal vectors", (0, [1, 2], [1]), "same length"),
+    ("negative target", (0, [1, 2], [-0.1, 1.1]), "probability"),
+    ("unnormalized target", (0, [1, 2], [1, 1]), "probability"),
+):
+    _refuses_records(name, [record], field)
+
+soft_record = _iter_records([(np.int64(0), [1, 2, 0], [0.3, 0.7, 0], np.int64(2))])[0]
+check("records/numpy integer and explicit padding", soft_record[3], 2)
+check_true("records/soft target kept", np.allclose(soft_record[2], [0.3, 0.7]))
+check_true("records/soft target fits", np.isfinite(fit_one_temperature([(soft_record[1], soft_record[2])], min_n=1)))
+check("records/empty dataset still neutral", fit_temperature_map([])["temperature"], [1.0] * 3)
+for name, pairs, min_n in (
+    ("mismatched lengths", [([1, 2], [1])], None),
+    ("invalid below sample floor", [([np.nan, 2], [1, 0])], None),
+    ("invalid min_n", [], 0),
+):
+    try:
+        fit_one_temperature(pairs, min_n=min_n)
+    except ValueError:
+        PASS.append("pairs/" + name)
+    else:
+        FAIL.append("pairs/%s: invalid input was accepted" % name)
+
 _CFG = {
     "encoder": "answerdotai/ModernBERT-large",
     "head_layers": 2,
@@ -255,6 +317,96 @@ check_true(
     "temperature_by_options" not in payload["config"],
 )
 check_true("save/no weights key", "model.safetensors" not in json.dumps(payload))
+
+
+# --------------------------------------------------------------- failed saves preserve the old map
+with tempfile.TemporaryDirectory() as atomic_dir:
+    atomic_path = Path(atomic_dir) / "calibration.json"
+    agent.save_calibration(atomic_path)
+    original_bytes = atomic_path.read_bytes()
+    original_replace = os.replace
+
+    def _partial_dump(body, stream, **kwargs):
+        stream.write('{"temperature": [')
+        raise OSError("injected write failure")
+
+    for failure, context in (
+        ("write", patch.object(_agent_module.json, "dump", _partial_dump)),
+        ("sync", patch.object(_agent_module.os, "fsync", side_effect=OSError("injected sync failure"))),
+        ("replace", patch.object(_agent_module.os, "replace", side_effect=OSError("injected replace failure"))),
+    ):
+        with context:
+            try:
+                agent.save_calibration(atomic_path)
+            except OSError as exc:
+                check_true("atomic/%s error propagates" % failure, "injected" in str(exc))
+            else:
+                FAIL.append("atomic/%s error did not propagate" % failure)
+        check("atomic/%s keeps prior bytes" % failure, atomic_path.read_bytes(), original_bytes)
+        check("atomic/%s cleans temp" % failure, sorted(os.listdir(atomic_dir)), ["calibration.json"])
+
+    missing_path = Path(atomic_dir) / "new.json"
+    with patch.object(_agent_module.json, "dump", _partial_dump):
+        try:
+            agent.save_calibration(missing_path)
+        except OSError:
+            pass
+        else:
+            FAIL.append("atomic/first-save error did not propagate")
+    check_true("atomic/failed first save leaves no destination", not missing_path.exists())
+    check("atomic/failed first save cleans temp", sorted(os.listdir(atomic_dir)), ["calibration.json"])
+
+    # Successful updates keep the bytes/format and the existing readers' permissions.
+    agent.save_calibration(atomic_path)
+    check("atomic/success preserves JSON format", atomic_path.read_bytes(), original_bytes)
+    if os.name != "nt":
+        os.chmod(atomic_path, 0o640)
+        agent.save_calibration(atomic_path)
+        check("atomic/preserves mode", atomic_path.stat().st_mode & 0o777, 0o640)
+        link_path = Path(atomic_dir) / "linked.json"
+        link_path.symlink_to(atomic_path.name)
+        agent.save_calibration(link_path)
+        check_true("atomic/keeps symlink", link_path.is_symlink())
+        check("atomic/writes symlink target", atomic_path.read_bytes(), original_bytes)
+        link_path.unlink()
+
+    rival = Agent.__new__(Agent)
+    rival.temperature = [1.1, 1.2, 1.3]
+    rival.temperature_by_options = {"choice:2": 1.4}
+    for simulate_lost_race in (False, True):
+        barrier = Barrier(2)
+
+        def _together_replace(src, dst):
+            rank = barrier.wait(timeout=10)
+            if simulate_lost_race and rank == 0:
+                error = PermissionError("injected NTFS replacement race")
+                error.winerror = 5
+                raise error
+            original_replace(src, dst)
+
+        succeeded = 0
+        denied = 0
+        with patch.object(_agent_module.os, "replace", _together_replace):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                writes = [pool.submit(writer.save_calibration, atomic_path) for writer in (agent, rival)]
+                for write in writes:
+                    try:
+                        write.result()
+                    except PermissionError as exc:
+                        # NTFS may deny one simultaneous replacement; other errors still fail.
+                        if getattr(exc, "winerror", None) != 5:
+                            raise
+                        denied += 1
+                    else:
+                        succeeded += 1
+        label = "injected race" if simulate_lost_race else "concurrent writers"
+        check_true("atomic/%s has a successful writer" % label, succeeded >= 1)
+        if simulate_lost_race:
+            check("atomic/injected race exercises denial", denied, 1)
+        concurrent_payload = json.loads(atomic_path.read_text())
+        check_true("atomic/%s leave one complete payload" % label,
+                   concurrent_payload in (payload, calibration_payload(rival.temperature, rival.temperature_by_options)))
+        check("atomic/%s clean temps" % label, sorted(os.listdir(atomic_dir)), ["calibration.json"])
 
 other = Agent.__new__(Agent)
 other.model_id_or_path = agent.model_id_or_path
@@ -301,6 +453,102 @@ stub = type("Stub", (), {})()
 apply_calibration_payload(stub, calibration_payload([1.2, 1.1, 1.3], {"choice:2": 1.4}))
 check("stub/temperature", stub.temperature, [1.2, 1.1, 1.3])
 check("stub/by_options", stub.temperature_by_options, {"choice:2": 1.4})
+
+# Optional histogram-binning map round-trips through the payload and lands on the agent.
+bm = {"choice:2": {"bins": 2, "values": [0.9, 0.2]}}
+with_bm = calibration_payload([1.2, 1.1, 1.3], {"choice:2": 1.4}, binning_map=bm)
+check("payload/no-binning omission", "binning_map" not in calibration_payload([1.2, 1.1, 1.3], {}), True)
+check_true("payload/binning key present", "binning_map" in with_bm, with_bm.keys())
+apply_calibration_payload(stub, with_bm)
+check("stub/binning_map", stub.binning_map, bm)
+stub_no_bm = type("Stub", (), {})()
+apply_calibration_payload(stub_no_bm, {"temperature": [1.0, 1.0, 1.0]})
+check("stub/binning_map cleared when absent", stub_no_bm.binning_map, None)
+
+# The same `_decode_answers` stub test_batch uses proves the map is selectable: no map,
+# the temperature-scaled confidence; a map on this bucket, the remapped one.
+bin_decoder = Agent.__new__(Agent)
+bin_decoder.temperature = [1.0, 1.0, 1.0]
+bin_decoder.temperature_by_options = {}
+bin_ids = ["pick"]
+bin_internal = {"pick": {"t": "choice", "crit": {"left": "left", "right": "right"}}}
+bin_items = [{"markers": [0, 1]}]
+bin_logits = np.log([[0.5, 0.5]]) * 1.0
+bin_act = np.array([[0.2, 0.8]])
+plain = bin_decoder._decode_answers(bin_logits, bin_act, bin_items, bin_ids, bin_internal, 0)
+check("decode/no binning keeps scaled confidence", plain["pick"]["answer_confidence"], 0.5)
+bin_decoder.binning_map = bm
+remapped = bin_decoder._decode_answers(bin_logits, bin_act, bin_items, bin_ids, bin_internal, 0)
+check("decode/binning remaps confidence", remapped["pick"]["answer_confidence"], 0.2)
+
+# Q1: the fitter bins full-precision answer_confidence; the runtime must bin the same
+# value and only round the final public field. Boundary case: a max(p) just below a
+# histogram boundary rounds to the boundary, and the rounded value would pick the wrong bin.
+boundary_bins = {"noul:2": {"bins": 20, "values": [round(0.05 * i, 2) for i in range(20)]}}
+bounce_target = 0.9499995  # just below bin 19's start at 0.95
+boundary_logits = np.log([[1.0 - bounce_target, bounce_target]]) * 1.0
+boundary_act = np.array([[0.01, 0.99]])
+boundary_ids = ["flag"]
+boundary_internal = {"flag": {"t": "noul", "crit": None}}
+boundary_items = [{"markers": [0, 1]}]
+
+agent_boundary = Agent.__new__(Agent)
+agent_boundary.temperature = [1.0, 1.0, 1.0]
+agent_boundary.temperature_by_options = {}
+agent_boundary.binning_map = boundary_bins
+agent_decoded = agent_boundary._decode_answers(
+    boundary_logits, boundary_act, boundary_items, boundary_ids, boundary_internal, 0
+)
+check(
+    "decode/binning uses unrounded value (agent)",
+    agent_decoded["flag"]["answer_confidence"],
+    boundary_bins["noul:2"]["values"][18],
+)
+
+from laya.onnx_agent import ONNXAgent  # noqa: E402
+
+onnx_boundary = ONNXAgent.__new__(ONNXAgent)
+onnx_boundary.temperature = [1.0, 1.0, 1.0]
+onnx_boundary.temperature_by_options = {}
+onnx_boundary.binning_map = boundary_bins
+onnx_decoded = onnx_boundary._decode_answers(
+    boundary_logits, boundary_act, boundary_items, boundary_ids, boundary_internal, 0
+)
+check(
+    "decode/binning uses unrounded value (onnx)",
+    onnx_decoded["flag"]["answer_confidence"],
+    agent_decoded["flag"]["answer_confidence"],
+)
+
+# Q3: cross-backend selectability — the same installed map must move both decodes to the same value.
+onnx_select = ONNXAgent.__new__(ONNXAgent)
+onnx_select.temperature = [1.0, 1.0, 1.0]
+onnx_select.temperature_by_options = {}
+onnx_select_ids = ["flag"]
+onnx_select_internal = {"flag": {"t": "noul", "crit": None}}
+select_logits = np.log([[0.8, 0.2]]) * 1.0
+onnx_no_map = onnx_select._decode_answers(select_logits, bin_act, bin_items, onnx_select_ids, onnx_select_internal, 0)
+check("onnx/no binning keeps scaled confidence", onnx_no_map["flag"]["answer_confidence"], 0.8)
+onnx_select.binning_map = {"noul:2": {"bins": 2, "values": [0.95, 0.05]}}
+onnx_with_map = onnx_select._decode_answers(select_logits, bin_act, bin_items, onnx_select_ids, onnx_select_internal, 0)
+check("onnx/binning remaps confidence", onnx_with_map["flag"]["answer_confidence"], 0.05)
+
+agent_bin = Agent.__new__(Agent)
+agent_bin.temperature = [1.0, 1.0, 1.0]
+agent_bin.temperature_by_options = {}
+agent_bin.binning_map = {"noul:2": {"bins": 2, "values": [0.95, 0.05]}}
+agent_binned = agent_bin._decode_answers(select_logits, bin_act, bin_items, onnx_select_ids, onnx_select_internal, 0)
+check("agent/binning remaps confidence", agent_binned["flag"]["answer_confidence"], 0.05)
+agent_bin.lang_temperatures = {"zh": {"temperature": [1.0, 1.0, 1.0], "temperature_by_options": {}}}
+agent_lang = agent_bin._decode_answers(select_logits, bin_act, bin_items, onnx_select_ids, onnx_select_internal, 0, lang="zh")
+check("agent/lang override skips binning", agent_lang["flag"]["answer_confidence"], 0.8)
+onnx_lang = ONNXAgent.__new__(ONNXAgent)
+onnx_lang.temperature = [1.0, 1.0, 1.0]
+onnx_lang.temperature_by_options = {}
+onnx_lang.binning_map = {"noul:2": {"bins": 2, "values": [0.95, 0.05]}}
+onnx_lang.lang_temperatures = {"zh": {"temperature": [1.0, 1.0, 1.0], "temperature_by_options": {}}}
+onnx_runtime = onnx_lang._decode_answers(select_logits, bin_act, bin_items, onnx_select_ids, onnx_select_internal, 0, lang="zh")
+check("onnx/lang override skips binning", onnx_runtime["flag"]["answer_confidence"], 0.8)
 
 # A payload with no version is the original schema and must still load, even onto an
 # agent that has its own identity. No warning: there is no recorded checkpoint to disagree with.
@@ -374,6 +622,16 @@ def _refuses(name, payload, fragment=None):
 
 
 _refuses("shape/non-object payload", ["temperature", [1.0, 1.0, 1.0]], "must be an object")
+_refuses("shape/binning not object", {"temperature": [1.0, 1.0, 1.0], "binning_map": [1, 2]}, "binning_map")
+_refuses("shape/binning wrong entry", {"temperature": [1.0, 1.0, 1.0], "binning_map": {"a": 1}}, "bins")
+_refuses("shape/binning values length", {"temperature": [1.0, 1.0, 1.0], "binning_map": {"a": {"bins": 2, "values": [0.5]}}}, "values")
+_refuses("shape/binning value above 1", {"temperature": [1.0, 1.0, 1.0], "binning_map": {"a": {"bins": 1, "values": [1.5]}}}, "[0, 1]")
+_refuses("shape/binning value below 0", {"temperature": [1.0, 1.0, 1.0], "binning_map": {"a": {"bins": 1, "values": [-0.1]}}}, "[0, 1]")
+_refuses("shape/binning NaN", {"temperature": [1.0, 1.0, 1.0], "binning_map": {"a": {"bins": 1, "values": [float("nan")]}}}, "finite")
+_refuses("shape/binning Infinity", {"temperature": [1.0, 1.0, 1.0], "binning_map": {"a": {"bins": 1, "values": [float("inf")]}}}, "finite")
+_refuses("shape/binning bool value", {"temperature": [1.0, 1.0, 1.0], "binning_map": {"a": {"bins": 1, "values": [True]}}}, "number")
+_refuses("shape/binning string value", {"temperature": [1.0, 1.0, 1.0], "binning_map": {"a": {"bins": 1, "values": ["0.5"]}}}, "number")
+_refuses("shape/binning null value", {"temperature": [1.0, 1.0, 1.0], "binning_map": {"a": {"bins": 1, "values": [None]}}}, "number")
 _refuses("shape/scalar temperature", {"temperature": 5}, "[3 floats]")
 _refuses("shape/string temperature", {"temperature": "abc"}, "[3 floats]")
 _refuses("shape/dict temperature", {"temperature": {"a": 1, "b": 2, "c": 3}}, "[3 floats]")
@@ -487,6 +745,43 @@ for name in ("fit_temperatures", "fit_one_temperature", "fit_temperature_map"):
         _laya._LAZY_ATTRS.get(name),
         (".calibrate", name),
     )
+
+
+# --------------------------------------------------------------- histogram-binning recalibration
+check("binning/floor", MIN_BINNING_BUCKET_N, 200)
+bmap = fit_binning_map(mixed, fitted["temperature"], fitted["temperature_by_options"], bins=10)
+check_true("binning/keyed by temp_bucket", {"choice:2", "noul:2", "choice:11+", "choice:3-5"} <= set(bmap), set(bmap))
+check_true("binning/omits sub-floor bucket (score:3-5, n=5)", "score:3-5" not in bmap, set(bmap))
+_entry = bmap["choice:2"]
+check("binning/records bins", _entry["bins"], 10)
+check("binning/one value per bin", len(_entry["values"]), 10)
+check_true("binning/values are probabilities", all(0.0 <= v <= 1.0 for v in _entry["values"]), _entry["values"])
+
+# apply: a bucket with no map returns the confidence unchanged; edges clamp into range.
+check("binning/apply unknown bucket is identity", apply_binning_map(0.73, "choice:6-10", bmap), 0.73)
+check_true("binning/apply in range for conf=1.0", 0.0 <= apply_binning_map(1.0, "choice:2", bmap) <= 1.0)
+check_true("binning/apply in range for conf=0.0", 0.0 <= apply_binning_map(0.0, "choice:2", bmap) <= 1.0)
+
+# Binning reduces ECE where temperature alone cannot: recalibrate the temperature-scaled
+# confidences of a bucket and compare ECE on the same data.
+_qt = QTYPES["choice"]
+_tscale = fitted["temperature_by_options"].get("choice:2", fitted["temperature"][_qt])
+_cal_conf, _corr = [], []
+for qt, z, t, k in _iter_records(choice_k2):
+    p = _softmax(z[:k], _tscale)
+    _cal_conf.append(float(p.max()))
+    _corr.append(bool(int(p.argmax()) == int(np.argmax(t[:k]))))
+_binned = [apply_binning_map(c, "choice:2", bmap) for c in _cal_conf]
+_ece_temp = ece_score(np.asarray(_cal_conf), np.asarray(_corr))
+_ece_binned = ece_score(np.asarray(_binned), np.asarray(_corr))
+check_true("binning/lowers ECE vs temperature on the bucket",
+           _ece_binned < _ece_temp, "temp=%.4f binned=%.4f" % (_ece_temp, _ece_binned))
+
+try:
+    fit_binning_map(mixed, fitted["temperature"], fitted["temperature_by_options"], bins=0)
+    check_true("binning/bins must be >= 1", False, "no ValueError")
+except ValueError:
+    check_true("binning/bins must be >= 1", True)
 
 
 print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))

@@ -90,7 +90,7 @@ short name like `english`, since there is no Router on this path (default
 whose `model` field names a different one fails with a clear error rather than being silently
 answered by the wrong model; `--device` does not apply. `--batch-size` uses the agent's batch
 API when it has one and falls back to one call per state otherwise; `--sort-by-length` is forwarded
-to that batch API, which the per-state fallback has no group to reorder. Pass `--calibration PATH`
+to that batch API; the per-state fallback has no group to reorder. Pass `--calibration PATH`
 to load a fitted calibration map onto `ONNXAgent`, so calibration gates such as `--max-ece`
 evaluate against calibrated probabilities. The report's `config` block records the `onnx` path
 and `calibration` path (when set).
@@ -132,9 +132,55 @@ Each metric is computed per answer where it applies and aggregated over the data
 | `score_mae` | `score` | mean absolute error |
 | `score_within_<tol>` | `score` | fraction within an absolute tolerance |
 | `ece` | any answer with a confidence | expected calibration error, 15 bins, computed on `answer["answer_confidence"]`, the calibrated probability Laya reports on every answer type |
+| `brier` | any answer with a confidence and a known label | Brier score of confidence as P(correct), `mean((confidence - correct)**2)`; lower is better |
+| `aurc` | any answer with a confidence and a known label | area under the risk--coverage curve: one risk value per distinct confidence level, each weighted by the answers that level spans; lower is better, and rewards a confidence that *ranks* right from wrong rather than just being calibrated |
+| `selective_accuracy@50`, `selective_accuracy@80` | any answer with a confidence and a known label | accuracy over the answers a confidence threshold at the 50% / 80% coverage point accepts -- what abstaining on the least-confident tail buys. A threshold cannot split a group of equal confidences, so this can cover more than the named fraction; see [coverage cuts](#coverage-cuts-and-ties) |
 | `mean_confidence` | any answer with a confidence | mean reported `answer["answer_confidence"]` |
 | `latency_p50_ms`, `latency_p95_ms` | per request | wall time each request waited, informational -- see [batching](#batching-and-timing) |
 | `cost_per_decision_p50_ms`, `cost_per_decision_p95_ms` | per decision | a call's wall time divided by the rows it carried, informational |
+
+### Coverage cuts and ties
+
+Both coverage metrics cut on a confidence **threshold**, and a threshold accepts every answer at its
+own confidence. So a cut never splits a group of answers that share one: when `coverage * n` falls
+inside such a group, every member of the group is accepted. The number of answers behind the figure
+is therefore the group's upper edge rather than the named fraction -- `selective_accuracy@50` over a
+slice whose confidences are all equal is that slice's own accuracy, not the better half of it. The
+count the gate prints (`n=` in a rule's failure message) is the slice's size, not the accepted size,
+so a very wide group is not visible from the message alone.
+
+Ties are the normal case rather than a corner: a fitted temperature can leave a bucket reporting a
+point mass, which `laya.common.answer_confidence` records of the shipped `choice:11+`, and a real
+checkpoint produced a six-row group at exactly 1.0 out of twelve answers. Cutting at a row index
+instead made both metrics depend on the order the dataset arrived in -- the same rows, shuffled,
+moved `selective_accuracy@50` between 0.000 and 1.000.
+
+`aurc` integrates one risk value per distinct level, weighted by the answers that level spans, so it
+remains an area under the risk--coverage curve rather than an average of unevenly sized points.
+
+Two consequences worth planning for:
+
+* **A number can move in either direction, by more than a reordering could.** Where a group
+  straddles the cut, the threshold reading differs from every row-index reading of the same data:
+  measured over 400,001 tie-shaped datasets, up to 0.500 for `selective_accuracy@50` and 0.351
+  for `aurc`. On the twelve-answer shape above -- six correct, all at confidence 1.0 -- `aurc` moves
+  0.327 (0.173 to 0.500). A gate that was passing may fail, and one that was failing may pass; the
+  previous verdict depended on row order, including for an absolute `min` or `max` limit, which is
+  refused by nothing because it reads a single run.
+* **Regenerate committed baselines.** `config.coverage_metric_definition` records which definition
+  produced a report. Comparing a coverage metric across two definitions is refused on **both** the
+  gates that subtract a baseline -- `--baseline --tolerance` (`EvalReport.compare`) and a relative
+  rule (`max_drop` / `max_increase`) under `--gate-policy` -- and on **either** side being stale,
+  not just the baseline: a candidate produced by an older `laya` carries a row-order artifact that
+  can read *better* than the truth, so gating it against a correctly regenerated baseline would
+  pass a regression that the correctly scored report fails. Without that refusal a
+  stale baseline hides a real regression: a slice recorded at 0.033 under the old definition reads
+  0.517 under this one, so a candidate that genuinely dropped 0.217 would clear a `max_drop` of
+  0.05. `ece` and `brier` do not cut and stay comparable.
+
+With no ties in the data there is one level per answer, and both metrics are exactly what they have
+always been -- bit-identical, not merely close.
+
 
 Add `ScoreWithin(0.25)` to the evaluator list for a tolerance metric; the default set is
 `choice_accuracy`, `noul_accuracy`, `score_mae`, `mean_confidence`, plus `ece`. From the CLI the
@@ -260,6 +306,7 @@ is reviewable on its own:
 | `dataset_sha256` | the sha256 of the dataset bytes that were parsed |
 | `questions_sha256` | a fingerprint of the question schema: every question's id, type, `instructions` and `criteria`, over the whole dataset |
 | `laya_version` | the `laya` that computed the numbers |
+| `coverage_metric_definition` | which definition of `aurc` / `selective_accuracy@*` produced this report (see [coverage cuts](#coverage-cuts-and-ties)). A relative gate rule on either refuses a baseline recorded under a different one, rather than subtracting numbers that do not mean the same thing |
 | `thresholds` | the gate this run applied: `min`, `max` and `baseline_tolerance` |
 | `gate_policy` | the optional slice gate policy applied by `run --gate-policy` |
 | `revisions` | the commit each checkpoint that answered was loaded from (see [below](#baseline-and-ci-gate)) |

@@ -225,6 +225,50 @@ check_true("guard/annotated", hasattr(annotated_task, "guardrail"))
 check("guard/annotated_passed", annotated_task.guardrail["passed"], True)
 
 
+# A `score` answer is gated on the probability of the upper half of its scale, the same rule
+# LayaGuardrail applies, not on the expected level in `score`.
+def score_answer(p):
+    """A harm_severity answer shaped the way Agent._decode_answers returns one."""
+    return {
+        "type": "score",
+        "score": round(sum(i * v for i, v in enumerate(p)), 4),
+        "probabilities": {str(i): v for i, v in enumerate(p)},
+        "confidence": 0.5,
+    }
+
+
+def harm_result(harm, threshold=0.5):
+    agent = MockLayaAgent(lambda state, questions: {"model": "mock", "answers": {"harm_severity": harm}})
+    guard = LayaTaskGuard(agent=agent, action="annotate", threshold=threshold)
+    return guard.screen({"description": "Summarize the annual shareholder meeting"})["guardrail"]
+
+
+check_true("guard/score_60pct_none_passes", harm_result(score_answer([0.60, 0.30, 0.07, 0.03]))["passed"])
+check_true("guard/score_55pct_none_passes", harm_result(score_answer([0.55, 0.25, 0.15, 0.05]))["passed"])
+check_true("guard/score_likely_minor_passes", harm_result(score_answer([0.40, 0.60, 0.00, 0.00]))["passed"])
+
+serious = score_answer([0.30, 0.15, 0.55, 0.00])
+flagged = harm_result(serious)
+check_true("guard/score_likely_serious_flagged", flagged["passed"] is False)
+check("guard/score_violation_probability", flagged["violations"].get("harm_severity", {}).get("probability"), 0.55)
+check("guard/score_violation_keeps_score", flagged["violations"].get("harm_severity", {}).get("score"), 1.25)
+check_true("guard/score_likely_serious_passes_higher_threshold", harm_result(serious, threshold=0.6)["passed"])
+
+# Without `probabilities`, fall back to score / (k - 1), k taken from the question's criteria.
+check_true("guard/score_fallback_flagged",
+           harm_result({"type": "score", "score": 1.5, "confidence": 0.5})["passed"] is False)
+check_true("guard/score_fallback_passes", harm_result({"type": "score", "score": 0.53, "confidence": 0.5})["passed"])
+
+# `threshold` is a probability: above 1 no question could ever be flagged, so reject it.
+for bad in (1.5, -0.1):
+    rejected = False
+    try:
+        LayaTaskGuard(agent=mock_guard_agent, threshold=bad)
+    except ValueError:
+        rejected = True
+    check_true("guard/threshold_%r_rejected" % bad, rejected)
+
+
 # Async task guard
 async def run_async_guard():
     res_safe = await guard_raise.ascreen(safe_task)
