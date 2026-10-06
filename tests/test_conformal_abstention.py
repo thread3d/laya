@@ -203,6 +203,55 @@ check_true("binning/the two cuts genuinely differ", abs(_cut_binned - _cut_raw) 
 check("binning/no map leaves the fit unchanged",
       fit_abstention_thresholds(_binning_records, _temps, _tbo, binning_map=None,
                                 target_error=0.10)["choice:11+"], _cut_raw)
+
+
+# --------------------------------------------------------------- thresholds vs 4-decimal reporting
+# `_decode_answers` reports `answer_confidence` rounded to 4 decimals and the gate compares that, so
+# a cut chosen at full precision can sit above every value the runtime reports for its own cohort:
+# seed 2's cut is the bin value 5/6 = 0.83333..., the runtime reports that bin as 0.8333, and the
+# whole bin abstains. Gated through the real decoder, the fitted cut must keep the coverage and
+# error the fitter judged it on.
+from laya.agent import Agent  # noqa: E402
+
+_rng = np.random.default_rng(2)
+_round_records = []
+for _ in range(1200):
+    _true = int(_rng.integers(12))
+    _z = _rng.normal(0.0, 1.0, 12)
+    _z[_true] += 2.2
+    _t = [0.0] * 12
+    _t[_true] = 1.0
+    _round_records.append((0, _z.tolist(), _t, 12))
+
+_round_bmap = fit_binning_map(_round_records, _temps, _tbo)
+_round_cut = fit_abstention_thresholds(_round_records, _temps, _tbo, binning_map=_round_bmap,
+                                       target_error=0.10)["choice:11+"]
+
+_dec = Agent.__new__(Agent)
+_dec.temperature, _dec.temperature_by_options, _dec.lang_temperatures = list(_temps), {}, {}
+_dec.binning_map = _round_bmap
+_round_ids = ["q%d" % i for i in range(len(_round_records))]
+_q = Agent._to_internal({"type": "choice", "instructions": "?", "criteria": ["o%d" % i for i in range(12)]})
+_decoded = _dec._decode_answers(np.asarray([z for _, z, _, _ in _round_records], dtype=np.float64),
+                                np.zeros((len(_round_records), 2)), [{"markers": list(range(12))}] * len(_round_ids),
+                                _round_ids, {qid: _q for qid in _round_ids}, 0)
+_round_results = [{"answers": _decoded}]
+apply_confidence_gate(_round_results, {"choice:11+": _round_cut})
+
+_fit_acc = _gate_acc = _gate_wrong = 0
+for qid, (_qt, z, t, k) in zip(_round_ids, _round_records):
+    p = np.exp(np.asarray(z) - max(z))
+    p = p / p.sum()
+    _fit_acc += apply_binning_map(float(p.max()), "choice:11+", _round_bmap) >= _round_cut
+    if _decoded[qid]["abstention"] == GATE_PASSED:
+        _gate_acc += 1
+        _gate_wrong += int(int(p.argmax()) != int(np.argmax(t)))
+
+check_true("rounding/the cut is a value the runtime can report", round(_round_cut, 4) == _round_cut,
+           "cut=%r" % (_round_cut,))
+check("rounding/the gate keeps every answer of the cut bin", _gate_acc, _fit_acc)
+check_true("rounding/the gate holds the target error", _gate_acc > 0 and _gate_wrong / _gate_acc <= 0.10,
+           "accepted=%d wrong=%d" % (_gate_acc, _gate_wrong))
 print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
 for f in FAIL:
     print("  FAIL " + f)

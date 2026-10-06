@@ -703,6 +703,10 @@ code, out, err, stub = run_cli(["--predict", "--min-confidence", "0.5", "--json"
 check("threshold: --json still carries the raw key",
       '"low_confidence": true' in out, out)
 
+# --------------------------------------------------------------------- train subcommand
+code, out, err, stub = run_cli(["train", "--help"])
+check("train subcommand: dispatches to train_cli and shows help", code == 0 and "laya-train" in out, out)
+
 # Drift pin, the other direction: every control `predict` takes that the parser can name must
 # arrive in the call, and the ones it cannot name must be the accepted three. A control added to
 # `predict` lands in the second check and has to be placed -- flagged and forwarded, or written

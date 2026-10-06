@@ -45,6 +45,7 @@ from .common import (
     serialize_state,
     temp_bucket,
     unpermute_probs,
+    uses_parallel_layout,
     window_batch_cap,
     state_room,
     window_budget,
@@ -469,6 +470,8 @@ class Agent(HookRegistry):
     # The stock forward is also used by lightweight runtimes built with __new__ in tests.
     _fast = None
     _backend = None
+    # The checkpoint's `option_layout` (see `uses_parallel_layout`); runtimes built with __new__ are sequential.
+    parallel_options = False
     # Scoped CPU-fallback observability: how often _infer's per-request OOM fallback fired
     # and what the last failure was, so an operator sees a slow lane in /health instead of
     # discovering it by accident. Class defaults cover instances built without __init__.
@@ -615,6 +618,7 @@ class Agent(HookRegistry):
 
         with open(cfg_path) as f:
             self.cfg = json.load(f)
+        self.parallel_options = uses_parallel_layout(self.cfg)
 
         weights_path = os.path.join(model_dir, "model.safetensors")
         if not os.path.exists(weights_path):
@@ -1150,10 +1154,10 @@ class Agent(HookRegistry):
         items = []
         for qid in ids:
             q = internal[qid]
-            seq, markers, stats, state_stats = build_sequence(self.tok, state, q, max_len, head_max_len,
-                                                              option_order=q.get("option_order"),
-                                                              truncate_left=truncate_left, state_ids=state_ids,
-                                                              return_stats=True, return_truncation_stats=True)
+            seq, markers, stats, state_stats, *layout = build_sequence(
+                self.tok, state, q, max_len, head_max_len, option_order=q.get("option_order"),
+                truncate_left=truncate_left, state_ids=state_ids, return_stats=True,
+                return_truncation_stats=True, return_layout=self.parallel_options)
             n_opts = len(render_options(q))
             if len(markers) != n_opts:
                 # The markers are placed at absolute positions and `build_sequence` then drops the
@@ -1171,8 +1175,11 @@ class Agent(HookRegistry):
                     "head_max_len=%d spent on the question; lower head_max_len, raise max_len, "
                     "or use fewer options"
                     % (qid, len(markers), n_opts, max_len, head_max_len))
-            items.append({"ids": seq, "markers": markers, "qtype": QTYPES[q["t"]], "options": stats,
-                          "state_stats": state_stats})
+            item = {"ids": seq, "markers": markers, "qtype": QTYPES[q["t"]], "options": stats,
+                    "state_stats": state_stats}
+            if layout:
+                item["layout"] = layout[0]
+            items.append(item)
         return items
 
     def _amp_enabled_for(self, rows: int) -> bool:
@@ -1199,6 +1206,12 @@ class Agent(HookRegistry):
 
     def _infer(self, b: Dict):
         """Run the forward pass under autocast, degrading gracefully on OOM or unsupported autocast."""
+        if "option_ids" in b and (self._fast is not None or self._compiled
+                                  or getattr(self._backend, "name", "eager") != "eager"):
+            # Those forwards take only the five sequential-layout inputs and would run this
+            # checkpoint's batch without its masks.
+            raise ValueError("this checkpoint uses option_layout='parallel', which only the eager "
+                             "backend runs; load it without fast=/compile= or call set_backend('eager')")
         if self._compiled and self._fast is None and self.device.type == "cuda":
             b = _pad_cuda_compile_batch(b, self.tok.pad_token_id)
         use_amp = self._amp_enabled_for(b["input_ids"].shape[0])
@@ -1230,6 +1243,8 @@ class Agent(HookRegistry):
                     b["marker_pos"].to(self.device),
                     b["marker_mask"].to(self.device),
                     b["qtype"].to(self.device),
+                    **({"position_ids": b["position_ids"].to(self.device),
+                        "option_ids": b["option_ids"].to(self.device)} if "option_ids" in b else {}),
                 )
                 # CUDA graph outputs belong to a reusable pool; callers can retain our copies.
                 return tuple(t.clone() for t in out) if graph_outputs else out

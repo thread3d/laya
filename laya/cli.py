@@ -383,6 +383,9 @@ def main(argv=None):
     if argv and argv[0] == "eval":       # `laya eval ...` mirrors the `laya-evals` script
         from .evals_cli import main as eval_main
         return eval_main(argv[1:])
+    if argv and argv[0] == "train":      # `laya train ...` mirrors the `laya-train` script
+        from .train_cli import main as train_main
+        return train_main(argv[1:])
     args = build_parser().parse_args(argv)
     # Redirected output is encoded with the locale's codec by default (cp1252 on Windows), which
     # cannot hold a non-Latin request or answer, so `laya --batch FILE > out.txt` failed with a

@@ -20,13 +20,13 @@ from laya.agent import Agent, _pad_cuda_compile_batch  # noqa: E402
 from laya.common import DecisionModel  # noqa: E402
 
 # `torch.fx.experimental._config` only exists where duck sizing does; `laya._compile` degrades
-# to a no-op without it (torch 2.2, the macOS/Intel pin), so the tests that observe the setting
-# skip rather than assert on a knob this torch does not have.
+# to a no-op without it, so the tests that observe the setting skip rather than assert on a
+# knob this torch does not have.
 fx_config = _fx_config()
 requires_fx_config = pytest.mark.skipif(
     fx_config is None,
     reason="the compile path (duck sizing, and transformers' CPU compile support) needs a "
-           "newer torch than the pinned 2.2; it falls back to eager there")
+           "newer torch; it falls back to eager here")
 
 # rows x tokens x markers; the first has rows == markers, which duck sizing would tie together
 SHAPES = [(4, 40, 4), (4, 57, 4), (3, 70, 4), (5, 33, 2), (2, 90, 3), (8, 130, 5), (6, 61, 6), (7, 45, 3)]

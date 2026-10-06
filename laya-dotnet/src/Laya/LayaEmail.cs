@@ -56,7 +56,7 @@ public static partial class LayaEmail
     private const string Device = @"iphone|ipad|android|ios|mobile|celular|telemóvel|móvil|galaxy|smartphone|samsung|tablet|outlook|yahoo|mail|e-?mail|gmail|windows";
 
     [GeneratedRegex(@"^\s*((enviad[oa] (do|pelo|pela|via|desde|a partir do)( meu| minha| mi)?|sent from( my)?|"
-        + @"envoy[ée] (depuis|de) (mon |ma |mes )?)"
+        + @"envoy[ée] (depuis|de)( mon| ma| mes)?)"
         + @" (" + Device + @")( (" + Device + @"|para|for|no|na|\d+|phone|device|pro|max|mini|plus|using [a-z][a-z0-9_.+-]*))*"
         + @"|(obter o|get) outlook (para|for) (ios|android))[\s.!]*$", RegexOptions.IgnoreCase)]
     private static partial Regex SignatureSentFromMobile();

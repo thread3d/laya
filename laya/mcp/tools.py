@@ -112,6 +112,26 @@ def _check_noul_labels(name: str, labels: Any) -> None:
         )
 
 
+def _check_option_order(name: str, order: Any, n: int) -> list:
+    """The agent's `option_order` rule: slot s shows option `order[s]`.
+
+    Anything but a permutation of the option indices would drop an option or show one twice, and
+    the agent rejects it with a ValueError -- which, past this layer, reaches the client as
+    internal_error. A bool, a float or a numeric string is not an index; the agent does not
+    coerce them, so neither does this.
+    """
+    if (not isinstance(order, (list, tuple))
+            or len(order) != n
+            or not all(isinstance(i, int) and not isinstance(i, bool) for i in order)
+            or sorted(order) != list(range(n))):
+        raise ToolError(
+            "invalid_questions",
+            f"questions[{name}].option_order must be a permutation of range({n}) -- one slot per "
+            f"option, each option once -- got {order!r}",
+        )
+    return list(order)
+
+
 def validate_questions(questions: Any) -> dict:
     if not isinstance(questions, dict) or not questions:
         raise ToolError(
@@ -189,6 +209,11 @@ def validate_questions(questions: Any) -> dict:
                 )
             _check_noul_labels(name, spec["labels"])
             entry["labels"] = spec["labels"]
+        if "option_order" in spec:
+            # Documented for every type; rebuilding the entry from the keys above dropped it, so
+            # the order a caller asked for never reached the model.
+            n_options = 2 if qtype == "noul" else len(entry["criteria"])
+            entry["option_order"] = _check_option_order(name, spec["option_order"], n_options)
         cleaned[name] = entry
     return cleaned
 
@@ -728,6 +753,17 @@ def laya_shortlist(
         k = DEFAULT_SHORTLIST_K
     if isinstance(k, bool) or not isinstance(k, int) or k < 1:
         raise ToolError("invalid_k", f"k must be a positive integer, got {k!r}")
+    # A choice with more than k labels is answered over the k it keeps, in rank order, so an
+    # `option_order` over all of its options no longer describes the question -- the agent
+    # rejects the stale order. A choice of at most k labels is answered as given and keeps it.
+    for name, spec in questions_d.items():
+        if spec["type"] == "choice" and "option_order" in spec and len(spec["criteria"]) > k:
+            raise ToolError(
+                "invalid_questions",
+                f"questions[{name}].option_order orders all {len(spec['criteria'])} options, but "
+                f"laya_shortlist answers it over the {k} it keeps, in rank order; omit option_order, "
+                f"or raise k to at least {len(spec['criteria'])}",
+            )
 
     routing: dict[str, Any]
     if model_name == "auto":

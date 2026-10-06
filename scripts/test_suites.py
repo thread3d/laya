@@ -31,6 +31,7 @@ SCRIPT_SUITES = [
     "tests/test_predict_long.py",
     "tests/test_attention_dynamic_shapes.py",
     "tests/test_option_order.py",
+    "tests/test_parallel_options.py",
     "tests/test_state_budget.py",
     "tests/test_hooks.py",
     "tests/test_hooks_api.py",

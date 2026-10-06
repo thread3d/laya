@@ -65,6 +65,28 @@ public sealed class LayaEmailTests
         Assert.Equal("Hi team,\nCan you confirm the refund?",
             LayaEmail.CleanBody("Hi team,\nCan you confirm the refund?\nRegards,\nAlice"));
 
+    // ── French device footers (regression: only matched with two spaces before the device) ──
+
+    [Theory]
+    [InlineData("Envoyé depuis mon iPhone")]
+    [InlineData("Envoyé de mon iPad.")]
+    [InlineData("Envoyé depuis iPhone")]
+    [InlineData("Envoyé de iPad")]
+    [InlineData("Envoyé depuis Outlook")]
+    [InlineData("ENVOYÉ DEPUIS MON IPHONE")]
+    public void FrenchDeviceFooterIsCut(string footer) =>
+        Assert.Equal("Merci de rembourser la facture.",
+            LayaEmail.CleanBody("Merci de rembourser la facture.\n\n" + footer));
+
+    [Theory]
+    [InlineData("Envoyé depuis mon iPhone par erreur.")]
+    [InlineData("Envoyé de mon iPad hier.")]
+    public void FrenchDeviceSentenceIsKept(string sentence)
+    {
+        var body = $"Bonjour,\n{sentence}\nMerci de rembourser la facture.";
+        Assert.Equal(body, LayaEmail.CleanBody(body));
+    }
+
     [Fact]
     public void EmptyBodyStaysEmpty() => Assert.Equal("", LayaEmail.CleanBody(""));
 

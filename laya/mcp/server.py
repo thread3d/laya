@@ -281,6 +281,8 @@ def laya_route_tool(
         "Answer typed questions (choice/score/noul) over any state in one forward pass. "
         "questions: {name: {type: 'choice'|'score'|'noul', instructions: str, criteria?: object|array}}. "
         "For noul, optional labels: {false: str, true: str} changes the model-facing option text. "
+        "Any type takes an optional option_order: a permutation of the option indices, slot s showing "
+        "option option_order[s]; answers stay keyed in the caller's own order. "
         "Returns answers with confidence, routing metadata and, when it can be read, the real "
         "device of the checkpoint that answered. "
         + _GUARDRAILS

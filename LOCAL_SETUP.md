@@ -21,7 +21,7 @@ two code changes that were needed, how to re-run everything, and the numbers tha
 | `models/` | the three checkpoints (~2.3 GB): `laya/` (English), plus `laya-multilingual` and `laya-typed-decisions` symlinked into the bundle |
 | `.pip-cache/`, `.hf-cache/` | download caches, kept local so nothing is written outside the project |
 | `setup_laya.sh` | idempotent setup: venv → pinned deps → editable install → checkpoints → verify |
-| `laya_smoke_test.py` | end-to-end check on real weights: routing, all three checkpoints, all three primitives, presets, latency |
+| `verify/laya_smoke_test.py` | end-to-end check on real weights: routing, all three checkpoints, all three primitives, presets, latency |
 | `verify/numerics_check.py` | RoPE base actually used vs. trained, run-to-run determinism, SDPA vs. eager |
 | `verify/bench_devices.py` | CPU vs. MPS latency, plus CPU thread scaling |
 | `verify/edge_sweep.py` | inference paths the other suites miss: 12 questions in one pass, 20/77/120-option choice, odd input shapes, truncation, router lifecycle, CPU-vs-MPS agreement |
@@ -90,8 +90,8 @@ cd /Users/threaded/projects/Laya/laya      # repository root
 ./setup_laya.sh                            # venv + deps + checkpoints + smoke test (idempotent)
 
 # or individually
-.venv/bin/python laya_smoke_test.py --models ./models            # device auto → MPS
-.venv/bin/python laya_smoke_test.py --models ./models --device cpu
+.venv/bin/python verify/laya_smoke_test.py --models ./models            # device auto → MPS
+.venv/bin/python verify/laya_smoke_test.py --models ./models --device cpu
 .venv/bin/python verify/numerics_check.py
 .venv/bin/python verify/bench_devices.py
 .venv/bin/python verify/edge_sweep.py
@@ -109,7 +109,7 @@ Results on this machine:
 | `tests/test_router.py` | 106 passed, 0 failed |
 | `tests/test_criteria.py` | 34 passed, 0 failed |
 | `tests/test_portability.py` | 18 passed, 0 failed (includes the CUDA-OOM fallback) |
-| `laya_smoke_test.py` | all checks passed on **both** CPU and MPS |
+| `verify/laya_smoke_test.py` | all checks passed on **both** CPU and MPS |
 | `verify/numerics_check.py` | RoPE bases match training; answers bit-identical run-to-run and SDPA vs. eager (`0.00e+00` on every reported value) |
 | `verify/edge_sweep.py` | all edge-case checks pass (25 here; the MPS checks skip where MPS is unavailable) |
 | `verify/checkpoints.py` | 3/3 checkpoints match the recorded sha256; a deliberately corrupted copy is caught |

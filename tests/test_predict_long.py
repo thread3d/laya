@@ -1050,7 +1050,7 @@ check_raises("questions/the torch scan validates before _to_internal", ValueErro
 # says the contract binds both agents.
 _onnx_src = inspect.getsource(ONNXAgent.predict_long)
 check_true("hook budget/the ONNX scan checks its budget too",
-           "_check_scan_budget(self, evidence, budget, max_len, head_max_len, questions)" in _onnx_src,
+           "_check_scan_budget(self, evidence, budget, max_len, head_max_len, asked)" in _onnx_src,
            "")
 check("hook budget/both agents check it on the single-window path too",
       (inspect.getsource(Agent.predict_long).count("_check_scan_budget("),

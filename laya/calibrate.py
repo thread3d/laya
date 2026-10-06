@@ -382,6 +382,10 @@ def fit_abstention_thresholds(records: Iterable, temperature: Sequence[float],
             # The runtime bins before anyone reads `answer_confidence` (`Agent._decode_answers`),
             # so the cut has to be chosen on the binned scale or it gates a different quantity.
             conf = apply_binning_map(conf, bucket, binning_map)
+        # `_decode_answers` reports `answer_confidence` rounded to 4 decimals, after binning, and
+        # the gate compares that. A cut picked at full precision can sit above the rounded value of
+        # its own cohort (bin 5/6 is reported as 0.8333 < 0.83333...), which abstains all of it.
+        conf = round(conf, 4)
         by_bucket.setdefault(bucket, []).append((conf, int(int(p.argmax()) == y)))
     out: Dict[str, float] = {}
     for key, pairs in by_bucket.items():

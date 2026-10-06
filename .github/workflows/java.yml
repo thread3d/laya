@@ -40,6 +40,12 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # `gradle/wrapper/gradle-wrapper.jar` is a binary that executes at build time, so it is
+      # the one file in this tree a reviewer cannot read. This validates it against Gradle's
+      # published checksums before anything runs it. The jar in the tree today is the genuine
+      # 8.10.2 wrapper (sha256 2db75c40...8046, matching services.gradle.org and the
+      # gradle/gradle v8.10.2 tag); this keeps a later swap from going unnoticed.
+      - uses: gradle/actions/wrapper-validation@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d # v4
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin

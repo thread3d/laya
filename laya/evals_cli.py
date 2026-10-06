@@ -106,6 +106,18 @@ def _parse_pairs(pairs: Optional[Sequence[str]]) -> Dict[str, float]:
     return out
 
 
+def _limit(raw: str) -> float:
+    """argparse `type=` for `--min-accuracy` and `--max-ece`: refuse "nan" as `_parse_pairs` does."""
+    try:
+        number = float(raw)
+    except ValueError:
+        raise argparse.ArgumentTypeError("%r is not a number" % raw)
+    # float() accepts "nan", and a NaN limit would disable the gate it names.
+    if math.isnan(number):
+        raise argparse.ArgumentTypeError("%r is not a number" % raw)
+    return number
+
+
 def _parse_revisions(pairs: Optional[Sequence[str]]) -> Tuple[Optional[str], Dict[str, str]]:
     """Read `--revision` into the two forms `Router` takes: one commit, or one per checkpoint.
 
@@ -193,9 +205,9 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument("--baseline", help="a baseline report JSON to compare against")
     run.add_argument("--tolerance", action="append", metavar="METRIC=VALUE",
                      help="allowed absolute drift from the baseline; repeatable")
-    run.add_argument("--min-accuracy", type=float,
+    run.add_argument("--min-accuracy", type=_limit,
                      help="minimum accuracy (choice, else noul) for the whole dataset")
-    run.add_argument("--max-ece", type=float, help="maximum expected calibration error")
+    run.add_argument("--max-ece", type=_limit, help="maximum expected calibration error")
     run.add_argument("--score-within", dest="score_within", type=float, action="append",
                      metavar="TOL",
                      help="also report score_within_TOL, the fraction of score answers within TOL "

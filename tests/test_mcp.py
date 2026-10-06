@@ -548,6 +548,14 @@ def test_question_forwarding():
         "positive": {"type": "noul", "instructions": "Is this positive?",
                      "criteria": {"false": None, "true": "yes"},
                      "labels": {"false": "B", "true": "A"}},
+        # `option_order` is documented for every question type (README, "Option order"); it
+        # used to be dropped here, so the rotation-averaging recipe got k identical answers.
+        "team": {"type": "choice", "instructions": "Which team?",
+                 "criteria": {"billing": "b", "technical": "t", "sales": "s"},
+                 "option_order": [2, 0, 1]},
+        "severity": {"type": "score", "instructions": "How severe?",
+                     "criteria": ["minor", "major"], "option_order": [1, 0]},
+        "spam": {"type": "noul", "instructions": "Is this spam?", "option_order": [1, 0]},
     }
 
     class CapturingRouter(FakeRouter):
@@ -564,6 +572,50 @@ def test_question_forwarding():
     laya_route(STATE, questions, router=router)
     ok("questions/predict_preserves_supported_values", router.predicted_questions == questions)
     ok("questions/route_preserves_supported_values", router.routed_questions == questions)
+
+
+def test_option_order_forwarding():
+    """`option_order` reaches the answering call from every tool that takes questions."""
+    order_q = {"team": {"type": "choice", "instructions": "Which team?",
+                        "criteria": {"billing": "b", "technical": "t", "sales": "s"},
+                        "option_order": [2, 0, 1]}}
+
+    router = BatchRouter()
+    laya_predict_batch([{"state": STATE, "questions": order_q},
+                        {"state": STATE, "questions": QUESTIONS}], router=router)
+    forwarded = router.predict_batch_calls[0][0]
+    ok("option_order/batch_item_forwarded",
+       forwarded[0]["questions"]["team"].get("option_order") == [2, 0, 1], repr(forwarded[0]))
+    ok("option_order/batch_item_without_order_unchanged",
+       all("option_order" not in spec for spec in forwarded[1]["questions"].values()))
+    router = BatchRouter()
+    bad = {"team": dict(order_q["team"], option_order=[0, 0, 0])}
+    expect_tool_error("option_order/batch_item_invalid",
+                      lambda: laya_predict_batch([{"state": STATE, "questions": bad}], router=router),
+                      "invalid_questions")
+    ok("option_order/batch_invalid_not_called", router.predict_batch_calls == [])
+
+    # Shortlist passthrough (n <= k): the question is answered as given, so the order applies.
+    router = ShortlistRouter({"english": ShortlistAgent()})
+    laya_shortlist(STATE, order_q, model="english", k=5, router=router, embed_fn=_raising_embed)
+    ok("option_order/shortlist_passthrough_forwarded",
+       router.seen_questions["team"].get("option_order") == [2, 0, 1], repr(router.seen_questions))
+    # A narrowed choice is answered over k ranked labels, so an order over all n options no
+    # longer describes it -- the agent rejects the stale full-length order with a ValueError,
+    # which the wrapper would report as internal_error. Refuse it as a caller error up front.
+    router = ShortlistRouter({"english": ShortlistAgent()})
+    narrowed = {"topic": dict(SHORTLIST_QUESTIONS["topic"], option_order=[4, 3, 2, 1, 0])}
+    expect_tool_error("option_order/shortlist_narrowed_rejected",
+                      lambda: laya_shortlist(STATE, narrowed, model="english", k=2,
+                                             router=router, embed_fn=_tie_embed),
+                      "invalid_questions")
+    ok("option_order/shortlist_narrowed_not_called", router.seen_questions is None)
+    # Non-choice questions are never narrowed, so their order is forwarded whatever k is.
+    router = ShortlistRouter({"english": ShortlistAgent()})
+    scored = {"urgency": dict(SHORTLIST_QUESTIONS["urgency"], option_order=[1, 0])}
+    laya_shortlist(STATE, scored, model="english", k=1, router=router, embed_fn=_raising_embed)
+    ok("option_order/shortlist_non_choice_forwarded",
+       router.seen_questions["urgency"].get("option_order") == [1, 0], repr(router.seen_questions))
 
 
 def test_real_device():
@@ -2104,6 +2156,32 @@ def test_question_validation_matches_the_agent():
         ("labels_on_choice",
          {"type": "choice", "instructions": "which?", "criteria": {"a": "first"},
           "labels": {"false": "no", "true": "yes"}}),
+        # `option_order` must be a permutation of the option indices: anything else drops an
+        # option or shows one twice.
+        ("option_order_repeat",
+         {"type": "choice", "instructions": "which?", "criteria": {"a": "", "b": "", "c": ""},
+          "option_order": [0, 0, 0]}),
+        ("option_order_short",
+         {"type": "choice", "instructions": "which?", "criteria": {"a": "", "b": "", "c": ""},
+          "option_order": [1, 0]}),
+        ("option_order_long",
+         {"type": "score", "instructions": "how bad", "criteria": ["fine", "bad"],
+          "option_order": [1, 0, 2]}),
+        ("option_order_out_of_range",
+         {"type": "score", "instructions": "how bad", "criteria": ["fine", "bad"],
+          "option_order": [1, 2]}),
+        ("option_order_negative",
+         {"type": "noul", "instructions": "is true?", "option_order": [-1, 0]}),
+        ("option_order_bools",
+         {"type": "noul", "instructions": "is true?", "option_order": [True, False]}),
+        ("option_order_strings",
+         {"type": "noul", "instructions": "is true?", "option_order": ["1", "0"]}),
+        ("option_order_floats",
+         {"type": "noul", "instructions": "is true?", "option_order": [1.0, 0.0]}),
+        ("option_order_not_list",
+         {"type": "noul", "instructions": "is true?", "option_order": "10"}),
+        ("option_order_null",
+         {"type": "noul", "instructions": "is true?", "option_order": None}),
     ]
     for label, qdef in parity:
         ok("question_parity/core_rejects_%s" % label, core_rejects("q", qdef))
@@ -2119,6 +2197,20 @@ def test_question_validation_matches_the_agent():
     ]
     for label, qdef in accepted_core:
         ok("question_parity/core_accepts_%s" % label, not core_rejects("q", qdef))
+
+    # A valid order is accepted by both, and kept: dropping it silently ignored a documented key.
+    valid_orders = [
+        ("option_order_choice", {"type": "choice", "instructions": "which?",
+                                 "criteria": {"a": "", "b": "", "c": ""}, "option_order": [2, 0, 1]}),
+        ("option_order_score", {"type": "score", "instructions": "how bad",
+                                "criteria": ["fine", "bad"], "option_order": [1, 0]}),
+        ("option_order_noul", {"type": "noul", "instructions": "is true?", "option_order": [1, 0]}),
+        ("option_order_identity", {"type": "noul", "instructions": "is true?", "option_order": [0, 1]}),
+    ]
+    for label, qdef in valid_orders:
+        ok("question_parity/core_accepts_%s" % label, not core_rejects("q", qdef))
+        kept = validate_questions({"q": qdef})["q"].get("option_order")
+        ok("question_parity/mcp_keeps_%s" % label, kept == qdef["option_order"], repr(kept))
 
 
 def test_a_bad_question_is_a_caller_error_not_a_server_fault():
@@ -2162,6 +2254,8 @@ def test_a_bad_question_is_a_caller_error_not_a_server_fault():
                                      "labels": {"false": "no", "true": 1}}),
         ("score_level_null", {"type": "score", "instructions": "how bad",
                               "criteria": ["fine", None]}),
+        ("option_order_repeat", {"type": "noul", "instructions": "is true?",
+                                 "option_order": [0, 0]}),
     ):
         try:
             server_mod._wrap(server_mod.laya_predict, state=STATE, questions={"q": qdef},
@@ -2484,6 +2578,7 @@ test_presets()
 test_model_forwarding()
 test_shape()
 test_question_forwarding()
+test_option_order_forwarding()
 test_shortlist()
 test_batch_validation()
 test_batch_predict()

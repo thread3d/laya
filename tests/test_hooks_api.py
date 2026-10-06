@@ -87,6 +87,9 @@ check_param("Router.__init__", Router.__init__, "revisions", None)
 check_param("Router.__init__", Router.__init__, "agent_kwargs", None)
 # ...and the per-checkpoint digests that `revisions` has always had a sibling need for
 check_param("Router.__init__", Router.__init__, "sha256_digests", None)
+# ...and the checkpoints a caller registers beside the built-ins: `resolve` and `unregister` are the instance side
+check_true("Router/resolve", callable(getattr(Router, "resolve", None)))
+check_param("Router.unregister", Router.unregister, "name", inspect.Parameter.empty)
 
 # What the constructor does NOT raise over is part of its contract too: a shared
 # `agent_kwargs["expected_sha256"]` overlapping a per-checkpoint `sha256_digests` entry on one file
@@ -174,6 +177,9 @@ for param in ("max_len", "head_max_len"):
 # rank-order cosines, so the flag is keyword-only and defaults to off
 check_param("shortlist_choice", laya.shortlist_choice, "return_scores", False,
             inspect.Parameter.KEYWORD_ONLY)
+
+# predict_tournament splits a choice into groups of 16 labels unless the caller picks a size
+check_param("predict_tournament", laya.predict_tournament, "group_size", 16)
 
 # route() and route_batch() take per-call hooks so a hook can pin a checkpoint for one call
 for label, fn in (("Router.route", Router.route),

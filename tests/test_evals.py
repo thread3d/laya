@@ -1395,11 +1395,21 @@ def test_a_nan_metric_fails_every_gate():
     assert healthy.compare({"overall": {"choice_accuracy": 0.9}})[0]
 
 
-def test_cli_rejects_a_nan_limit_or_tolerance():
+def test_cli_rejects_a_nan_limit_or_tolerance(capsys):
     from laya import evals_cli
 
     with pytest.raises(EvalError, match="not a number"):
         evals_cli._parse_pairs(["choice_accuracy=nan"])
+
+    # The two dedicated flags bypass `_parse_pairs`; a NaN there disabled the gate the same way.
+    for flag in ("--min-accuracy", "--max-ece"):
+        with pytest.raises(SystemExit) as exc:
+            evals_cli.main(["run", "data.jsonl", flag, "nan"])
+        assert exc.value.code == 2
+        assert "not a number" in capsys.readouterr().err
+    args = evals_cli._build_parser().parse_args(["run", "data.jsonl", "--min-accuracy", "0.8",
+                                                 "--max-ece", "0.1"])
+    assert (args.min_accuracy, args.max_ece) == (0.8, 0.1)
 
 
 def test_default_evaluators_cover_the_three_types():

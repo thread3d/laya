@@ -126,8 +126,9 @@ public final class Decoder {
     public static float[] actionProbabilities(float[] actLogits) {
         int width = Math.max(2, actLogits.length);
         double max = Double.NEGATIVE_INFINITY;
-        for (int i = 0; i < width && i < actLogits.length; i++) {
-            max = Math.max(max, actLogits[i]);
+        for (int i = 0; i < width; i++) {
+            double value = i < actLogits.length ? actLogits[i] : 0.0;
+            max = Math.max(max, value);
         }
         double[] exponentials = new double[width];
         double total = 0.0;

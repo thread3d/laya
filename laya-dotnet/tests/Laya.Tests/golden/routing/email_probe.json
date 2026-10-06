@@ -115,6 +115,30 @@
       "result": "Je demande un remboursement."
     },
     {
+      "label": "upstream/french_device_footer",
+      "body": "Merci de rembourser la facture.\n\nEnvoyé depuis mon iPhone",
+      "max_chars": 3000,
+      "result": "Merci de rembourser la facture."
+    },
+    {
+      "label": "upstream/french_device_footer_de_mon",
+      "body": "Merci de rembourser la facture.\n\nEnvoyé de mon iPad.",
+      "max_chars": 3000,
+      "result": "Merci de rembourser la facture."
+    },
+    {
+      "label": "upstream/french_device_footer_no_possessive",
+      "body": "Merci de rembourser la facture.\n\nEnvoyé depuis Outlook",
+      "max_chars": 3000,
+      "result": "Merci de rembourser la facture."
+    },
+    {
+      "label": "upstream/french_device_mention_prose",
+      "body": "Bonjour,\nEnvoyé depuis mon iPhone par erreur.\nMerci de rembourser la facture.",
+      "max_chars": 3000,
+      "result": "Bonjour,\nEnvoyé depuis mon iPhone par erreur.\nMerci de rembourser la facture."
+    },
+    {
       "label": "inline_footer_no_blank_line",
       "body": "My account is locked.\nThis email is confidential and intended solely for the named addressee.\nPlease unlock it.",
       "max_chars": 3000,

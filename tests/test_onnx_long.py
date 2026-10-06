@@ -333,6 +333,38 @@ check("questions/no-op preserves the unhooked result",
       _bare_onnx().predict_long(LONG_STATE, QUESTIONS))
 
 
+# A hook that widens a question IN PLACE must be refused here exactly as on the torch agent
+# (tests/test_predict_long.py, "an in-place question rewrite is refused"). Compared against the
+# caller's own mapping it cannot be seen: the hook mutates the same nested dict, so
+# `questions == asked` stays True and the scan proceeds with windows `build_sequence` re-truncates.
+# Measured on this fixture, 8 added options cut the room from 28 to 12 state tokens: all 14 windows
+# were truncated and 32 of 200 tokens reached no model, and a 24-token state that fit one window
+# lost 12 while reporting `windows: 1`. The guard's own message is asserted, because too many
+# options for max_len raise a different ValueError from `_encode_state` that would pass a bare
+# `check_raises`. Fresh mappings per call, because the hook mutates what it is handed.
+def _inplace_questions():
+    return {"dept": {"type": "choice", "instructions": "?", "criteria": {"a": "x", "b": "y"}},
+            "urgent": dict(QUESTIONS["urgent"])}
+
+
+def _widen_in_place(ctx):
+    ctx.questions["dept"]["criteria"].update({"opt%02d" % i: "d" * 20 for i in range(8)})
+
+
+for name, inplace_state in (("a windowed state", LONG_STATE),
+                            ("a one-window state", LONG_STATE[:24])):
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            _bare_onnx().predict_long(inplace_state, _inplace_questions(),
+                                      on_predict_start=_widen_in_place)
+    except ValueError as exc:
+        check_true("questions/an in-place widening rewrite is refused on %s" % name,
+                   "after the start hooks ran" in str(exc), repr(exc))
+    else:
+        FAIL.append("questions/an in-place widening rewrite is refused on %s: did not raise" % name)
+
+
 def _annotate_first_window(ctx):
     ctx.results[0]["answers"]["review"] = {"type": "noul", "noul": 0.9, "answer_confidence": 0.9}
 

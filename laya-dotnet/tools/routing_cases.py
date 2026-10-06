@@ -397,6 +397,11 @@ EMAIL_CLEAN_CASES = [
     ("upstream/device_mention_prose", "Please refund it.\nSent from my iPhone yesterday to support.", 3000),
     ("upstream/french_disclaimer",
      "Je demande un remboursement.\n\nCe message est confidentiel et réservé au destinataire.", 3000),
+    ("upstream/french_device_footer", "Merci de rembourser la facture.\n\nEnvoyé depuis mon iPhone", 3000),
+    ("upstream/french_device_footer_de_mon", "Merci de rembourser la facture.\n\nEnvoyé de mon iPad.", 3000),
+    ("upstream/french_device_footer_no_possessive", "Merci de rembourser la facture.\n\nEnvoyé depuis Outlook", 3000),
+    ("upstream/french_device_mention_prose",
+     "Bonjour,\nEnvoyé depuis mon iPhone par erreur.\nMerci de rembourser la facture.", 3000),
     # ---- straight from tests/test_email.py ----
     ("inline_footer_no_blank_line", "My account is locked.\n%s\nPlease unlock it." % _DISCLAIMER_TEXT, 3000),
     ("inline_footer_no_terminal_punctuation", "My account is locked\n%s\nPlease unlock it." % _DISCLAIMER_TEXT, 3000),

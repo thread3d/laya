@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import threading
@@ -142,6 +143,11 @@ class ONNXAgent(HookRegistry):
 
         with open(cfg_path) as f:
             self.cfg = json.load(f)
+        if self.cfg.get("option_layout", "sequential") != "sequential":
+            # The exported graph takes the five sequential-layout inputs only, so it would run this
+            # checkpoint without the masks it was trained with.
+            raise ValueError("option_layout=%r is not supported by the ONNX runtime; load this "
+                             "checkpoint with laya.Agent" % (self.cfg.get("option_layout"),))
 
         if not os.path.exists(onnx_path):
             raise FileNotFoundError(
@@ -476,6 +482,14 @@ class ONNXAgent(HookRegistry):
         internal = {qid: self._to_internal(questions[qid]) for qid in ids}
         budget, step_default, _ = window_budget(self.tok, [internal[qid] for qid in ids], max_len,
                                                 head_max_len, window=window, stride=stride)
+        # Snapshot the questions the scan was just sized against, BEFORE any start hook can
+        # rewrite them, as the torch `predict_long` does (5f29170). `==` over the caller's mapping
+        # cannot see an in-place rewrite: a hook that adds options to `ctx.questions[q]["criteria"]`
+        # -- the `widen_for_high_cardinality` pattern in `docs/hooks/patterns.md` -- mutates the
+        # same nested dict, so both sides change together, `_check_scan_budget` returns early, and
+        # the windows are re-truncated while `usage["windows"]` reports them all read. A shallow
+        # copy shares the nested dicts and misses it exactly the same way.
+        asked = copy.deepcopy(questions)
 
         state_ids = encode_text(
             self.tok,
@@ -492,7 +506,7 @@ class ONNXAgent(HookRegistry):
             # fit one window was silently truncated by a re-budgeting hook and still reported
             # `windows: 1`, i.e. "the model read all of it" -- measured, 138 of 240 state tokens
             # never reached the model, while a longer document on the identical input hard-failed.
-            _check_scan_budget(self, evidence, budget, max_len, head_max_len, questions)
+            _check_scan_budget(self, evidence, budget, max_len, head_max_len, asked)
             single["usage"] = {**(single.get("usage") or {}), "windows": 0 if evidence["answered"] else 1}
             return single
 
@@ -521,7 +535,7 @@ class ONNXAgent(HookRegistry):
         # `ctx.max_len`/`ctx.head_max_len` identically), so leaving it off here meant the bug was
         # fully live on this path while the other agent refused the identical input -- measured,
         # 34.6% of a document reaching no model.
-        _check_scan_budget(self, evidence, budget, max_len, head_max_len, questions)
+        _check_scan_budget(self, evidence, budget, max_len, head_max_len, asked)
 
         if evidence["answered"]:
             # A hook answered the document before any window was scored: pass that answer

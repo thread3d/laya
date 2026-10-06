@@ -178,8 +178,8 @@ check_true("auto fallback/names resolved compile, not auto",
 
 cuda_agent = fake_agent("cuda")
 # `torch.fx.experimental._config` only exists where symbolic shapes do; `laya._compile`
-# degrades to a no-op without it (torch 2.2, the macOS/Intel pin), so the duck-shape
-# assertions are made only where there is a setting to observe.
+# degrades to a no-op without it, so the duck-shape assertions are made only where there
+# is a setting to observe.
 from laya._compile import _fx_config  # noqa: E402
 
 cfg = _fx_config()

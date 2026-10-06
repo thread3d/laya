@@ -46,6 +46,8 @@ def is_modernbert(model) -> bool:
 
 def auto_policy(agent) -> str:
     """The backend `auto` resolves to for this agent (device, dtype, encoder, installed extras)."""
+    if getattr(agent, "parallel_options", False):
+        return "eager"    # the accelerated forwards do not take the parallel layout's masks
     if agent.device.type == "cuda":
         import torch
         if tilelang_available() and is_modernbert(agent.model) and agent.dtype in (torch.bfloat16, torch.float16):

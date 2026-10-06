@@ -124,6 +124,22 @@ question wording, and adding unrelated question IDs prevents an exact match.
 router = Router(auto_task_detection=True)
 ```
 
+## Registering your own checkpoints
+
+`Router(models=...)` and `Router.register(name, source, description=None)` accept any name beside the
+three built-in ones. A source is a Hub repo id, a `(repo, subfolder)` pair or a local directory. A
+registered checkpoint loads, is evicted and unloads like a built-in, and is named in `model=` or
+`task=` like one. `Router.registered` lists the registered checkpoints and `Router.unregister(name)`
+removes one.
+
+```python
+router = Router(models={"papers": "/models/laya-papers"})
+router.register("tone", ("acme/laya-tone", None), description="tone of voice")
+result = router.predict(state, questions, model="papers")
+```
+
+`normalise_name` still knows only the built-in names, while `Router.resolve` also knows the registry.
+
 ## Inspect routing without loading models
 
 Use `route()` to inspect one decision or `route_batch()` to inspect a sequence. Neither method

@@ -94,6 +94,30 @@ The shipped checkpoints work zero-shot, but fine-tuning on decisions from your o
 
 **[nandhakishorm.github.io/laya](https://nandhakishorm.github.io/laya/)**: guides for [prediction hooks](https://nandhakishorm.github.io/laya/hooks/), [schema-driven decisions](https://nandhakishorm.github.io/laya/structured/), [Docker](https://nandhakishorm.github.io/laya/docker/) and [LangChain and LangGraph](https://nandhakishorm.github.io/laya/langchain/), plus a full [API reference](https://nandhakishorm.github.io/laya/reference/).
 
+## What's new in 0.3.28
+
+* **`laya.backends` was missing from every published wheel.** The package was never added to setuptools' explicit list, so the wheels for 0.3.25, 0.3.26 and 0.3.27 shipped without it (#940). The documented backend selection API was therefore unavailable to anyone who installed with pip: `Agent(backend="eager")` raised `ModuleNotFoundError` and `agent.set_backend("eager")` raised `ImportError`, while the compile guide described both. The default path was unaffected, which is why this went unnoticed; it also only ever worked from a source checkout, which every contributor here uses. A packaging check now keeps the declared list aligned with every importable `laya` source package, so the next one fails at build time instead of at install time.
+* **Fine-tuning from the command line.** `laya-train --data tickets.csv --out ./ft` fine-tunes a checkpoint from a plain labelled CSV, discovering the labels and synthesising the question (#931, #887). It also reads the `{state, questions, expected}` rows `laya-evals` already takes, so an evaluation set trains without conversion, and `--dry-run` prints the item and skip counts before anything loads. The generated question schema is saved beside the checkpoint, so the labels and wording can be reused exactly at inference.
+* **A fine-tune now says how much its calibration can be trusted.** A short run could fit temperatures of `[1.0, 1.0, 1.0]` from a handful of items and save a checkpoint whose confidences were never calibrated, indistinguishable from one that was. `finetune` warns per question type and records the same report in the checkpoint config (#933). Questions whose options run past `max_len` are skipped and counted rather than crashing the batch mid-run (#934), and a final partial accumulation window is normalised by the micro-batches it actually holds (#941).
+* **Many-option choices.** `laya.predict_tournament(agent, state, questions)` answers a choice question whose labels do not fit the option budget by splitting them into groups of 16, answering every group in one forward pass and running the winners in a final call (#950). On full test splits: BANKING77 0.430 to 0.610, CLINC150 0.625 to 0.876, with ECE falling from 0.350 to 0.082. No embedder and no new dependency.
+* **Order-invariant checkpoints.** An opt-in parallel option layout gives every option the same position ids and blocks attention between options, so reordering can only permute the logits (#951). A checkpoint trained with `TrainConfig(option_layout="parallel")` gives the same answer under reordering for 100% of decisions, against 91.7% for the current layout. Every published checkpoint stays on the default sequential layout and nothing changes for them.
+* **Serve your own checkpoints beside the built-ins.** `Router(models=...)` and `Router.register(name, source)` accept any name, with a Hub repo id, a `(repo, subfolder)` pair or a local directory as the source, and the router loads, evicts and unloads it exactly like a built-in (#937, #919). `Router.registered` lists them and `Router.unregister` removes one.
+* **pydantic `Enum` fields work.** `questions_from_pydantic`, `decide(schema=Model)` and `answer_to_pydantic` raised `SchemaError` on every enum field, because pydantic v2 renders them as a `$ref` and the planner never resolved one. Local `$defs` references now resolve, including inside `Optional[Enum]` and pydantic v1's one-item `allOf` wrapper (#960).
+* **Abstention cuts are fitted on the precision the gate reads.** `fit_abstention_thresholds` chose a cut from full-precision confidences while the gate compares the 4-decimal `answer_confidence`. With a binning map installed the whole cut bin was lost: the fitter judged 532 accepted answers and the gate delivered 382 (#957).
+* **`laya-evals` refuses a NaN threshold.** `--min-accuracy nan` and `--max-ece nan` were accepted and every comparison against NaN is false, so a run at 0% accuracy and ECE 0.99 exited 0 (#954).
+* **MCP keeps `option_order`.** `laya_predict`, `laya_route`, `laya_shortlist` and every `laya_predict_batch` item dropped the key, so the README's rotation-averaging recipe returned k identical answers (#958).
+* **The ONNX agent catches an in-place question rewrite.** A start hook that widens a question in place mutated the before-image `predict_long` compared against, so the scan-budget guard returned early and up to 59% of a document reached no model while `usage` reported every window as read. The torch agent already raised on the identical input (#959).
+* **torch 2.0 to 2.3 can run the package again.** The action-head dtype check called a form of `torch.is_autocast_enabled` that only exists from torch 2.4, so every forward pass raised `TypeError` across the bottom of the declared `torch>=2.0.0` range (#945). Two test suites that read `torch.fx.experimental._config` at module level no longer fail collection on a torch without it (#946), and the Windows lane's bf16 legs are skipped on a Windows CPU, where they hit an uncatchable SIGILL (#949).
+* **macOS and Intel.** `setup_laya.sh` and `LOCAL_SETUP.md` pin the stack that actually runs there, since a plain `git clone` resolves torch 2.2.2 against a transformers that wants 2.4 and nothing in the error message says so (#948).
+* **Docker.** The default base image moves to Debian 13 (trixie), with bookworm one build arg away (#953, #739). Verified with a decision diff across both bases: 291 answers per checkpoint on torch CPU, torch CUDA and ONNX Runtime CPU, zero differing decisions.
+* **TypeScript.** `Router.predictBatch` and `predictMany` forward per-call `onPredictStart`, `onPredictEnd` and `hooksRaise`, which were accepted and silently dropped (#936, #935). French mail is cleaned the way Python cleans it, over 4,000 generated messages with zero mismatches (#939). An English word that doubles as a foreign function word is counted once, so plain English like `Come one, come all` is no longer routed to the multilingual checkpoint (#955).
+* **.NET and Java.** The French device footer is matched with the spacing people actually write (#956), and an empty action-logit row gives `[0.5, 0.5]` instead of `[NaN, NaN]` (#942).
+* **Security.** The Gradle wrapper jar is validated against Gradle's published checksums before anything executes it, and the distribution it downloads is pinned by sha256. The email examples no longer use a real bank's name with two unregistered lookalike domains as the phishing lure; the preset still flags the generic version at 0.926. A full audit of the repository, the published wheel, both npm packages and all ten workflows found no malicious content.
+
+28 pull requests from 12 contributors.
+
+---
+
 ## What's new in 0.3.27
 
 * **A plain `import laya` no longer crashes when TensorFlow is installed.** transformers 4.x imports TensorFlow while laya builds the model, and a broken TF build turns that into `Fatal Python error: Bus error` from a library laya never uses (#915). The package now sets `USE_TF=0` the way CI, the Dockerfile and the examples already did.
@@ -396,8 +420,8 @@ script itself is not Intel-specific. Commands are relative to the repository roo
 
 ```bash
 ./setup_laya.sh                                    # venv + pinned deps + checkpoints + verify
-.venv/bin/python laya_smoke_test.py --models ./models            # real weights, device auto -> MPS
-.venv/bin/python laya_smoke_test.py --models ./models --device cpu
+.venv/bin/python verify/laya_smoke_test.py --models ./models            # real weights, device auto -> MPS
+.venv/bin/python verify/laya_smoke_test.py --models ./models --device cpu
 .venv/bin/python verify/numerics_check.py          # RoPE bases, determinism, SDPA vs eager
 .venv/bin/python verify/bench_devices.py           # CPU vs MPS, thread scaling
 .venv/bin/python verify/edge_sweep.py              # edge cases: option budgets, truncation, router lifecycle
@@ -1344,6 +1368,39 @@ cost `k` of them. On 62 banking intents shortlisted to 20 over 49 states, averag
 the share of answers that change with presentation order from 16.3% to 6.1%. Omitting
 `option_order` keeps the canonical order and the behaviour every existing caller already has.
 
+#### Order-invariant checkpoints (`option_layout: "parallel"`)
+
+Averaging reduces the position effect; a checkpoint trained on the parallel option layout does not
+have one. Every option starts at the same position id, the instruction's closing `[SEP]` and the
+state continue after the longest option, and options cannot attend to each other (the local layers
+keep their window, measured in position ids). The decision head has no positional encoding, so
+reordering the options can only reorder the logits: `option_order` and any other permutation return
+the same probabilities per label, up to float rounding. The idea is the one Parallel Context Windows
+([Ratner et al., 2023](https://arxiv.org/abs/2212.10947)) uses for long contexts, applied to options.
+
+The layout is a property of the weights, so it is set in the checkpoint's `rl_agent_config.json`
+(`"option_layout": "parallel"`) and picked up by `laya.load`; every published checkpoint stays on the
+default sequential layout. Train one with `laya.train`:
+
+```python
+from laya.train import TrainConfig, finetune
+
+finetune("train.jsonl", "./laya_base", "./laya_parallel", TrainConfig(option_layout="parallel"))
+```
+
+Fine-tuned from `convaiinnovations/laya` on typed-decisions (4 epochs, same recipe and seed per arm,
+one T4, 2,000 test decisions; each question also re-asked under a random `option_order`):
+
+| layout | accuracy (listed order) | accuracy (shuffled) | ECE | same answer when shuffled |
+|---|---|---|---|---|
+| sequential | 0.779 | 0.767 | 0.153 | 91.7% |
+| sequential + `shuffle_options` | 0.757 | 0.750 | 0.136 | 95.0% |
+| parallel | 0.764 | 0.764 | 0.143 | 100% |
+
+One seed per arm; the sequential arm moved by 0.008 between two runs of the same recipe. The
+parallel layout needs transformers>=5 and runs on the eager backend only: the ONNX runtime, the
+TileLang fast path and `compile=True` refuse such a checkpoint, and `backend="auto"` resolves to eager.
+
 ---
 
 ## MCP Server (Optional)
@@ -1602,6 +1659,7 @@ failure; it does not establish calibrated confidence.
   1. Raise `agent.cfg["head_max_len"] = 512` and `agent.cfg["max_len"] = 1024` (or up to 2048 / 4096 / 8192) so every option has enough tokens to remain distinct. Both are also per-request: `predict(state, questions, head_max_len=512, max_len=1024)` widens one question without changing the agent for everyone else, and every LangChain node takes the same two arguments ([LangChain guide](https://github.com/NandhaKishorM/laya/blob/main/docs/langchain.md)). `laya --questions` takes the same two budgets as `--max-len` / `--head-max-len`.
   2. Or shortlist with embeddings and run one forward pass on the top `k` labels (`predict_shortlist`, example below). `predict` and `system_one` still score every criterion they are given.
   3. Or split the label set yourself into a coarse question and a fine question.
+  4. Or let the decision model narrow the set itself: `laya.predict_tournament(agent, state, questions)` answers the labels in groups of at most 16, every group in the same forward pass, then asks the question again over the group winners, so up to 256 labels take two `predict` calls and no embedder. On the full test splits with the English checkpoint it took BANKING77 (77 labels) from 0.430 to 0.610, CLINC150 (150) from 0.625 to 0.876 and MASSIVE intent (60) from 0.515 to 0.569, with ECE between 0.06 and 0.14 instead of 0.30 to 0.37, at about twice the latency of one question ([`research/benchmarks/tournament`](https://github.com/NandhaKishorM/laya/blob/main/research/benchmarks/tournament/README.md)). When the labels fit uncut in a raised budget, as MASSIVE's 60 do at `head_max_len=512`, raising it did better (0.622 against 0.590 on 500 rows). Probabilities on a tournament choice are over its finalists.
 
 ```python
 import laya

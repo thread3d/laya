@@ -24,9 +24,9 @@ def _autocast_enabled(device_type: str) -> bool:
     """Whether an autocast scope covers `device_type`.
 
     `torch.is_autocast_enabled` only accepted a `device_type` from torch 2.4; before that it
-    reported CUDA alone and CPU and MPS had no autocast to report, so the no-argument call is
-    the whole answer on an older torch. This package supports `torch>=2.0.0`, and the
-    macOS/Intel stack pins 2.2 (`LOCAL_SETUP.md`), where the device-aware call is a TypeError.
+    reported CUDA alone and CPU and MPS had no autocast to report. This package declares
+    `torch>=2.0.0`, so call the device-aware form where it exists and fall back otherwise,
+    using torch's separate CPU predicate.
     """
     try:
         return torch.is_autocast_enabled(device_type)
@@ -163,6 +163,7 @@ def build_sequence(
     state_ids: Optional[List[int]] = None,
     return_stats: bool = False,
     return_truncation_stats: bool = False,
+    return_layout: bool = False,
 ):
     """Format: [CLS] <type> instructions [SEP] [MASK] opt0 [MASK] opt1 ... [SEP] state [SEP].
 
@@ -188,8 +189,12 @@ def build_sequence(
 
     The question half is `build_head`; `state_room` reports how much of `max_len` is left for the
     state after it, which is what a caller must size a window against.
+
+    `return_layout=True` adds one last return value, the parallel option layout from
+    `parallel_layout`: `{"position_ids": [...], "option_ids": [...]}`, one entry per token.
     """
     ids, markers, stats = build_head(tok, q, head_max_len, option_order=option_order)
+    head_len = len(ids)
     room = max(0, max_len - len(ids) - 1)
     if state_ids is None:
         state_ids = encode_text(tok, serialize_state(state).replace(tok.mask_token, " "),
@@ -197,6 +202,8 @@ def build_sequence(
     # not state_ids[-room:]: with no room left, state_ids[-0:] is the whole state rather than none of it
     st = state_ids[max(0, len(state_ids) - room):] if truncate_left else state_ids[:room]
     ids = ids + st + [tok.sep_token_id]
+    # Laid out before the clamp: a dropped trailing option must not widen the last surviving span
+    layout = parallel_layout(markers, head_len, len(ids)) if return_layout else None
     ids, markers = ids[:max_len], [m for m in markers if m < max_len]
     extra = ()
     if return_truncation_stats:
@@ -207,6 +214,8 @@ def build_sequence(
             "state_tokens_dropped": len(state_ids) - len(st),
             "truncated": len(st) < len(state_ids),
         },)
+    if return_layout:
+        extra += ({k: v[:max_len] for k, v in layout.items()},)
     if not return_stats:
         return (ids, markers) + extra
     return (ids, markers, stats) + extra
@@ -264,6 +273,77 @@ def build_head(tok, q: Dict, head_max_len: int = 192, option_order: Optional[Lis
         "options_distinct": len({tuple(o) for o in opt_ids}),
         "tokens_per_option": per_option,
     }
+
+
+def parallel_layout(markers: List[int], head_len: int, length: int) -> Dict[str, List[int]]:
+    """Position ids and option ids that make the encoder blind to option order.
+
+    In the sequential layout option `s` sits at positions after option `s-1`, and every option
+    attends to every other, so where an option is listed changes its embedding: the slot logits
+    of five identical options spread by 3.59 (`tests/test_option_order.py`). Here every option
+    starts at the same position, the first one after the instruction's [SEP], and the head's
+    closing [SEP] and the state continue after the longest option. Together with
+    `parallel_option_masks`, which stops an option from attending to another, reordering the
+    options only reorders the marker embeddings.
+
+    `option_ids` is 0 for shared tokens (instruction, closing [SEP], state, padding) and `s + 1`
+    for the tokens of slot `s`, which runs from its [MASK] up to the next marker or, for the last
+    slot, up to the [SEP] at `head_len - 1`.
+    """
+    if not markers:
+        return {"position_ids": list(range(length)), "option_ids": [0] * length}
+    start = markers[0]
+    spans = list(zip(markers, markers[1:] + [head_len - 1]))
+    position_ids, option_ids = list(range(start)), [0] * start
+    for s, (a, b) in enumerate(spans):
+        position_ids += range(start, start + b - a)
+        option_ids += [s + 1] * (b - a)
+    after = start + max(b - a for a, b in spans)
+    position_ids += range(after, after + length - len(position_ids))
+    option_ids += [0] * (length - len(option_ids))
+    return {"position_ids": position_ids, "option_ids": option_ids}
+
+
+OPTION_LAYOUTS = ("sequential", "parallel")
+
+
+def uses_parallel_layout(cfg: Dict) -> bool:
+    """Whether a checkpoint config asks for the parallel option layout (`parallel_layout`).
+
+    The layout is a property of the weights -- a checkpoint trained on one layout reads the other
+    as a different input -- so it lives in the config, defaulting to the sequential layout every
+    published checkpoint was trained on. The parallel masks go through ModernBERT's per-layer-type
+    mask argument, which transformers 4.x does not have.
+    """
+    layout = cfg.get("option_layout", "sequential")
+    if layout not in OPTION_LAYOUTS:
+        raise ValueError("option_layout must be one of %s, got %r" % (", ".join(OPTION_LAYOUTS), layout))
+    if layout == "parallel":
+        import transformers
+        if int(transformers.__version__.split(".")[0]) < 5:
+            raise RuntimeError("option_layout='parallel' needs transformers>=5, found %s" % transformers.__version__)
+    return layout == "parallel"
+
+
+def parallel_option_masks(attention_mask: torch.Tensor, position_ids: torch.Tensor, option_ids: torch.Tensor,
+                          sliding_window: Optional[int]) -> Dict[str, torch.Tensor]:
+    """Per-layer-type boolean attention masks for the parallel layout (`parallel_layout`).
+
+    A token attends to every real token except those of a *different* option. ModernBERT's local
+    layers keep their window, measured in position ids rather than sequence index: options share
+    positions, so a sequence-index window would let slot 0 see more of the state than slot 3.
+    Returned in the `{"full_attention": ..., "sliding_attention": ...}` form ModernBERT takes
+    in place of a padding mask; each mask is `[batch, 1, query, key]`, True where attention is allowed.
+    """
+    keys = attention_mask.bool()[:, None, :]
+    other_option = (option_ids[:, :, None] > 0) & (option_ids[:, None, :] > 0) \
+        & (option_ids[:, :, None] != option_ids[:, None, :])
+    full = keys & ~other_option
+    masks = {"full_attention": full[:, None]}
+    if sliding_window is not None:
+        near = (position_ids[:, :, None] - position_ids[:, None, :]).abs() <= sliding_window
+        masks["sliding_attention"] = (full & near)[:, None]
+    return masks
 
 
 def state_room(tok, q: Dict, max_len: int = 512, head_max_len: int = 192) -> int:
@@ -523,8 +603,16 @@ class DecisionModel(nn.Module):
             self.temperature = torch.empty_like(self.temperature, device="cpu")
         self.head_checkpointing = False
 
-    def forward(self, input_ids, attention_mask, marker_pos, marker_mask, qtype, detach_encoder: bool = False):
-        h = self.encoder(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state
+    def forward(self, input_ids, attention_mask, marker_pos, marker_mask, qtype, detach_encoder: bool = False,
+                position_ids=None, option_ids=None):
+        if option_ids is None:
+            h = self.encoder(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state
+        else:
+            # Parallel option layout (`parallel_layout`). The head below has no positional
+            # encoding, so with order-blind marker embeddings the logits permute with the options.
+            masks = parallel_option_masks(attention_mask, position_ids, option_ids,
+                                          getattr(self.encoder.config, "sliding_window", None))
+            h = self.encoder(input_ids=input_ids, attention_mask=masks, position_ids=position_ids).last_hidden_state
         if detach_encoder:
             h = h.detach()
         h = h + self.type_emb(qtype)[:, None, :]
@@ -834,8 +922,18 @@ def collate_items(batch, pad_id: int):
         "marker_mask": mmask,
         "qtype": torch.tensor([it["qtype"] for it in items]),
         "label": torch.tensor([it.get("label", -1) for it in items]),
-        "meta": [{k: it[k] for k in it if k not in ("ids", "markers", "target")} for it in items],
+        "meta": [{k: it[k] for k in it if k not in ("ids", "markers", "target", "layout")} for it in items],
     }
     if target is not None:
         res["target"] = target
+    if any("layout" in it for it in items):
+        # All or none: a batch that mixes layouts would run half its rows through the wrong masks
+        if not all("layout" in it for it in items):
+            raise ValueError("collate_items: some items carry a parallel layout and some do not")
+        pos = torch.zeros((n, L), dtype=torch.long)
+        opt = torch.zeros((n, L), dtype=torch.long)
+        for i, it in enumerate(items):
+            pos[i, : len(it["ids"])] = torch.tensor(it["layout"]["position_ids"])
+            opt[i, : len(it["ids"])] = torch.tensor(it["layout"]["option_ids"])
+        res["position_ids"], res["option_ids"] = pos, opt
     return res

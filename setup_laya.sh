@@ -100,7 +100,7 @@ fi
 
 if [ "$SKIP_VERIFY" -eq 0 ]; then
   say "Verifying with real weights"
-  "$VENV/bin/python" "$ROOT/laya_smoke_test.py" --models "$ROOT/models"
+  "$VENV/bin/python" "$ROOT/verify/laya_smoke_test.py" --models "$ROOT/models"
 fi
 
 say "Done"

@@ -156,11 +156,16 @@ export interface RouteOptions {
 
 /**
  * Per-call options for `Router.predictBatch` / `predictMany` / `routeBatch`.
- * `hooks` is composed the same way as on `predict`: installed hooks first, then this list.
- * `null`, `undefined` and `[]` add nothing.
+ * `hooks`, `onPredictStart` and `onPredictEnd` are composed the same way as on `predict`:
+ * installed hooks first, then this call. `null`, `undefined` and `[]` add nothing.
+ * `hooksRaise` overrides the Router's policy for this call, including `onRoute`.
+ * The start and end callables apply to each request's predict lifecycle, not to routing.
  */
 export interface PredictBatchOptions {
   hooks?: HookArg;
+  onPredictStart?: PredictHook;
+  onPredictEnd?: PredictHook;
+  hooksRaise?: boolean;
 }
 
 /** One item of a Router.predictBatch/routeBatch batch: state, questions, route overrides. */
@@ -721,6 +726,7 @@ export class Router extends HookRegistry {
           lang: request.lang ?? null,
           langGuess: request.langGuess ?? request.lang_guess ?? null,
           hooks: opts.hooks,
+          hooksRaise: opts.hooksRaise,
         }),
       );
     }
@@ -741,9 +747,10 @@ export class Router extends HookRegistry {
    * Router-level predict hooks run per request: each request gets its own PredictContext
    * carrying `decision`; `onPredictStart` may rewrite a request or `ctx.skip()` it, and
    * `onPredictEnd` runs once per started request even when the batch fails.
-   * `opts.hooks` are per-call hooks, appended after any installed on the Router, the same
-   * composition `predict` uses. `null` and `[]` add nothing. They apply to `onRoute` as well
-   * as to each request's predict lifecycle.
+   * `opts.hooks`, `opts.onPredictStart` and `opts.onPredictEnd` are composed the way `predict`
+   * composes them: installed hooks first, then this call. `null` and `[]` add nothing. `hooks`
+   * also run `onRoute`. `opts.hooksRaise` overrides the Router's policy for this call, the way
+   * `predict` uses `opts.hooksRaise ?? this.hooksRaise`.
    */
   async predictBatch(
     requests: BatchRequest[],
@@ -762,8 +769,12 @@ export class Router extends HookRegistry {
     }
 
     const results: (RoutedResult | null)[] = new Array(requests.length).fill(null);
-    const active = composeHooks(this.hooks, opts.hooks);
-    const raiseErrors = this.hooksRaise;
+    // `composeHooks`, not `this.hooks`: `setDefaultHooks` defaults, then installed hooks,
+    // then per-call `opts.hooks`, then `opts.onPredictStart` / `opts.onPredictEnd`. The instance
+    // list alone would drop every default `predict` keeps. `routeBatch` has already validated
+    // `opts.hooks`; start and end are validated here, after routing and before a checkpoint loads.
+    const active = composeHooks(this.hooks, opts.hooks, opts.onPredictStart, opts.onPredictEnd);
+    const raiseErrors = opts.hooksRaise ?? this.hooksRaise;
 
     for (const [modelName, indices] of groups) {
       const agent = (await this.load(modelName)) as {

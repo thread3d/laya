@@ -9,7 +9,7 @@
   "counts": {
     "lang_probe": 154,
     "route_probe": 74,
-    "email_probe_clean": 66,
+    "email_probe_clean": 70,
     "email_probe_state": 8,
     "shortlist_probe": 22,
     "hashing_embedder_probe": 22
