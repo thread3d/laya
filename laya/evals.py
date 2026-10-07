@@ -323,11 +323,27 @@ def default_evaluators() -> List[Evaluator]:
 
 
 def _answer_confidence(answer: Dict[str, Any]) -> Optional[float]:
-    """The calibrated confidence Laya reports: `answer_confidence`, not the entropy score.
+    """The column the calibration metrics read: `answer_confidence` when the answer carries one.
 
-    `answer["confidence"]` is entropy-based for choice and score, so calibration metrics must use
-    `answer_confidence`, which Laya reports on every answer type. The other keys are fallbacks for
-    a stripped-down result.
+    `answer_confidence` is the probability of the answer being reported -- the quantity temperature
+    scaling fits and the quantity this repository's calibration figures are computed on. It is not
+    *calibrated* as shipped: both base checkpoints are over-confident and `laya-multilingual` ships no
+    fitted temperatures at all (README, Calibration), which is why `ece` measures this column instead
+    of assuming it.
+
+    An answer carrying no `answer_confidence` falls through three more reads, in order: the
+    `confidence` field, then `max(p, 1 - p)` for a `noul`, then `max(probabilities)`. Those are not
+    the same quantity, and the first is the one this function otherwise exists to avoid: `confidence`
+    is normalized entropy on `choice` and `score`, which moves with the option count (#394) rather
+    than with how right the answer is, and `laya.confidence.answer_confidence_value` refuses to fall
+    back to it for the abstention gate on exactly that reasoning. `max(probabilities)` is the mass on
+    the top option, which is the reported answer's probability only when the answer *is* the argmax.
+
+    The stripped-down shape is not hypothetical. `LAYA_JEV_STRICT` projects the served response onto
+    the Jev wire contract, which carries no `answer_confidence` (`laya/serve.py`, and the flag's row
+    in docs/http-api.md), so a report run over recorded strict responses calibrates the entropy
+    number and is not comparable to one run over full payloads. `tests/test_evals.py` pins both paths
+    and the gap between them; `docs/evals.md` says so where an operator reads the metrics.
     """
     confidence = answer.get("answer_confidence")
     if isinstance(confidence, (int, float)):
@@ -831,12 +847,14 @@ def _takes_min_confidence(runner: Any, fn_name: str = "predict_batch") -> bool:
     """Whether `runner`'s entry point accepts an abstention threshold on the call.
 
     The same signature check `_takes_sort_by_length` makes, applied to whichever entry point the
-    harness is about to call: `min_confidence` changes the answer (an abstention overwrites a
-    low-confidence choice), so it is a scoring control, not an optimisation. A runner that predates
-    the gate (#361) must still be scoreable -- silently dropping the threshold and reporting the
-    same run would give a `precision@coverage` number for a policy that never ran -- so when the
-    guard is false the harness raises rather than lies. The CLI catches the raise into a
-    pre-flight message before any checkpoint loads.
+    harness is about to call. The gate is a *reporting* control, not a scoring one: it writes
+    `low_confidence: True` and `abstention: "abstained"` on answers whose `answer_confidence`
+    falls below the threshold, and leaves `answer["choice"] / ["noul"] / ["score"]` as the raw
+    argmax -- so every metric in `_aggregate` reads the same numbers at every threshold. What
+    changes is `report.config["timing"]["min_confidence"]` and `["min_confidence_sent"]`: those
+    keys claim the gate ran. A runner that predates it cannot honour that claim, so when the
+    guard is false the harness raises rather than publish a threshold it never applied. The CLI
+    catches the raise into a pre-flight message before any checkpoint loads.
     """
     fn = getattr(runner, fn_name, None)
     if fn is None:
@@ -867,13 +885,16 @@ def evaluate(runner: Any, dataset: Dataset, evaluators: Optional[Sequence[Evalua
     runner that predates the knob is unaffected by a run that does not ask. Nothing about the
     scored answers changes -- the results come back in chunk order either way.
 
-    `min_confidence` is the abstention threshold `Router` and `ONNXAgent` apply to
-    `answer_confidence` (#361): answers below it come back abstained, so the run scores the
-    policy at that threshold, not the raw argmax. Unlike `sort_by_length` this changes the
-    answers, so a runner whose batch entry point (or whose single ``predict``, on the fallback
-    path) predates the gate is refused rather than silently scored without it -- the report
-    would otherwise publish a `precision@coverage` figure for an abstention policy that never
-    ran.
+    `min_confidence` is the opt-in abstention threshold `Router` and `ONNXAgent` apply to
+    `answer_confidence` (#361). `laya.confidence.apply_confidence_gate` marks every answer below
+    it with `low_confidence: True` and `abstention: "abstained"`, and the raw argmax stays on
+    `answer["choice"] / ["noul"] / ["score"]` -- so `_aggregate` publishes the same accuracy,
+    calibration and coverage numbers at every threshold. Like `sort_by_length`, nothing about the
+    scored answers changes. Unlike `sort_by_length`, the report itself names the threshold under
+    `report.config["timing"]["min_confidence"]` and asserts it was sent under
+    `["min_confidence_sent"]`, so a runner whose batch entry point (or whose single ``predict``,
+    on the fallback path) predates the gate is refused: the harness will not publish a
+    `min_confidence` it did not apply.
 
     `on_error` is ``"fail"`` (re-raise a runner error) or ``"skip"`` (record it and continue),
     the latter for evaluating a flaky fleet without aborting the whole run.
@@ -889,11 +910,14 @@ def evaluate(runner: Any, dataset: Dataset, evaluators: Optional[Sequence[Evalua
     if on_error not in ("fail", "skip"):
         raise EvalError("on_error must be 'fail' or 'skip', got %r" % on_error)
     # `min_confidence` is validated here -- and, unlike `sort_by_length`, a run that asks for it
-    # on a runner that does not accept it is refused -- because an abstention threshold changes
-    # which answers score as correct. Silently dropping it would publish a `precision@coverage`
-    # number for a policy that never ran, which is exactly the class of lie a baseline report is
-    # supposed to prevent. `laya.confidence.check_min_confidence` is the same validator the Router
-    # uses, so the accepted range cannot drift from what the gate itself enforces.
+    # on a runner that does not accept it is refused. The gate does not change which answers score
+    # as correct: `apply_confidence_gate` writes `low_confidence` and `abstention` state fields
+    # while leaving `answer["choice"] / ["noul"] / ["score"]` as the raw argmax, so `_aggregate`
+    # publishes the same numbers at every threshold. What would be a lie is
+    # `report.config["timing"]["min_confidence"]`: it names the threshold as if the run applied
+    # it. A runner that predates the gate (#361) cannot honour that claim, so the guard raises.
+    # `laya.confidence.check_min_confidence` is the same validator the Router uses, so the
+    # accepted range cannot drift from what the abstention gate itself enforces.
     try:
         mc = check_min_confidence(min_confidence) if min_confidence is not None else None
     except ValueError as exc:
@@ -915,7 +939,7 @@ def evaluate(runner: Any, dataset: Dataset, evaluators: Optional[Sequence[Evalua
                     "evaluate(min_confidence=%r) refused: this runner's %s does not accept the "
                     "abstention threshold. Either use a Router/ONNXAgent that gates on "
                     "answer_confidence (#361), or drop the threshold -- the report would "
-                    "otherwise score a policy that never ran." % (min_confidence, target))
+                    "otherwise name a `min_confidence` it never applied." % (min_confidence, target))
     evaluators = list(evaluators) if evaluators is not None else default_evaluators()
     cases: List[Dict[str, Any]] = []
     waits: List[float] = []          # what each request actually waited: its chunk's whole call

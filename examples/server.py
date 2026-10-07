@@ -1215,10 +1215,20 @@ def _answer_dist(kind: str, ans: Dict[str, Any], question: Dict[str, Any]) -> tu
 
 
 _CERTAINTY_TIP = (
-    "The `confidence` field is 1 minus the normalized entropy of the whole distribution: how peaked it is. "
-    "It is not calibrated, so do not gate on it. `answer_confidence` is the probability of the "
-    "reported answer, calibrated so that answers returned at 0.9 are right about 90% of the time."
+    "`confidence` is not one formula, and it is not calibrated, so do not gate on it. On a `choice` or a "
+    "`score` it is 1 minus the normalized entropy of the whole distribution: how peaked it is, on a scale "
+    "that moves with the number of options. On a `noul` it is the probability of the side being reported, "
+    "max(p_true, 1 - p_true). `answer_confidence` is the probability of the reported answer, the quantity "
+    "temperature scaling fits and this repository's calibration figures are computed on; a figure measured "
+    "on a benchmark is not a promise about your traffic, so gate on a threshold you have measured."
 )
+# The browser builds the same chip, so the boot script serializes this dict to it instead of the two
+# languages each typing a formula for a field whose formula depends on the question type.
+_CERTAINTY_LABEL = {
+    "choice": "entropy, not calibrated",
+    "score": "entropy, not calibrated",
+    "noul": "the reported side, not calibrated",
+}
 _UNSURE = 0.6
 
 
@@ -1286,7 +1296,8 @@ def _answer_row(name: str, ans: Any, question: Dict[str, Any], n: int) -> str:
     if isinstance(certainty, (int, float)) and abs(float(certainty) - calibrated) > 5e-5:
         meta += (
             f"<span class='tipw'><button type='button' class='tipt' aria-describedby='tip-{n}'>"
-            f"<code>confidence</code> <b>{float(certainty):.4f}</b> entropy, not calibrated {_icon('info')}</button>"
+            f"<code>confidence</code> <b>{float(certainty):.4f}</b> "
+            f"{_CERTAINTY_LABEL[kind]} {_icon('info')}</button>"
             f"<span class='tipb' role='tooltip' id='tip-{n}'>{_with_code(_CERTAINTY_TIP)}</span></span>"
         )
     return (
@@ -3020,8 +3031,8 @@ function answerRow(key, ans, q, n) {
   if (typeof ans.confidence === "number" && Math.abs(ans.confidence - calibrated) > 5e-5)
     meta.append(h("span", {class: "tipw"},
       h("button", {type: "button", class: "tipt", "aria-describedby": "tip-" + n},
-        h("code", {text: "confidence"}), h("b", {text: ans.confidence.toFixed(4)}), "entropy, not calibrated",
-        icon("info")),
+        h("code", {text: "confidence"}), h("b", {text: ans.confidence.toFixed(4)}),
+        CERTAINTY_LABEL[kind], icon("info")),
       h("span", {class: "tipb", role: "tooltip", id: "tip-" + n}, withCode(CERTAINTY_TIP))));
   return h("details", {class: "ans", open: true}, h("summary", null, head, verdict),
     h("div", {class: "a-body"}, score != null && maxLevel > 0 ? scale(score, maxLevel) : null, dist, meta));
@@ -3506,6 +3517,7 @@ def index(request: Request) -> HTMLResponse:
         f"<script>const EXAMPLE = {_script_json(example)}; const PRESETS = {presets_js};"
         f" const QTYPES = {_script_json(sorted(getattr(laya, 'QTYPES', {}) or {}) or ['choice', 'score', 'noul'])};"
         f" const LIMITS = {_script_json({'questions': MAX_QUESTIONS, 'stateChars': MAX_STATE_CHARS})};"
+        f" const CERTAINTY_LABEL = {_script_json(_CERTAINTY_LABEL)};"
         "</script>"
     )
     return _html(

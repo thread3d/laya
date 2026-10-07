@@ -286,11 +286,11 @@ Router(
     models=None, device=None, token=None, max_loaded=2, default="english",
     auto_task_detection=False, standalone_repos=False, preload=False, lang_guess=None,
     hooks=None, on_predict_start=None, on_predict_end=None,
-    hooks_raise=True, hooks_concurrent=True,
+    hooks_raise=True, hooks_concurrent=True, hooks_timeout=None,
 )
 
 router.route(state, questions=None, model=None, task=None, lang=None, lang_guess=None,
-             hooks=None, hooks_raise=None)
+             hooks=None, hooks_raise=None, hooks_timeout=None)
 
 router.predict(state, questions, model=None, task=None, lang=None, lang_guess=None,
                hooks=None, on_predict_start=None, on_predict_end=None, hooks_raise=None,
@@ -317,7 +317,7 @@ router.loaded               # list of resident checkpoint names
 ```python
 ONNXAgent(model_id_or_path, onnx_path="laya.onnx", subfolder=None,
           hooks=None, on_predict_start=None, on_predict_end=None,
-          hooks_raise=True, hooks_concurrent=True)
+          hooks_raise=True, hooks_concurrent=True, hooks_timeout=None)
 
 onnx_agent.system_one(state, questions,
                       hooks=None, on_predict_start=None, on_predict_end=None, hooks_raise=None,

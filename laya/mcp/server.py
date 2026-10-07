@@ -386,7 +386,7 @@ def laya_route_batch_tool(requests: list, hooks_timeout: float = 0) -> str:
         "model is downloaded), then answer in one forward pass. Use this instead of "
         "laya_predict whenever a choice question has more options than the guardrails allow. "
         "Returns the answers plus per-question shortlist metadata (kept labels, cosine "
-        "scores, k, option count). "
+        "scores, k, option count, and whether the question passed through unshortlisted). "
         "Shortlisting narrows the label set; head_max_len decides how many tokens each kept label "
         "is read with, so the two together are the fix for a large-criteria question. "
         + _GUARDRAILS

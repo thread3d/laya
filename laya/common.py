@@ -100,8 +100,9 @@ def serialize_state(state: Union[str, dict, list]) -> str:
 def render_criterion(value) -> str:
     """Render one criterion value as text.
 
-    Strings pass through; anything structured (dict, list, number) becomes compact JSON, so a
-    rubric reads as JSON rather than a Python repr. Without this a dict-valued criterion
+    Strings pass through; anything structured (dict, list, number) becomes a single-line JSON
+    document with the default separators -- ``", "`` between members, ``": "`` before a value --
+    so a rubric reads as JSON rather than a Python repr. Without this a dict-valued criterion
     crashed `noul` outright and leaked `{'desc': ...}` into `choice` and `score` prompts.
     """
     if isinstance(value, str):
@@ -379,7 +380,9 @@ def window_budget(tok, questions, max_len: int = 512, head_max_len: int = 192,
     windows are one list of states scored for every question in shared forward passes -- a window
     sized for the roomiest question would be cut short for the tightest one, and the offsets
     reported on its answers would mean something different per question. With no questions there is
-    nothing to fit, so the caller's window (or the checkpoint default) stands.
+    nothing to fit, so the caller's window (or the checkpoint default) stands. That default is
+    `max(64, max_len - head_max_len - 8)`: the state budget the config leaves, with a 64-token
+    floor under it, so a widened `head_max_len` stops shrinking it there.
 
     `questions` are internal question dicts, as `Agent._to_internal` returns them.
 

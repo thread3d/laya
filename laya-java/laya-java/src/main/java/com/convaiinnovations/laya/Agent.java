@@ -40,7 +40,7 @@ import java.util.Map;
  * <p>One session is not safe for concurrent {@code predict} calls unless ONNX Runtime is
  * configured for it; hold one {@code Agent} per worker, or serialise access.
  */
-public final class Agent implements AutoCloseable {
+public final class Agent implements AutoCloseable, Predictor {
 
     private final Tokenizer tokenizer;
     private final AgentConfig config;
@@ -90,10 +90,14 @@ public final class Agent implements AutoCloseable {
      */
     public static Agent using(Tokenizer tokenizer, AgentConfig config, InferenceSession session) {
         // Padding is masked out of attention but still embedded, so it has to be a real id.
-        int padId = tokenizer.padId().orElseGet(
-                () -> tokenizer.sepId().orElseThrow(() -> new IllegalStateException(
-                        "this checkpoint names neither a pad_token nor a sep_token, so a batch "
-                        + "of more than one row cannot be padded")));
+        // No silent fallback to the SEP id. The reference hands `tok.pad_token_id` straight to
+        // the collator, so a checkpoint naming no pad_token fails the request outright -- and a
+        // mis-exported checkpoint that fails loudly on one runtime must not answer quietly on the
+        // other. (The graph masks padding, so the substituted id did not itself move the numbers;
+        // the divergence was that one runtime accepted a configuration the other rejects.)
+        int padId = tokenizer.padId().orElseThrow(() -> new IllegalStateException(
+                "this checkpoint names no pad_token, so a batch cannot be padded; the reference "
+                + "refuses the same checkpoint"));
         return new Agent(tokenizer, config, session, padId);
     }
 
@@ -118,8 +122,12 @@ public final class Agent implements AutoCloseable {
      * @param language a tag whose prefix before {@code -} may select a temperature override, or null
      */
     public Prediction predict(Object state, Map<String, Question> questions, String language) {
-        // `singletonList`, not `List.of`: a null state is legitimate -- Python serialises `None`
-        // to the text "null" -- and `List.of` rejects it with a bare NullPointerException.
+        // `singletonList`, not `List.of`, so that a null state reaches predictBatch's own check
+        // and is refused there with a message rather than by a bare NullPointerException from
+        // the list factory. The comment here used to claim a null state was legitimate because
+        // "Python serialises None to the text null" -- which is backwards: the reference refuses
+        // it for exactly that reason, since answering it would be a confident decision about the
+        // four characters "null", byte-identical to passing the string.
         return predictBatch(Collections.singletonList(state), questions, language, 0, false).get(0);
     }
 
@@ -146,15 +154,34 @@ public final class Agent implements AutoCloseable {
      */
     public List<Prediction> predictBatch(List<?> states, Map<String, Question> questions,
                                          String language, int batchSize, boolean sortByLength) {
-        if (questions.isEmpty()) {
-            throw new IllegalArgumentException("no questions to ask");
-        }
         if (closed) {
             throw new IllegalStateException(
                     "this agent is closed; open a new one rather than reusing it");
         }
+        for (int i = 0; i < states.size(); i++) {
+            // Refused, as both Python backends refuse it: `serialize_state(None)` is
+            // `json.dumps(None)`, so a missing state would otherwise be answered as a decision
+            // about the literal text "null" -- byte-identical to passing the string, and at full
+            // confidence. A caller whose state field is absent should hear about it.
+            if (states.get(i) == null) {
+                throw new IllegalArgumentException(
+                        "state at index " + i + " is null; pass a string, a map or a list");
+            }
+        }
         if (states.isEmpty()) {
             return List.of();
+        }
+        if (questions.isEmpty()) {
+            // Empty answers, zero usage, no tokenization and no forward pass -- which is what
+            // the reference returns. Throwing here meant the two runtimes could not be swapped
+            // under a question set derived from a filter: an empty schema or a disabled rule set
+            // is a well-formed request with a well-formed empty answer.
+            List<Prediction> empty = new ArrayList<>(states.size());
+            for (int i = 0; i < states.size(); i++) {
+                empty.add(new Prediction(Prediction.MODEL, Map.of(),
+                        new Usage(0, 0, 0, 0, false, List.of(), Map.of())));
+            }
+            return List.copyOf(empty);
         }
         // Snapshotted once, at entry. The map is the caller's, and the sequences are built before
         // the graph runs while the answers are labelled after it: reading it twice let a mutation
@@ -227,8 +254,16 @@ public final class Agent implements AutoCloseable {
         List<SequenceBuilder.Sequence> built = new ArrayList<>(questionIds.size());
         for (String id : questionIds) {
             Question question = questions.get(id);
+            // truncateLeft for a LIST state, which is the reference's rule
+            // (`truncate_left = isinstance(state, list)`). A conversation is serialised
+            // newest-last, so cutting from the right throws away the current turn and answers
+            // about the opening of the conversation instead. Measured on a 120-turn history: the
+            // kept window started at message 0 where the reference started mid-message-95, and
+            // the answers moved -- one option's probability by 3.8x -- while `usage` stayed
+            // byte-identical, so nothing a caller can read revealed it.
+            boolean truncateLeft = state instanceof List;
             SequenceBuilder.Sequence sequence = SequenceBuilder.build(tokenizer, state, question,
-                    config.maxLen(), config.headMaxLen(), null, false, stateIds);
+                    config.maxLen(), config.headMaxLen(), null, truncateLeft, stateIds);
             int defined = question.renderOptions().size();
             if (sequence.markers().length != defined) {
                 // Markers sit at absolute positions and the sequence is then cut to `max_len`, so

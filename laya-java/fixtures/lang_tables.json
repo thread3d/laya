@@ -282,6 +282,19 @@
       ]
     }
   ],
+  "stop_word_order": [
+    "en",
+    "fr",
+    "de",
+    "es",
+    "pt",
+    "it",
+    "nl",
+    "sv",
+    "ro",
+    "bn",
+    "az"
+  ],
   "stop_words": {
     "az": [
       "amma",
@@ -1182,7 +1195,9 @@
     "NON_EN_DIACRITIC_RATE": 0.02,
     "NON_LATIN_FRACTION": 0.2,
     "NON_LATIN_MIN_FRACTION": 0.1,
-    "NON_LATIN_MIN_LETTERS": 10
+    "NON_LATIN_MIN_LETTERS": 10,
+    "_SHOUTED_MIN_STOPWORD": 4,
+    "_SHOUTED_MIN_WORD": 5
   },
   "regexes": {
     "_WORD": "[^\\W\\d_]+",

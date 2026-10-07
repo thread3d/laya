@@ -521,7 +521,10 @@ def calibration_payload(
     `temperature_by_options` (those live at the top of this payload).
 
     `binning_map` is the optional histogram-binning recalibration map fitted by
-    `fit_binning_map`; the key is omitted when no map is installed.
+    `fit_binning_map`; the key is omitted when no map is installed, which is `None`, not an empty
+    map. A map that fitted nothing -- `{}`, the return value when no bucket reached the sample
+    floor -- is still written, so the round trip through :func:`apply_calibration_payload` gives
+    `{}` back rather than `None`.
     """
     payload = {
         "version": CALIBRATION_VERSION,
@@ -602,22 +605,36 @@ def _install_temperatures(obj, temperature, temperature_by_options, warn: bool =
 
 
 def apply_calibration_payload(obj, payload: Dict[str, Any]) -> None:
-    """Copy `temperature` and `temperature_by_options` from a calibration payload onto `obj`.
+    """Copy `temperature`, `temperature_by_options` and `binning_map` onto `obj`.
+
+    Those are the three fields this reads and the three it writes. `binning_map` is installed
+    whatever the payload holds, including nothing: a payload with no ``binning_map`` key -- every
+    file written before histogram binning existed, and every agent that saved before
+    :meth:`Agent.fit_binning` ran -- installs `None`, which clears a map this object already
+    fitted. The file is the whole calibration state, not a patch onto the current one.
 
     A missing `version` is version 1 (temperatures only, no checkpoint identity). Version
     `CALIBRATION_VERSION` records the checkpoint the map was fitted for; a mismatch warns
-    and still loads, so an older file never becomes a hard failure. Each value is passed
+    and still loads, so an older file never becomes a hard failure. Each temperature is passed
     through `clamp_temperature`, so a non-numeric or out-of-range entry cannot crash a later
     forward the way an unclamped zero used to.
 
-    The payload's *shape* is checked before any of that, and refused with a `ValueError`
-    naming the field: the values may be junk the clamp forgives, but a temperature that is
-    not a list of three, a version that is not an integer, or a bucket map that is not an
-    object is a file this code cannot read -- JSON gives `int`, `str`, `list` and `dict`
-    for the three mistakes below just as happily as it gives the right shapes, and each
-    used to fail with a raw `TypeError`/`AttributeError` from `len()`/`dict()`, or worse,
-    to load: a `{"a": 1, "b": 2, "c": 3}` or `"abc"` has `len` 3 and used to pass the
-    length check and install its *keys* as temperatures.
+    `temperature` and `binning_map` take opposite value policies, and that is the sentence to read
+    before writing a file by hand: a bad *temperature* is forgiven and clamped into
+    `[TEMP_MIN, TEMP_MAX]`, while a bad *binning value* is refused. Nothing recalibrates a
+    confidence the way an out-of-range binning value would, so there is no defensible fallback
+    for it.
+
+    The payload's *shape* is checked before any of that, and refused with a `ValueError` naming
+    the field: the values may be junk the clamp forgives, but the payload itself not being an
+    object, a `version` that is not an integer, a `temperature` that is not a list of three, a
+    `temperature_by_options` that is not an object, a `binning_map` that is not an object, or a
+    `binning_map` entry that is not an object with an integer `bins` >= 1 and `values` of exactly
+    that length holding finite numbers in [0, 1] is a file this code cannot read -- JSON gives
+    `int`, `str`, `list` and `dict` for each of those mistakes just as happily as it gives the
+    right shapes, and each used to fail with a raw `TypeError`/`AttributeError` from
+    `len()`/`dict()`, or worse, to load: a `{"a": 1, "b": 2, "c": 3}` or `"abc"` has `len` 3 and
+    used to pass the length check and install its *keys* as temperatures.
     """
     if not isinstance(payload, dict):
         raise ValueError("calibration JSON must be an object, got %s" % type(payload).__name__)

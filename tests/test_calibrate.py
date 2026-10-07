@@ -653,6 +653,121 @@ apply_calibration_payload(version_ok, {"temperature": [1.1, 1.2, 1.3], "version"
 check("shape/numeric string version still loads", version_ok.temperature, [1.1, 1.2, 1.3])
 
 
+# --------------------------------------------------------------- the load contract, from the code
+# The page used to promise two installed fields and "the three mistakes below" while the function
+# installs three (`binning_map` included) and refuses a dozen shapes. The prose is the only place a
+# reader learns that a bad *temperature* is clamped and a bad *binning value* is refused, so it is
+# held to the code here: the field vocabulary is read out of the `raise ValueError` messages by AST
+# and compared, both ways, to the fields the docstring names.
+import ast  # noqa: E402
+
+FIELD_WORDS = ("binning_map", "temperature_by_options", "version", "temperature", "bins", "values")
+
+
+def _fields_in(text):
+    """Which of the refused fields `text` names. Longest first, and a matched span is removed, so
+    `temperature_by_options` counts once and never also reports `temperature`."""
+    found, rest = set(), text
+    for word in sorted(FIELD_WORDS, key=len, reverse=True):
+        if word in rest:
+            found.add(word)
+            rest = rest.replace(word, "\x00")
+    return found
+
+
+_calibrate_tree = ast.parse(inspect.getsource(_calibrate))
+_apply_fn = next(n for n in ast.walk(_calibrate_tree)
+                 if isinstance(n, ast.FunctionDef) and n.name == "apply_calibration_payload")
+
+
+def _refusal_message(node):
+    """The literal text of a raised `ValueError`, ignoring its `%` arguments."""
+    exc = node.exc
+    arg = exc.args[0] if isinstance(exc, ast.Call) and exc.args else exc
+    if isinstance(arg, ast.BinOp) and isinstance(arg.op, ast.Mod):
+        arg = arg.left
+    return arg.value if isinstance(arg, ast.Constant) and isinstance(arg.value, str) else None
+
+
+_refusal_texts = [m for m in (_refusal_message(n) for n in ast.walk(_apply_fn) if isinstance(n, ast.Raise))
+                  if m and m.startswith("calibration JSON")]
+check_true("contract/the AST scan reaches every refusal (_refuses drives these)",
+           len(_refusal_texts) >= 11, "only %d refusal messages found" % len(_refusal_texts))
+refused_fields = set().union(*[_fields_in(m) for m in _refusal_texts]) if _refusal_texts else set()
+check("contract/fields the code refuses on", sorted(refused_fields), sorted(FIELD_WORDS))
+
+_apply_doc = " ".join(apply_calibration_payload.__doc__.split())
+check("contract/the docstring names every field the code refuses on",
+      sorted(refused_fields - _fields_in(_apply_doc)), [])
+check_true("contract/the docstring names no field the code does not refuse on",
+           not _fields_in(_apply_doc) - refused_fields,
+           sorted(_fields_in(_apply_doc) - refused_fields))
+_summary_line = apply_calibration_payload.__doc__.strip().splitlines()[0]
+check("contract/the summary line names all three installed fields",
+      sorted(w for w in ("temperature", "temperature_by_options", "binning_map") if w in _summary_line),
+      ["binning_map", "temperature", "temperature_by_options"])
+check_true("contract/the summary line calls it a copy of three, not two",
+           _summary_line.startswith("Copy `temperature`, `temperature_by_options` and `binning_map`"),
+           _summary_line)
+# The split has to be stated *as* the split: "clamp" and "refuse" both appear elsewhere in this
+# page whatever it says, so the check reads the window that follows the contrast it is claiming.
+_contrast = "opposite value policies"
+_policy_window = (_apply_doc.split(_contrast)[-1][:500] if _contrast in _apply_doc else "")
+check_true("contract/the docstring states the clamp-vs-refuse split, not one policy for both",
+           "clamp" in _policy_window and "refus" in _policy_window, _apply_doc[:200])
+check_true("contract/the docstring says a keyless file clears the map, not leaves it",
+           "installs `None`" in _apply_doc and "clears" in _apply_doc, _apply_doc[:300])
+# The pre-fix wording, banned so the count claim cannot come back.
+check_true("contract/the docstring makes no count claim about the refusals",
+           "three mistakes" not in _apply_doc and " two fields" not in _apply_doc, _apply_doc[:200])
+
+# The same file, described by the agent that reads it: `Agent.save_calibration` says what it writes
+# and `Agent.load_calibration` says what it installs, and both named only temperatures. Read from the
+# module's own source through AST, so the claim is checked against the words on the page rather than
+# against a docstring a `-O` run has stripped out.
+def _method_doc(tree, classname, method):
+    cls = next((n for n in ast.walk(tree)
+                if isinstance(n, ast.ClassDef) and n.name == classname), None)
+    fn = next((n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == method), None) if cls else None
+    return " ".join(ast.get_docstring(fn).split()) if fn and ast.get_docstring(fn) else ""
+
+
+for _name, _doc in (
+    ("Agent.load_calibration", _method_doc(ast.parse(inspect.getsource(_agent_module)), "Agent", "load_calibration")),
+    ("Agent.save_calibration", _method_doc(ast.parse(inspect.getsource(_agent_module)), "Agent", "save_calibration")),
+):
+    check_true("contract/%s names the binning map it installs" % _name, "binning_map" in _doc, _doc[:160])
+check_true("contract/Agent.load_calibration says the file is the whole state",
+           "whole calibration state" in _method_doc(
+               ast.parse(inspect.getsource(_agent_module)), "Agent", "load_calibration"), "")
+
+# And the semantics those words claim, driven.
+_binned = type("Stub", (), {})()
+apply_calibration_payload(_binned, {"temperature": [1.0] * 3,
+                                    "binning_map": {"choice:2": {"bins": 2, "values": [0.25, 0.75]}}})
+check("install/binning_map is installed onto the object", _binned.binning_map,
+      {"choice:2": {"bins": 2, "values": [0.25, 0.75]}})
+
+_cleared = type("Stub", (), {})()
+_cleared.binning_map = {"choice:2": {"bins": 1, "values": [0.5]}}
+apply_calibration_payload(_cleared, {"temperature": [1.0] * 3})
+check("install/a file with no binning_map key clears the installed map", _cleared.binning_map, None)
+
+_explicit_null = type("Stub", (), {})()
+_explicit_null.binning_map = {"choice:2": {"bins": 1, "values": [0.5]}}
+apply_calibration_payload(_explicit_null, {"temperature": [1.0] * 3, "binning_map": None})
+check("install/an explicit null binning_map clears it too", _explicit_null.binning_map, None)
+
+# `None` is "no map"; `{}` is "a map that recalibrates nothing" and survives the round trip as
+# `{}`, which is what `Agent.fit_binning` returns when no bucket reaches the floor.
+check("install/no map omits the key", "binning_map" in calibration_payload([1.0] * 3, {}, None), False)
+_empty_saved = calibration_payload([1.0] * 3, {}, binning_map={})
+check("install/an empty map is written, not omitted", _empty_saved.get("binning_map"), {})
+_empty_back = type("Stub", (), {})()
+apply_calibration_payload(_empty_back, _empty_saved)
+check("install/an empty map round-trips as empty, not as None", _empty_back.binning_map, {})
+
+
 # --------------------------------------------------------------- constructor wiring (no Hub download)
 init_src = inspect.getsource(Agent.__init__)
 check_true("init/calibration kwarg", "calibration: Optional[str] = None" in init_src)

@@ -50,9 +50,13 @@ class DecisionResult:
     `laya-multilingual` ships with no fitted temperatures at all. See `common.answer_confidence`
     and the README's Calibration section.
 
-    `confidence` keeps the normalized-entropy value it has always had, because that is a
-    different quantity on a scale that depends on the label count. A field that reported no
-    usable `answer_confidence` maps to `None`, which is not the same as a reported `0.0`.
+    `confidence` keeps the value each field's type has always produced: normalized entropy
+    `1 - H(p) / log(k)` for `choice` and `score`, whose scale depends on the label count,
+    and `max(p_true, 1 - p_true)` for `noul` -- a probability of the reported side, not an
+    entropy, and not label-count dependent. `structured._details` reads the answer verbatim,
+    so the formula is per-type; a single sentence cannot describe every field in this dict.
+    A field that reported no usable `answer_confidence` maps to `None`, which is not the same
+    as a reported `0.0`.
     """
 
     values: Dict[str, Any]

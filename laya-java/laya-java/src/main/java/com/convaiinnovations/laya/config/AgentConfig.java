@@ -88,6 +88,16 @@ public final class AgentConfig {
     private static AgentConfig of(Map<String, Object> document) {
         double[] temperature = {1.0, 1.0, 1.0};
         Object raw = document.get("temperature");
+        if (raw != null && !(raw instanceof List)) {
+            // Refused, not defaulted. The reference raises "Incompatible model" for a
+            // non-list temperature; defaulting it to 1.0 let a corrupt or hand-edited checkpoint
+            // load and then answer with an UNCALIBRATED temperature while reporting confidence as
+            // though it were fitted. The wrong length was already refused here; only the wrong
+            // type slipped through.
+            throw new Json.JsonException(
+                    "temperature must be a list of three values, one per question type, got "
+                    + raw.getClass().getSimpleName());
+        }
         if (raw instanceof List) {
             List<?> values = (List<?>) raw;
             if (values.size() != 3) {
@@ -101,6 +111,12 @@ public final class AgentConfig {
         }
         Map<String, Double> byOptions = new LinkedHashMap<>();
         Object tbo = document.get("temperature_by_options");
+        if (tbo != null && !(tbo instanceof Map)) {
+            // The reference calls .items() on it, so a non-mapping raises there too.
+            throw new Json.JsonException(
+                    "temperature_by_options must be a mapping, got "
+                    + tbo.getClass().getSimpleName());
+        }
         if (tbo instanceof Map) {
             for (Map.Entry<?, ?> entry : ((Map<?, ?>) tbo).entrySet()) {
                 byOptions.put(String.valueOf(entry.getKey()), clampTemperature(entry.getValue()));
@@ -181,10 +197,25 @@ public final class AgentConfig {
      * Python and read as fitted and sharpening temperatures, so both are refused here.
      */
     public static double clampTemperature(Object value) {
-        if (value instanceof Boolean || !(value instanceof Number)) {
+        if (value instanceof Boolean) {
             return 1.0;
         }
-        double t = ((Number) value).doubleValue();
+        double t;
+        if (value instanceof Number) {
+            t = ((Number) value).doubleValue();
+        } else if (value instanceof String) {
+            // The reference does `float(t)` in a try/except, so "2.5" IS 2.5. Discarding it
+            // silently defaulted the temperature to 1.0 and overstated the published
+            // answer_confidence -- by 19 points on the case that found this -- while the class's
+            // whole stated purpose is that these are never defaulted.
+            try {
+                t = Double.parseDouble(((String) value).trim());
+            } catch (NumberFormatException notANumber) {
+                return 1.0;
+            }
+        } else {
+            return 1.0;
+        }
         if (Double.isNaN(t) || Double.isInfinite(t)) {
             return 1.0;
         }

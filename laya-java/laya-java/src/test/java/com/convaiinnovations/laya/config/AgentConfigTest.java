@@ -33,16 +33,53 @@ final class AgentConfigTest {
     }
 
     @Test
-    @DisplayName("a non-number, a boolean, NaN and an infinity all fall back to 1.0")
+    @DisplayName("clampTemperature falls back exactly where the reference falls back")
     void nonNumbersFallBack() {
         // A bool used to float to 1.0/0.0 and read as a fitted or sharpening temperature.
         assertEquals(1.0, AgentConfig.clampTemperature(Boolean.TRUE), 0.0);
         assertEquals(1.0, AgentConfig.clampTemperature(Boolean.FALSE), 0.0);
-        assertEquals(1.0, AgentConfig.clampTemperature("2.0"), 0.0);
         assertEquals(1.0, AgentConfig.clampTemperature(null), 0.0);
         assertEquals(1.0, AgentConfig.clampTemperature(Double.NaN), 0.0);
         assertEquals(1.0, AgentConfig.clampTemperature(Double.POSITIVE_INFINITY), 0.0);
         assertEquals(AgentConfig.TEMP_MAX, AgentConfig.clampTemperature(99.0), 0.0);
+
+        // A NUMERIC STRING IS PARSED. The reference does `float(t)` in a try/except, so "2.0"
+        // is 2.0 -- this assertion previously demanded 1.0, which is what the port did and the
+        // reference does not. Discarding it defaulted the temperature silently and overstated
+        // the published answer_confidence while the class's stated purpose is that these are
+        // never defaulted.
+        assertEquals(2.0, AgentConfig.clampTemperature("2.0"), 0.0);
+        assertEquals(2.5, AgentConfig.clampTemperature("2.5"), 0.0);
+        assertEquals(2.5, AgentConfig.clampTemperature(" 2.5 "), 0.0);
+        // and a string that is not a number still falls back, as the except branch does
+        assertEquals(1.0, AgentConfig.clampTemperature("abc"), 0.0);
+        assertEquals(1.0, AgentConfig.clampTemperature(""), 0.0);
+        // the clamp still applies to a parsed string
+        assertEquals(AgentConfig.TEMP_MIN, AgentConfig.clampTemperature("0.1"), 0.0);
+        assertEquals(AgentConfig.TEMP_MAX, AgentConfig.clampTemperature("99.0"), 0.0);
+    }
+
+    @Test
+    @DisplayName("a malformed temperature refuses the checkpoint instead of defaulting it")
+    void malformedTemperatureIsRefused() {
+        // The reference raises "Incompatible model" for a non-list temperature. Defaulting it to
+        // 1.0 let a corrupt or hand-edited checkpoint load and then answer with an uncalibrated
+        // temperature while reporting confidence as though it were fitted.
+        for (String document : new String[] {
+            "{\"temperature\": 2.0}",
+            "{\"temperature\": \"2.0\"}",
+            "{\"temperature\": {\"0\": 2.0, \"1\": 2.0, \"2\": 2.0}}",
+        }) {
+            org.junit.jupiter.api.Assertions.assertThrows(
+                    com.convaiinnovations.laya.json.Json.JsonException.class,
+                    () -> AgentConfig.fromReader(new java.io.StringReader(document)),
+                    "a non-list temperature must refuse the checkpoint: " + document);
+        }
+        org.junit.jupiter.api.Assertions.assertThrows(
+                com.convaiinnovations.laya.json.Json.JsonException.class,
+                () -> AgentConfig.fromReader(new java.io.StringReader(
+                        "{\"temperature\": [2.0, 2.0, 2.0], \"temperature_by_options\": [1, 2]}")),
+                "a non-mapping temperature_by_options must refuse the checkpoint too");
     }
 
     @Test

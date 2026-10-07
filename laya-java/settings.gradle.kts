@@ -3,4 +3,9 @@
 // published artifact to measure against.
 rootProject.name = "laya-java-root"
 
-include("laya-java", "laya-java-client")
+// `laya-java-client` is deliberately NOT included. The directory holds no source -- the README
+// lists the HTTP client as not implemented -- and including it gave it a full MavenPublication
+// that `publishAllPublicationsToCentralRepository` would have pushed to Central as a zero-class
+// jar whose POM promises an HTTP client. A version burned on Central cannot be replaced, so the
+// module joins the build when it has code.
+include("laya-java")

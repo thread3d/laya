@@ -124,7 +124,16 @@ public final class Decoder {
      * plausible for a well-trained head, which is what makes it the wrong kind of bug.
      */
     public static float[] actionProbabilities(float[] actLogits) {
-        int width = Math.max(2, actLogits.length);
+        if (actLogits.length == 0) {
+            // Published as NaN before this. The reference indexes act[r, 0] and raises; an
+            // escalation signal that reads NaN is worse than one that refuses.
+            throw new IllegalArgumentException(
+                    "the graph produced no action logits, so there is no action probability");
+        }
+        // The width the graph actually produced. Padding a single column up to two turned a
+        // probability of 1.0 into sigmoid(logit) -- a plausible-looking number for a value the
+        // model never produced, in the field callers gate escalation on.
+        int width = actLogits.length;
         double max = Double.NEGATIVE_INFINITY;
         for (int i = 0; i < width; i++) {
             double value = i < actLogits.length ? actLogits[i] : 0.0;

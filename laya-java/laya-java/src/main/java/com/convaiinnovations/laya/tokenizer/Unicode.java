@@ -26,6 +26,17 @@ final class Unicode {
      * range) and {@link Character#isWhitespace} differs as described above. The set is small,
      * fixed by the Unicode standard, and this way it can be read against the standard.
      */
+    /**
+     * The same property for a full code point.
+     *
+     * <p>No code point above the BMP carries {@code White_Space}, so this narrows and delegates
+     * -- but it narrows EXPLICITLY, because casting a surrogate pair's code point to {@code char}
+     * silently asks about a different character.
+     */
+    static boolean isWhiteSpace(int codePoint) {
+        return codePoint <= Character.MAX_VALUE && isWhiteSpace((char) codePoint);
+    }
+
     static boolean isWhiteSpace(char c) {
         switch (c) {
             case '\t':          // U+0009 .. U+000D

@@ -84,8 +84,10 @@ check_true("evaluate: the abstention knob sits after the batch size it may apply
 # The two batch entry points the CLI wires up: both have to take the knob by the same name, or a
 # `--sort-by-length` run reports `sort_by_length_sent: false` for the surface it ships. The same
 # is true for the abstention threshold; a `--min-confidence` run that silently dropped the
-# argument would publish a `precision@coverage` figure for a policy that never ran, so the CLI
-# runner shapes have to accept the kwarg under the same name the guard on `evaluate` checks.
+# argument would publish `report.config["timing"]["min_confidence"]` naming a threshold that was
+# never applied -- the metrics stay identical (the gate flags, it does not overwrite the argmax),
+# but the report itself would lie -- so the CLI runner shapes have to accept the kwarg under the
+# same name the guard on `evaluate` checks.
 from laya import evals_cli  # noqa: E402
 
 for label, fn in (("RouterRunner.predict_batch", evals_cli.RouterRunner.predict_batch),
@@ -156,7 +158,7 @@ def _subparsers(parser):
 
 
 _subs = _subparsers(evals_cli._build_parser())
-check("laya-evals subcommands", sorted(_subs), ["compare", "run", "validate"])
+check("laya-evals subcommands", sorted(_subs), ["compare", "evidence", "run", "validate"])
 
 _unhelped, _unstated, _options = [], [], {}
 for _sub, _parser in sorted(_subs.items()):

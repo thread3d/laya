@@ -139,6 +139,28 @@ check("short/lang forwards to system_one",
       _with_one_window(_bare_onnx().system_one("aa", QUESTIONS, lang="de")))
 
 
+# ---------------------------------------------------------------- a state the questions leave room for
+# "Fits" is the room the questions leave, not the default window: system_one reads a state up to that
+# room whole, so windowing one between the two re-read it in pieces and moved the answer.
+def _roomy_onnx():
+    a = _bare_onnx()
+    a.cfg = {"max_len": 256, "head_max_len": 96}     # default window 152
+    return a
+
+
+_win, _, _room_q = window_budget(_FakeTok(), [Agent._to_internal(q) for q in QUESTIONS.values()], 256, 96)
+check_true("room/these questions leave more room than the default window", _room_q > _win, (_win, _room_q))
+_at_room = "".join(chr(65 + (k % 11)) for k in range(_room_q))
+roomy = _roomy_onnx()
+check("room/a state at the room delegates byte-for-byte to system_one",
+      roomy.predict_long(_at_room, QUESTIONS), _with_one_window(_roomy_onnx().system_one(_at_room, QUESTIONS)))
+check("room/in one session run", roomy.session.calls, [2])
+check_true("room/one token past the room is still scanned",
+           _roomy_onnx().predict_long(_at_room + "A", QUESTIONS)["usage"]["windows"] > 1)
+check_true("room/an explicit window still scans a state wider than it",
+           _roomy_onnx().predict_long(_at_room, QUESTIONS, window=_win)["usage"]["windows"] > 1)
+
+
 # ---------------------------------------------------------------- long state windows and aggregates
 # Record the windows predict_long feeds predict_batch, then score the same windows directly so
 # every aggregation claim is checked against real per-window answers, not a re-implementation.

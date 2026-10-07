@@ -165,4 +165,47 @@ final class QuestionRenderingTest {
         assertEquals(2, Question.Type.NOUL.code());
         assertEquals("choice", Question.Type.CHOICE.wireName());
     }
+
+    @org.junit.jupiter.api.Test
+    @DisplayName("blankness follows Python's whitespace set, not Java's")
+    void blanknessUsesPythonsWhitespace() {
+        // The reference refuses an instruction whose strip() is empty, and Python's strip treats
+        // U+00A0, U+0085, U+2007 and U+202F as whitespace where Character.isWhitespace -- and so
+        // String.isBlank and String.trim -- do not. An instruction of a single no-break space is
+        // therefore refused by the reference, and was accepted here: the model would have been
+        // shown "noul question: " and answered it anyway with a confident-looking distribution.
+        int[] blanks = {0x20, 0xA0, 0x85, 0x2007, 0x202F};
+        for (int cp : blanks) {
+            String blank = new String(Character.toChars(cp));
+            org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                    () -> Question.noul(blank),
+                    "an instruction of U+" + Integer.toHexString(cp) + " must be refused");
+        }
+        // U+200B is NOT whitespace to Python either, so it stays a legitimate instruction: the
+        // rule is Python's set, not "anything invisible".
+        String zeroWidth = new String(Character.toChars(0x200B));
+        assertEquals(zeroWidth, Question.noul(zeroWidth).instructions());
+    }
+
+    @org.junit.jupiter.api.Test
+    @DisplayName("noul labels are stripped with Python's whitespace set")
+    void noulLabelsUsePythonsStrip() {
+        // Same root cause on the label path. trim leaves a no-break space in place, so the label
+        // passes the non-empty check and renders whitespace into the model's input -- a different
+        // token sequence from the reference, which refuses the label.
+        String nbsp = new String(Character.toChars(0xA0));
+        String narrow = new String(Character.toChars(0x202F));
+        java.util.Map<String, String> blankLabel = new LinkedHashMap<>();
+        blankLabel.put("false", nbsp);
+        blankLabel.put("true", "yes");
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> Question.noul("Is this urgent?", null, null, blankLabel),
+                "a label of one no-break space must be refused");
+
+        java.util.Map<String, String> padded = new LinkedHashMap<>();
+        padded.put("false", nbsp + "no");
+        padded.put("true", "yes" + narrow);
+        assertEquals(java.util.List.of("no", "yes"),
+                Question.noul("Is this urgent?", null, null, padded).labels());
+    }
 }

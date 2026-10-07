@@ -34,6 +34,10 @@ def main(argv=None):
                         help="fail if fewer than this many tests ran")
     parser.add_argument("--allow-aborted", action="store_true",
                         help="permit skipped/aborted tests, for a lane with no checkpoints")
+    parser.add_argument("--require-passed", action="append", default=[], metavar="CLASS.TEST",
+                        help="a substring that must match at least one test that actually PASSED; "
+                             "repeatable. For a guard that is conditionally disabled, where being "
+                             "skipped would otherwise satisfy --allow-aborted")
     args = parser.parse_args(argv)
 
     if os.path.isdir(args.results):
@@ -53,7 +57,7 @@ def main(argv=None):
         return 1
 
     tests = failures = errors = skipped = 0
-    broken, aborted = [], []
+    broken, aborted, passed = [], [], []
     for path in files:
         try:
             root = ElementTree.parse(path).getroot()
@@ -73,6 +77,8 @@ def main(argv=None):
                 elif case.find("skipped") is not None:
                     reason = case.find("skipped").get("message") or ""
                     aborted.append("%s (%s)" % (name, reason.strip()[:120]))
+                else:
+                    passed.append(name)
 
     print("check_test_results: %d tests, %d failed, %d errored, %d skipped, across %d file(s)"
           % (tests, failures, errors, skipped, len(files)))
@@ -91,8 +97,31 @@ def main(argv=None):
         print("  %d test(s) aborted, which this lane allows:" % len(aborted))
         for name in aborted[:5]:
             print("    " + name)
-    if tests < args.min_tests:
-        problems.append("only %d tests ran, expected at least %d" % (tests, args.min_tests))
+    # Executed, not merely registered. The JUnit `tests` attribute COUNTS SKIPPED tests, so a
+    # suite in which every single test aborted satisfied this floor and both --allow-aborted
+    # lanes -- the build gate and the Maven Central release gate -- went green with nothing
+    # actually run. That is the exact failure this script's docstring says it exists to catch.
+    executed = tests - skipped
+    if executed < args.min_tests:
+        problems.append("only %d of %d tests actually ran (%d skipped), expected at least %d"
+                        % (executed, tests, skipped, args.min_tests))
+
+    # A floor cannot protect a guard that is allowed to be absent. `--allow-aborted` exists so a
+    # lane without the checkpoints can still gate on its model-free tests, but it also forgives a
+    # CONDITIONALLY disabled test -- and a test disabled because the thing it checks was never
+    # switched on is indistinguishable, to this script, from one that passed. The JDK matrix is
+    # exactly that case: if `-PtestJavaVersion` stops reaching the build, no launcher override
+    # happens, the one test that would notice is skipped rather than failed, and both cells go
+    # green having run the compile JDK twice. Naming it here turns "silently absent" into a
+    # failure.
+    for wanted in args.require_passed:
+        if not any(wanted in name for name in passed):
+            where = ("it was skipped" if any(wanted in name for name in aborted)
+                     else "it failed" if any(wanted in name for name in broken)
+                     else "it did not run at all")
+            problems.append("no PASSING test matched %r -- %s. This lane requires that test to "
+                            "run, because it is the check that the lane is not vacuous."
+                            % (wanted, where))
 
     if problems:
         for line in problems:

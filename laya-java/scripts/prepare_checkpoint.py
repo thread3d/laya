@@ -36,6 +36,41 @@ WANTED_LIGHT = ("rl_agent_config.json", "config.json", "tokenizer.json", "tokeni
 WANTED = WANTED_LIGHT + ("model.safetensors", "encoder/*")
 
 
+STAMP = ".laya-revision"
+
+
+def stamped(path, revision, wanted_weights=None):
+    """Whether `path` was produced by THIS revision (and, if asked, with weights).
+
+    Everything cacheable here is keyed on the pinned revision, and nothing on disk otherwise
+    records which revision produced it. Without that, "the graph is already exported" and "the
+    checkpoint is already downloaded" are claims about a PATH rather than about a revision, so a
+    restored cache from before a `HF_REVISION` bump is reused and the whole lane measures the old
+    model while reporting on the new one. Both sides of the comparison come from the same stale
+    artifact, so they agree and the cell goes green having tested nothing it claims to.
+    """
+    marker = os.path.join(path, STAMP) if os.path.isdir(path) else path + STAMP
+    try:
+        with open(marker, "r", encoding="utf-8") as handle:
+            recorded = handle.read().strip().split()
+    except OSError:
+        return False
+    if not recorded or recorded[0] != revision:
+        return False
+    # A weightless checkpoint cannot be traced, so it must not satisfy a request that needs one.
+    if wanted_weights is not None:
+        return (len(recorded) > 1 and recorded[1] == "weights") == bool(wanted_weights)
+    return True
+
+
+def stamp(path, revision, with_weights=None):
+    """Record the revision `path` was produced from, once it is complete."""
+    marker = os.path.join(path, STAMP) if os.path.isdir(path) else path + STAMP
+    text = revision + ("" if with_weights is None else (" weights" if with_weights else " light"))
+    with open(marker, "w", encoding="utf-8") as handle:
+        handle.write(text + "\n")
+
+
 def fetch(name, revision, destination, with_weights=True):
     """Materialise exactly the wanted files of one checkpoint at `destination`.
 
@@ -83,6 +118,7 @@ def fetch(name, revision, destination, with_weights=True):
     os.replace(source, destination)
     if os.path.exists(staging):
         shutil.rmtree(staging)
+    stamp(destination, revision, with_weights)
     return destination
 
 
@@ -91,7 +127,8 @@ def main(argv=None):
     parser.add_argument("--checkpoint", required=True, help="english, multilingual, ...")
     parser.add_argument("--revision", default=HF_REVISION)
     parser.add_argument("--force", action="store_true",
-                        help="re-export even when the graph is already present")
+                        help="re-download and re-export even when a stamp says this revision's "
+                             "checkpoint and graph are already here")
     parser.add_argument("--no-graph", action="store_true",
                         help="fetch only the tokenizer and config, and do not export a graph: "
                              "enough for the tokenizer and sequence fixtures, which cover both "
@@ -103,10 +140,15 @@ def main(argv=None):
     graph_dir = os.path.join(work, "onnx", args.checkpoint)
     graph = os.path.join(graph_dir, "laya.onnx")
 
-    print("downloading %s at %s%s" % (args.checkpoint, args.revision[:12],
-                                      " (tokenizer and config only)" if args.no_graph else ""),
-          flush=True)
-    fetch(args.checkpoint, args.revision, model_dir, with_weights=not args.no_graph)
+    wants_weights = not args.no_graph
+    if not args.force and stamped(model_dir, args.revision, wanted_weights=wants_weights):
+        print("  checkpoint already at %s for %s, not re-downloading"
+              % (os.path.relpath(model_dir, REPO), args.revision[:12]))
+    else:
+        print("downloading %s at %s%s" % (args.checkpoint, args.revision[:12],
+                                          " (tokenizer and config only)" if args.no_graph else ""),
+              flush=True)
+        fetch(args.checkpoint, args.revision, model_dir, with_weights=wants_weights)
     size = sum(os.path.getsize(os.path.join(root, f))
                for root, _dirs, files in os.walk(model_dir) for f in files)
     print("  checkpoint at %s (%.1f MB)" % (os.path.relpath(model_dir, REPO), size / 1e6))
@@ -115,9 +157,10 @@ def main(argv=None):
         print("  --no-graph: no export, as asked")
         return 0
 
-    if os.path.exists(graph) and os.path.getsize(graph) > 0 and not args.force:
-        print("  graph already exported at %s (use --force to redo it)"
-              % os.path.relpath(graph, REPO))
+    if (os.path.exists(graph) and os.path.getsize(graph) > 0 and not args.force
+            and stamped(graph, args.revision)):
+        print("  graph already exported at %s for %s (use --force to redo it)"
+              % (os.path.relpath(graph, REPO), args.revision[:12]))
         return 0
 
     os.makedirs(graph_dir, exist_ok=True)
@@ -137,6 +180,7 @@ def main(argv=None):
                    check=True, cwd=REPO, env=env)
     if not os.path.exists(graph) or os.path.getsize(graph) == 0:
         raise SystemExit("the exporter reported success but wrote no graph at %s" % graph)
+    stamp(graph, args.revision)
     print("  %s (%.1f MB) in %.1f s"
           % (os.path.relpath(graph, REPO), os.path.getsize(graph) / 1e6,
              time.perf_counter() - started))

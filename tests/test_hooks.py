@@ -1697,6 +1697,40 @@ check_raises("router_batch/predict_batch rejects positional hooks", TypeError,
              lambda: r_pos.predict_batch([req("pos2")], 8, 1.0, None, False, [PerCallTrace()]))
 
 
+# --------------------------------------------------------------- docs prose for plain callables
+# `docs/hooks/index.md` and the `laya/hooks.py` module docstring used to say a plain callable
+# goes to `hooks=` alongside `on_predict_start=` / `on_predict_end=`. `_coerce_hooks` has always
+# refused that -- the check at laya/hooks.py:177-182 raises TypeError before the callable is
+# installed, because `hooks=` reads for lifecycle method names. `docs/hooks/api.md`,
+# `docs/hooks/patterns.md`, and `docs/hooks/errors.md` all said the opposite; only the primer
+# and the module docstring drifted. The gate drives the real behaviour and bans the pre-fix
+# wording in both places, so the page cannot regress to the sentence that made callers type
+# `laya.load(..., hooks=[lambda ctx: None])` and hit a TypeError at construction.
+from pathlib import Path as _P  # noqa: E402
+
+_hook_index = _P(__file__).resolve().parents[1] / "docs" / "hooks" / "index.md"
+_hooks_mod = _P(__file__).resolve().parents[1] / "laya" / "hooks.py"
+_index_text = _hook_index.read_text(encoding="utf-8")
+_hooks_text = _hooks_mod.read_text(encoding="utf-8")
+
+check_true("docs_hooks/index.md drops the 'hooks=/on_predict_start=/on_predict_end=' equal-share claim",
+           "Both are passed to `hooks=` / `on_predict_start=` /" not in _index_text)
+check_true("docs_hooks/index.md scopes plain callable to on_predict_start=/on_predict_end=",
+           "Pass a plain callable as `on_predict_start=` or `on_predict_end=`" in _index_text)
+check_true("laya/hooks.py docstring drops 'a hook is either a plain callable'",
+           "A hook is either a plain callable" not in _hooks_text)
+check_true("laya/hooks.py docstring names the single-event parameters as the plain-callable path",
+           "plain callable is only accepted on the single-event" in _hooks_text)
+
+# Live driver: `normalise_hooks` on the two paths.
+check_raises("hooks= rejects a plain callable at construction",
+             TypeError, lambda: normalise_hooks(hooks=[lambda ctx: None]))
+_plain_ok = normalise_hooks(on_predict_start=lambda ctx: None)
+check_true("on_predict_start= accepts a plain callable",
+           len(_plain_ok) == 1 and hasattr(_plain_ok[0], "on_predict_start"),
+           "got %r" % (_plain_ok,))
+
+
 # --------------------------------------------------------------- report
 print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
 for f_ in FAIL:

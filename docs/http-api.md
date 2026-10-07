@@ -258,9 +258,9 @@ rejects the full payload, so `LAYA_JEV_STRICT=1` projects the response onto the 
 answering, on both `/v1/systemone` and `/v1/systemone/batch`:
 
 - the root keeps `model`, `answers` and `usage` only; `routing` is not sent;
-- a `choice` answer keeps `choice`, `probabilities` and `confidence`;
-- a `score` answer keeps `score`, `probabilities`, `confidence` and `legend`;
-- a `noul` answer keeps `noul` only;
+- a `choice` answer keeps `type`, `choice`, `probabilities` and `confidence`;
+- a `score` answer keeps `type`, `score`, `probabilities`, `confidence` and `legend`;
+- a `noul` answer keeps `type` and `noul`;
 - `usage` keeps `input_tokens` and `output_tokens`; the truncation facts and the collapsed-
   options ceiling are not sent.
 

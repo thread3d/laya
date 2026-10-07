@@ -1,9 +1,13 @@
 """TileLang kernels for the Laya (ModernBERT + decision head) encoder.
 
-GPU kernels take 16-bit activations (bf16 by default, fp16 with dtype="float16"), accumulate in fp32.  Row count M is a runtime
-symbol so one compiled kernel serves every batch/sequence bucket; M must be a
-multiple of 16 (the caller pads); out-of-bounds rows are predicated by TileLang.
-Use compile_cpu for an explicit fp32 CPU specialization; the GPU defaults are unchanged.
+GPU kernels take 16-bit activations (bf16 by default, fp16 with dtype="float16"), accumulate in fp32.
+Row count M is a runtime symbol so one compiled kernel serves every batch/sequence bucket: the
+caller in `laya.backends.base.pad_batch` pads the batch dim to the next power of two
+(`bucket_rows`, so a single question stays one row) and the sequence dim to a 16-token bucket
+up to `DYNAMIC_MAX_L` and a 64-token bucket beyond (`bucket_tokens`). M is the flattened
+`rows * tokens`, so the multiple-of-16 comes from the token dim, not the row dim; out-of-bounds
+rows are predicated by TileLang's `T.ceildiv(M, bm)`, so the kernels themselves place no
+constraint on M. Use compile_cpu for an explicit fp32 CPU specialization; the GPU defaults are unchanged.
 """
 import tilelang
 import tilelang.language as T

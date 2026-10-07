@@ -6,6 +6,7 @@ in a temp directory, so nothing is downloaded.
 Run: python tests/test_train.py
 """
 import json
+import math
 import os
 from pathlib import Path
 import random
@@ -45,6 +46,7 @@ from laya.train import (  # noqa: E402
     draw_option_order,
     encode_item,
     encode_state,
+    evaluate_records,
     finetune,
     items_from_rows,
     make_item,
@@ -590,9 +592,13 @@ class EndToEndTests(unittest.TestCase):
 
     def test_laya_train_cli_parser_and_validation(self):
         parser = build_train_parser()
-        args = parser.parse_args(["--data", "train.csv", "--out", "./out", "--label-smoothing", "0.1",
-                                 "--shuffle-options", "--freeze-encoder"])
+        args = parser.parse_args(["--data", "train.csv", "--eval", "eval.csv", "--target-error", "0.05",
+                                  "--min-abstain-n", "5", "--out", "./out", "--label-smoothing", "0.1",
+                                  "--shuffle-options", "--freeze-encoder"])
         self.assertEqual(args.data, "train.csv")
+        self.assertEqual(args.eval_data, "eval.csv")
+        self.assertEqual(args.target_error, 0.05)
+        self.assertEqual(args.min_abstain_n, 5)
         self.assertEqual(args.output_dir, "./out")
         self.assertEqual(args.label_smoothing, 0.1)
         self.assertTrue(args.shuffle_options)
@@ -606,6 +612,63 @@ class EndToEndTests(unittest.TestCase):
         dry_args = parser.parse_args(["--data", "train.csv", "--dry-run"])
         self.assertIsNone(dry_args.output_dir)
         self.assertTrue(dry_args.dry_run)
+
+    def test_train_config_eval_validation(self):
+        cfg = TrainConfig(eval_data="val.csv", target_error=0.15, min_abstain_n=20)
+        cfg.validate()
+
+        with self.assertRaises(ValueError):
+            TrainConfig(target_error=-0.1).validate()
+        with self.assertRaises(ValueError):
+            TrainConfig(target_error=1.5).validate()
+        with self.assertRaises(ValueError):
+            TrainConfig(target_error=True).validate()
+        with self.assertRaises(ValueError):
+            TrainConfig(min_abstain_n=0).validate()
+        with self.assertRaises(ValueError):
+            TrainConfig(min_abstain_n=-5).validate()
+        with self.assertRaises(ValueError):
+            TrainConfig(eval_data=123).validate()
+
+    def test_evaluate_records(self):
+        # Empty records returns default dict
+        empty = evaluate_records([])
+        self.assertEqual(empty["items"], 0)
+        self.assertIsNone(empty["ece"])
+        self.assertIsNone(empty["brier"])
+        self.assertIsNone(empty["brier_top1"])
+
+        # Distinct Brier values for known input:
+        # 3 options, uniform prediction (logits [0, 0, 0] -> p = [1/3, 1/3, 1/3]), one-hot target [1, 0, 0].
+        # Multiclass Brier = (1/3 - 1)^2 + (1/3 - 0)^2 + (1/3 - 0)^2 = 4/9 + 1/9 + 1/9 = 6/9 = 0.6667
+        # Top-1 Confidence Brier = (1/3 - 1)^2 = 4/9 = 0.4444
+        uniform_recs = [(0, [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], 3)]
+        uniform_metrics = evaluate_records(uniform_recs)
+        self.assertEqual(uniform_metrics["brier"], 0.6667)
+        self.assertEqual(uniform_metrics["brier_top1"], 0.4444)
+        self.assertNotEqual(uniform_metrics["brier"], uniform_metrics["brier_top1"])
+
+        # Synthetic records: 10 choice items, 10 score items
+        # Choice: 3 options, logits favor option 0 strongly, gold is option 0
+        choice_recs = [(0, [5.0, -2.0, -2.0], [1.0, 0.0, 0.0], 3) for _ in range(10)]
+        # Score: 5 levels, logits favor level 2, gold is level 2
+        score_recs = [(1, [-2.0, -2.0, 5.0, -2.0, -2.0], [0.0, 0.0, 1.0, 0.0, 0.0], 5) for _ in range(10)]
+        metrics = evaluate_records(choice_recs + score_recs)
+        self.assertEqual(metrics["items"], 20)
+        self.assertEqual(metrics["accuracy"], 1.0)
+        self.assertGreater(metrics["mean_confidence"], 0.9)
+        self.assertIsNotNone(metrics["ece"])
+        self.assertIsNotNone(metrics["brier"])
+        self.assertIsNotNone(metrics["brier_top1"])
+        self.assertIn("choice", metrics["by_type"])
+        self.assertIn("score", metrics["by_type"])
+        self.assertEqual(metrics["by_type"]["choice"]["items"], 10)
+        self.assertEqual(metrics["by_type"]["score"]["items"], 10)
+        self.assertIn("brier_top1", metrics["by_type"]["choice"])
+
+        # Temperature scaling softens confidences
+        warm = evaluate_records(choice_recs, temperature=[5.0, 5.0, 5.0])
+        self.assertLess(warm["mean_confidence"], metrics["by_type"]["choice"]["mean_confidence"])
 
     def test_laya_train_cli_runs_on_csv(self):
         csv_path = self.root / "tickets.csv"
@@ -634,9 +697,31 @@ class EndToEndTests(unittest.TestCase):
         self.assertTrue((out_dir / "model.safetensors").exists())
         self.assertTrue((out_dir / "rl_agent_config.json").exists())
         self.assertTrue((out_dir / "questions.json").exists())
+        self.assertTrue((out_dir / "train_report.json").exists())
+        self.assertTrue((out_dir / "checkpoint_latest" / "train_report.json").exists())
+        self.assertTrue((out_dir / "checkpoint_latest" / "rl_agent_config.json").exists())
+
+        out_cfg = json.loads((out_dir / "rl_agent_config.json").read_text(encoding="utf-8"))
+        latest_cfg = json.loads((out_dir / "checkpoint_latest" / "rl_agent_config.json").read_text(encoding="utf-8"))
+        # Top-level min_confidence ghost field must not be written to checkpoint config
+        self.assertNotIn("min_confidence", out_cfg)
+        # checkpoint_latest must be synchronized with final calibrated out_cfg
+        self.assertEqual(latest_cfg["temperature"], out_cfg["temperature"])
+        self.assertEqual(latest_cfg["training"]["train_report"], out_cfg["training"]["train_report"])
+
         saved_q = json.loads((out_dir / "questions.json").read_text(encoding="utf-8"))
         self.assertIn("label", saved_q)
         self.assertEqual(saved_q["label"]["criteria"], ["billing", "technical"])
+
+        report = json.loads((out_dir / "train_report.json").read_text(encoding="utf-8"))
+        self.assertIsNone(report["eval_source"])
+        self.assertIsNone(report["eval_mode"])
+        self.assertFalse(report["is_held_out"])
+        self.assertEqual(report["eval_items"], 0)
+        self.assertIn("No evaluation performed", report["note"])
+        self.assertIsNone(report["before"])
+        self.assertIsNone(report["after"])
+        self.assertIsNone(report["comparison"])
 
         agent = load(str(out_dir), device="cpu")
         ans = agent.predict("please refund invoice", {"label": {"type": "choice", "instructions": "Classify",
@@ -652,6 +737,228 @@ class EndToEndTests(unittest.TestCase):
             "--dry-run",
         ])
         self.assertEqual(dry_code, 0)
+
+    def test_laya_train_cli_with_eval_file(self):
+        train_path = self.root / "train_eval_test.csv"
+        eval_path = self.root / "eval_eval_test.csv"
+        train_lines = ["text,department"]
+        for s in BILLING_STATES:
+            train_lines.append(f"{s},billing")
+        for s in TECH_STATES:
+            train_lines.append(f"{s},technical")
+        train_path.write_text("\n".join(train_lines), encoding="utf-8")
+
+        # Independent, non-overlapping evaluation items
+        eval_lines = [
+            "text,department",
+            "please dispute my credit card charge,billing",
+            "why was my card debited twice,billing",
+            "the API server returns 502 bad gateway,technical",
+            "the database socket connection timed out,technical",
+        ]
+        eval_path.write_text("\n".join(eval_lines), encoding="utf-8")
+
+        out_dir = self.root / "out_with_eval"
+        code = train_cli_main([
+            "--data", str(train_path),
+            "--eval", str(eval_path),
+            "--base", str(self.root / "base"),
+            "--out", str(out_dir),
+            "--text-column", "text",
+            "--label-column", "department",
+            "--epochs", "1",
+            "--micro-batch", "4",
+            "--grad-accum", "1",
+            "--loss", "soft-ce",
+            "--target-error", "0.08",
+            "--min-abstain-n", "2",
+            "--device", "cpu",
+        ])
+        self.assertEqual(code, 0)
+        self.assertTrue((out_dir / "train_report.json").exists())
+        report = json.loads((out_dir / "train_report.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["eval_source"], str(eval_path))
+        self.assertEqual(report["eval_mode"], "held_out")
+        self.assertTrue(report["is_held_out"])
+        self.assertIn("independent held-out evaluation", report["note"])
+        self.assertEqual(report["eval_items"], 4)
+        self.assertIn("before", report)
+        self.assertIn("after", report)
+        self.assertIn("comparison", report)
+        self.assertIn("brier", report["after"])
+        self.assertIn("brier_top1", report["after"])
+        self.assertIn("delta_brier", report["comparison"])
+        self.assertIn("delta_brier_top1", report["comparison"])
+
+    def test_laya_train_cli_with_overlapping_eval_file(self):
+        train_path = self.root / "train_overlap.csv"
+        eval_path = self.root / "eval_overlap.csv"
+        train_lines = ["text,department"]
+        eval_lines = ["text,department"]
+        for s in BILLING_STATES:
+            train_lines.append(f"{s},billing")
+            eval_lines.append(f"{s},billing")
+        for s in TECH_STATES:
+            train_lines.append(f"{s},technical")
+            eval_lines.append(f"{s},technical")
+        train_path.write_text("\n".join(train_lines), encoding="utf-8")
+        eval_path.write_text("\n".join(eval_lines), encoding="utf-8")
+
+        out_dir = self.root / "out_overlap"
+        code = train_cli_main([
+            "--data", str(train_path),
+            "--eval", str(eval_path),
+            "--base", str(self.root / "base"),
+            "--out", str(out_dir),
+            "--text-column", "text",
+            "--label-column", "department",
+            "--epochs", "1",
+            "--micro-batch", "4",
+            "--grad-accum", "1",
+            "--loss", "soft-ce",
+            "--device", "cpu",
+        ])
+        self.assertEqual(code, 0)
+        report = json.loads((out_dir / "train_report.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["eval_source"], str(eval_path))
+        self.assertEqual(report["eval_mode"], "overlapping_eval")
+        self.assertFalse(report["is_held_out"])
+        self.assertIn("overlap training data", report["note"])
+        self.assertIn("brier", report["after"])
+        self.assertIn("brier_top1", report["after"])
+        self.assertIn("delta_brier", report["comparison"])
+        self.assertIn("delta_brier_top1", report["comparison"])
+
+    def test_laya_train_cli_with_empty_or_skipped_eval_file(self):
+        train_path = self.root / "train_norm.csv"
+        eval_path = self.root / "eval_empty.jsonl"
+        train_lines = ["text,department"]
+        for s in BILLING_STATES:
+            train_lines.append(f"{s},billing")
+        for s in TECH_STATES:
+            train_lines.append(f"{s},technical")
+        train_path.write_text("\n".join(train_lines), encoding="utf-8")
+        eval_path.write_text("", encoding="utf-8")
+
+        out_dir = self.root / "out_empty_eval"
+        code = train_cli_main([
+            "--data", str(train_path),
+            "--eval", str(eval_path),
+            "--base", str(self.root / "base"),
+            "--out", str(out_dir),
+            "--text-column", "text",
+            "--label-column", "department",
+            "--epochs", "1",
+            "--micro-batch", "4",
+            "--grad-accum", "1",
+            "--loss", "soft-ce",
+            "--device", "cpu",
+        ])
+        self.assertEqual(code, 0)
+        report = json.loads((out_dir / "train_report.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["eval_source"], str(eval_path))
+        self.assertIsNone(report["eval_mode"])
+        self.assertFalse(report["is_held_out"])
+        self.assertEqual(report["eval_items"], 0)
+        self.assertIsNone(report["before"])
+        self.assertIsNone(report["after"])
+        self.assertIn("0 usable items", report["note"])
+
+    def test_overlap_detection_across_gold_and_expected_formats(self):
+        # Training row uses 'gold', eval row uses 'expected'
+        train_file = self.root / "train_gold.jsonl"
+        eval_file = self.root / "eval_expected.jsonl"
+        q_def = {"type": "choice", "instructions": "Classify", "criteria": ["billing", "technical"]}
+        train_row = {"state": "please refund payment", "questions": {"label": q_def}, "gold": {"label": {"probabilities": {"billing": 1.0}}}}
+        eval_row = {"state": "please refund payment", "questions": {"label": q_def}, "expected": {"label": "billing"}}
+        train_file.write_text(json.dumps(train_row) + "\n", encoding="utf-8")
+        eval_file.write_text(json.dumps(eval_row) + "\n", encoding="utf-8")
+
+        out_dir = self.root / "out_gold_expected_overlap"
+        cfg = TrainConfig(epochs=1, micro_batch=1, grad_accum=1, eval_data=str(eval_file))
+        finetune(str(train_file), str(self.root / "base"), str(out_dir), cfg, device="cpu")
+        report = json.loads((out_dir / "train_report.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["eval_mode"], "overlapping_eval")
+        self.assertFalse(report["is_held_out"])
+        self.assertIn("overlap training data", report["note"])
+
+    def test_overlap_detection_with_different_targets(self):
+        # Training and eval have identical input text and question, but different target label
+        train_file = self.root / "train_diff_tgt.jsonl"
+        eval_file = self.root / "eval_diff_tgt.jsonl"
+        q_def = {"type": "choice", "instructions": "Classify", "criteria": ["billing", "technical"]}
+        train_row = {"state": "please refund payment", "questions": {"label": q_def}, "expected": {"label": "billing"}}
+        eval_row = {"state": "please refund payment", "questions": {"label": q_def}, "expected": {"label": "technical"}}
+        train_file.write_text(json.dumps(train_row) + "\n", encoding="utf-8")
+        eval_file.write_text(json.dumps(eval_row) + "\n", encoding="utf-8")
+
+        out_dir = self.root / "out_diff_tgt_overlap"
+        cfg = TrainConfig(epochs=1, micro_batch=1, grad_accum=1, eval_data=str(eval_file))
+        finetune(str(train_file), str(self.root / "base"), str(out_dir), cfg, device="cpu")
+        report = json.loads((out_dir / "train_report.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["eval_mode"], "overlapping_eval")
+        self.assertFalse(report["is_held_out"])
+        self.assertIn("overlap training data", report["note"])
+
+    def test_overlap_detection_with_calibration_slice(self):
+        # Training set has multiple items split into train and calib.
+        # Eval set only contains an item that ended up in the calibration slice, not train_items.
+        train_file = self.root / "train_calib_split.jsonl"
+        eval_file = self.root / "eval_calib_split.jsonl"
+        q_def = {"type": "choice", "instructions": "Classify", "criteria": ["billing", "technical"]}
+
+        states = ["refund please", "charged twice", "crash app", "screen error"]
+        rows = [
+            {"state": s, "questions": {"label": q_def}, "expected": {"label": "billing" if "refund" in s or "charged" in s else "technical"}}
+            for s in states
+        ]
+        train_file.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+
+        import random
+        order = list(range(len(rows)))
+        random.Random(42).shuffle(order)
+        calib_row = rows[order[0]]  # in calib set, not in train set
+        eval_file.write_text(json.dumps(calib_row) + "\n", encoding="utf-8")
+
+        out_dir = self.root / "out_calib_overlap"
+        cfg = TrainConfig(epochs=1, micro_batch=1, grad_accum=1, calib_frac=0.5, calib_max=2, calib_seed=42, eval_data=str(eval_file))
+        finetune(str(train_file), str(self.root / "base"), str(out_dir), cfg, device="cpu")
+        report = json.loads((out_dir / "train_report.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["eval_mode"], "overlapping_eval")
+        self.assertFalse(report["is_held_out"])
+        self.assertIn("overlap calibration data", report["note"])
+
+    def test_laya_train_in_sample_calibration_mode(self):
+        csv_path = self.root / "calib_tickets.csv"
+        lines = ["text,department"]
+        for s in BILLING_STATES:
+            lines.append(f"{s},billing")
+        for s in TECH_STATES:
+            lines.append(f"{s},technical")
+        csv_path.write_text("\n".join(lines), encoding="utf-8")
+
+        out_dir = self.root / "out_in_sample"
+        cfg = TrainConfig(
+            text_column="text",
+            label_column="department",
+            epochs=1,
+            micro_batch=4,
+            grad_accum=1,
+            calib_frac=0.2,
+            calib_max=10,
+            target_error=0.10,
+            min_abstain_n=2,
+        )
+        finetune(str(csv_path), str(self.root / "base"), str(out_dir), cfg, device="cpu")
+        report = json.loads((out_dir / "train_report.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["eval_source"], "calibration_slice")
+        self.assertEqual(report["eval_mode"], "in_sample_calibration")
+        self.assertFalse(report["is_held_out"])
+        self.assertIn("in-sample calibration fit", report["note"])
+        self.assertGreater(report["eval_items"], 0)
+        self.assertIn("before", report)
+        self.assertIn("after", report)
+        self.assertIn("comparison", report)
 
 
 class CalibrationReportTests(unittest.TestCase):
@@ -707,6 +1014,81 @@ class CalibrationReportTests(unittest.TestCase):
         self.assertTrue(any(re.match(r"laya\.train: \w+ calibration: not fitted", m) for m in messages), messages)
         self.assertEqual(saved["training"]["laya_train_calibration"], report["calibration"])
         self.assertEqual(sum(e["items"] for e in report["calibration"].values()), report["calibration_items"])
+
+
+class PriorCollapseTests(unittest.TestCase):
+    """#963: a collapsed head is chance-level and silent unless finetune warns."""
+
+    @staticmethod
+    def rows_of(logits, target, n=8, qtype=None, k=None):
+        qtype = QTYPES["choice"] if qtype is None else qtype
+        k = len(logits) if k is None else k
+        return [(qtype, list(logits), list(target), k) for _ in range(n)]
+
+    def test_constant_logits_match_the_prior_and_warn(self):
+        from laya.train import COLLAPSE_LOGIT_RANGE, collapse_stats, prior_collapse_message
+
+        # Tiny 4-way set: every row is the same logit, so the predicted distribution is the
+        # uniform prior. This is the measured failure in #963 (range 0.01, CE at ln 4).
+        records = self.rows_of([0.002, 0.0, -0.001, 0.001], [1.0, 0.0, 0.0, 0.0])
+        stats = collapse_stats(records)
+        self.assertIsNotNone(stats)
+        self.assertLess(stats["mean_logit_range"], COLLAPSE_LOGIT_RANGE)
+        self.assertAlmostEqual(stats["mean_ce"], math.log(4), places=2)
+        msg = prior_collapse_message(records)
+        self.assertIsNotNone(msg)
+        self.assertIn("collapsed to the class prior", msg)
+        self.assertIn("more epochs", msg)
+        self.assertIn("more data", msg)
+        self.assertIn("another seed", msg)
+
+    def test_peaked_logits_on_a_learnable_set_do_not_warn(self):
+        from laya.train import prior_collapse_message
+
+        records = self.rows_of([5.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0])
+        self.assertIsNone(prior_collapse_message(records))
+        self.assertIsNone(prior_collapse_message([]))
+        self.assertIsNone(prior_collapse_message(self.rows_of([0.0], [1.0], k=1)))
+
+    def test_ce_stuck_at_ln_k_warns_even_when_logit_range_is_not_tiny(self):
+        from laya.train import COLLAPSE_LOGIT_RANGE, collapse_stats, prior_collapse_message
+
+        # Softmax is still near-uniform, so CE sits on ln K, but the within-row range is
+        # above the constant-logit cutoff -- the other #963 trigger.
+        records = self.rows_of([0.2, 0.05, -0.05, -0.2], [0.25, 0.25, 0.25, 0.25])
+        stats = collapse_stats(records)
+        self.assertGreaterEqual(stats["mean_logit_range"], COLLAPSE_LOGIT_RANGE)
+        self.assertAlmostEqual(stats["mean_ce"], stats["mean_ln_k"], delta=0.03)
+        msg = prior_collapse_message(records)
+        self.assertIsNotNone(msg)
+        self.assertIn("cross-entropy", msg)
+
+    def test_finetune_emits_the_collapse_warning_only_when_logits_collapse(self):
+        from laya.train import prior_collapse_message
+
+        collapsed = self.rows_of([0.01, 0.0, -0.01], [1.0, 0.0, 0.0], n=12)
+        peaked = self.rows_of([4.0, 0.0, 0.0], [1.0, 0.0, 0.0], n=12)
+        self.assertIsNotNone(prior_collapse_message(collapsed))
+        self.assertIsNone(prior_collapse_message(peaked))
+
+        def run(records):
+            with tempfile.TemporaryDirectory() as d:
+                root = Path(d)
+                make_checkpoint(root / "base", make_tokenizer())
+                config = TrainConfig(epochs=1, micro_batch=8, grad_accum=1, calib_frac=0.2, log_every=0)
+                with patch("huggingface_hub.snapshot_download",
+                           side_effect=AssertionError("unexpected download")), \
+                        patch("laya.train.read_jsonl", return_value=rows(2)), \
+                        patch("laya.train.calibration_records", return_value=records), \
+                        warnings.catch_warnings(record=True) as caught:
+                    warnings.simplefilter("always")
+                    finetune("rows.jsonl", str(root / "base"), str(root / "out"), config, device="cpu")
+            return [str(w.message) for w in caught if issubclass(w.category, RuntimeWarning)]
+
+        collapsed_msgs = run(collapsed)
+        self.assertTrue(any("collapsed to the class prior" in m for m in collapsed_msgs), collapsed_msgs)
+        peaked_msgs = run(peaked)
+        self.assertFalse(any("collapsed to the class prior" in m for m in peaked_msgs), peaked_msgs)
 
 
 if __name__ == "__main__":

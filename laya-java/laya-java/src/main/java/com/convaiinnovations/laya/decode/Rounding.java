@@ -35,7 +35,14 @@ public final class Rounding {
             // Python returns NaN / inf unchanged rather than raising.
             return value;
         }
-        return new BigDecimal(value).setScale(4, RoundingMode.HALF_EVEN).doubleValue();
+        double rounded = new BigDecimal(value).setScale(4, RoundingMode.HALF_EVEN).doubleValue();
+        // BigDecimal has no signed zero, so -1e-5 came back as +0.0 where CPython's round gives
+        // -0.0. The class claims exact parity, and a record's equals() distinguishes the two, so
+        // a serialized-answer comparison would disagree. Restored from the operand's sign.
+        if (rounded == 0.0 && (Double.doubleToRawLongBits(value) & Long.MIN_VALUE) != 0) {
+            return -0.0;
+        }
+        return rounded;
     }
 
     /**

@@ -9,6 +9,7 @@ import inspect
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -2842,6 +2843,55 @@ def test_http_api_page_documents_exactly_the_health_fields():
                 sorted(sample["cpu_fallbacks"][name]), sorted(counters)))
 
 
+def test_security_page_health_sample_matches_handler_shape():
+    """docs/security.md's `/health` snippet has to be what the handler really answers.
+
+    #811 pinned docs/http-api.md to `health()`'s own `return` dict. The same payload was
+    quoted on docs/security.md as a four-key line ending in `"device":"auto"`; the handler
+    returns seven keys, and `"auto"` is what `LAYA_DEVICE` defaults to, not a value the
+    handler emits (see the docstring on `test_http_api_page_documents_exactly_the_health_fields`).
+    A reader following that snippet's shape -- to check an SDK, a shell probe, or the shape
+    their own healthcheck parses -- would find their code silently ignores three fields.
+
+    The page's purpose here is to show the checkpoint revision, not the whole payload, so the
+    fix is a `jq` filter rather than a longer literal. The gate accepts either: a filtered
+    curl line, or a raw sample that carries exactly the seven keys the handler returns.
+    """
+    health, returned = _health_return_keys()
+    assert returned, "health() returns no literal keys; retarget this"
+
+    page = open(os.path.join(ROOT, "docs", "security.md"), encoding="utf-8").read()
+
+    # The pre-fix wording, banned verbatim.
+    assert '"status":"ok","loaded":["english"],"revisions":{"english":"55cf4c4e…"},' \
+           '"device":"auto"' not in page, (
+        "docs/security.md restored the pre-fix 4-key /health sample; either filter the "
+        "curl line as the fix does, or list every key health() returns")
+
+    # Find the ```bash code block that runs curl against /health.
+    blocks = re.findall(r"```bash\n(.*?)\n```", page, re.DOTALL)
+    health_blocks = [b for b in blocks if "curl -s localhost:8000/health" in b]
+    assert len(health_blocks) == 1, (
+        "expected exactly one /health curl snippet on docs/security.md, found %d"
+        % len(health_blocks))
+    block = health_blocks[0]
+
+    # Either the curl is filtered (the current fix), or the raw sample enumerates the
+    # handler's keys. A comment-only line without either is a stale quote.
+    filtered = "| jq" in block or "| python" in block or "| grep" in block
+    if filtered:
+        assert re.search(r"#\s*\{", block), (
+            "docs/security.md filters /health with a pipe but shows no example of the "
+            "filtered shape; the block is not useful to a reader")
+    else:
+        # No filter: the raw sample must contain every key health() returns.
+        sample_line = next((ln for ln in block.splitlines() if ln.strip().startswith("#")), "")
+        payload = json.loads(sample_line.lstrip("# ").strip())
+        assert sorted(payload) == sorted(returned), (
+            "docs/security.md's unfiltered /health sample says %s, health() returns %s"
+            % (sorted(payload), sorted(returned)))
+
+
 def _decision_response_site(rel):
     """What one Agent builds the decision response out of, read from its own literals.
 
@@ -3288,3 +3338,166 @@ def test_idle_unload_retries_failure_and_stops_at_shutdown(monkeypatch):
     router.loaded = ["english"]
     router.unloaded.clear()
     assert not router.unloaded.wait(0.15)
+
+
+# -------------------------------- docs/typescript-sdk.md must list the keys the /health handler returns
+# The SDK page's contract sentence used to say "public `/health` returns `status`, `loaded`,
+# and `device`" while `laya/serve.py`'s authorized branch returns seven keys -- `status`,
+# `loaded`, `revisions`, `device`, `device_is_preference`, `checkpoint_devices`, and
+# `cpu_fallbacks` -- and the unauthenticated branch returns only `LIVENESS_ONLY = {"status":
+# "ok"}`. Two docs (#811 gated `docs/http-api.md`, and README:103 advertises the CPU-fallback
+# reporting) describe the full shape, so the SDK page contradicted them. The gate AST-parses the
+# handler's returns so the doc's key set has to match the code's -- any new /health field added
+# to the return dict must be named on this page too, or the test fails with the exact mismatch.
+TS_SDK_PAGE = os.path.join(ROOT, "docs", "typescript-sdk.md")
+TS_SDK_OLD_CLAIM = (
+    "Laya's public `/health` returns `status`, `loaded`, and `device`. "
+    "Prediction never probes health first."
+)
+
+
+def _serve_health_return_keys():
+    """Every literal dict key the `health` handler returns across all branches.
+
+    `LIVENESS_ONLY` is a module-level dict, so the `return LIVENESS_ONLY` branch resolves via
+    the module scope; the authorized `return {...}` branch contributes its own keys directly.
+    """
+    with open(os.path.join(ROOT, "laya", "serve.py"), encoding="utf-8") as handle:
+        tree = ast.parse(handle.read(), filename="laya/serve.py")
+    module_dicts = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    module_dicts[target.id] = {
+                        k.value for k in node.value.keys if isinstance(k, ast.Constant)
+                    }
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "health":
+            keys = set()
+            for ret in ast.walk(node):
+                if not isinstance(ret, ast.Return) or ret.value is None:
+                    continue
+                value = ret.value
+                if isinstance(value, ast.Dict):
+                    keys.update(k.value for k in value.keys if isinstance(k, ast.Constant))
+                elif isinstance(value, ast.Name) and value.id in module_dicts:
+                    keys.update(module_dicts[value.id])
+            return keys
+    raise AssertionError("no `health` handler found in laya/serve.py -- gate is checking a moved symbol")
+
+
+def _ts_sdk_health_claim_keys():
+    r"""The backticked key names in the sentence that opens 'public `/health` returns'.
+
+    The claim spans two lines on this page, so read from "public \`/health\` returns" up to the
+    sentence-ending "Prediction never probes health first" before collecting backticked names;
+    that stops the scan from picking up later backticked references.
+    """
+    with open(TS_SDK_PAGE, encoding="utf-8") as handle:
+        page = handle.read()
+    start = page.find("public `/health` returns")
+    assert start != -1, "the /health claim was removed from docs/typescript-sdk.md -- gate has nothing to read"
+    tail = page[start:]
+    end = tail.find("Prediction never probes health first")
+    assert end != -1, "the /health claim's tail sentence is gone -- the gate cannot bound its scan"
+    sentence = tail[:end]
+    return set(re.findall(r"`([A-Za-z_][A-Za-z_0-9]*)`", sentence)) - {"health"}
+
+
+def test_ts_sdk_health_claim_matches_the_handler():
+    """The SDK page must name exactly the keys `laya/serve.py`'s `health` handler returns."""
+    assert "returns `status`, `loaded`, and `device`" in TS_SDK_OLD_CLAIM, (
+        "the pre-fix literal must itself carry the wrong key set, otherwise this ban is vacuous")
+    # Sanity-check the AST extraction: the shipped code returns seven keys on the authorized
+    # branch, so a future PR that reshapes /health without updating this page fails below.
+    handler_keys = _serve_health_return_keys()
+    assert "status" in handler_keys, "the LIVENESS_ONLY short-circuit disappeared; the AST reader missed it"
+    for key in ("loaded", "revisions", "device", "device_is_preference",
+                "checkpoint_devices", "cpu_fallbacks"):
+        assert key in handler_keys, "%s is not in the /health handler's return set -- did the " \
+                                    "shape change without this test being updated?" % key
+    documented = _ts_sdk_health_claim_keys()
+    assert documented == handler_keys, (
+        "docs/typescript-sdk.md's /health sentence names %s, but `laya/serve.py`'s `health` "
+        "handler returns %s. Any drift here misleads a caller who reads only the SDK page." % (
+            sorted(documented), sorted(handler_keys)))
+
+
+def test_ts_sdk_health_claim_drops_the_three_key_version():
+    """Ban the pre-fix wording directly so a plain revert fails with an explicit message.
+
+    Independent of the set-equality test above; a numeric or word change in the handler still
+    trips the AST path, but a straight "put the sentence back the way it was" fails here with
+    a pointer to the actual shape.
+    """
+    with open(TS_SDK_PAGE, encoding="utf-8") as handle:
+        page = handle.read()
+    banned = "returns `status`, `loaded`, and `device`"
+    assert banned not in page, (
+        "docs/typescript-sdk.md again says `/health` returns only `status`, `loaded`, and "
+        "`device`. `laya/serve.py`'s authorized branch has seven keys and the unauthenticated "
+        "branch has one; if either shape has since changed, update this ban's literal too.")
+
+
+# `re` is not imported at the top of this file; import here so the helper above can use it
+# without changing the module's existing import order.
+import re  # noqa: E402
+def test_jev_strict_projection_page_names_the_projected_keys():
+    """docs/http-api.md's four strict bullets must be the key sets `_project_jev_strict` returns.
+
+    The page is the second copy of the contract, after the handler's docstring. Both used to
+    claim ``noul = `noul` only``, but the projection emits ``{"type": "noul", "noul": ...}``,
+    and the pre-existing ``test_jev_strict_projects_the_full_payload`` asserts that two-key
+    shape verbatim -- so the prose and the pinned test disagreed, and a client that validated
+    the "no fields other than `noul`" sentence rejected every strict noul answer the flag
+    exists to sanitize.
+
+    The gate calls the real projection on a fixture that carries all three answer types plus
+    the additions a strict client must not see, then reads the four bullet lines from
+    `docs/http-api.md` and asserts each bullet's backticked key set equals the corresponding
+    projected key set. The pre-fix wording is banned as a direct substring so the gate fails
+    if the page reverts.
+    """
+    import re
+    from pathlib import Path
+
+    from laya.serve import _project_jev_strict
+
+    fixture = {
+        "model": "laya-rl-agent",
+        "answers": {
+            "queue": {"type": "choice", "choice": "billing",
+                      "probabilities": {"billing": 0.95, "tech": 0.05},
+                      "confidence": 0.80, "action": "answer",
+                      "answer_confidence": 0.75},
+            "urgency": {"type": "score", "score": 1.70, "confidence": 0.19,
+                        "probabilities": {"0": 0.02, "1": 0.65, "2": 0.33},
+                        "legend": {"0": "calm", "1": "firm", "2": "angry"},
+                        "action": "answer"},
+            "threat": {"type": "noul", "noul": 0.9148, "confidence": 0.85,
+                       "answer_confidence": 0.70, "action": "answer"},
+        },
+        "usage": {"input_tokens": 83, "output_tokens": 0,
+                  "windows": 1, "collapsed_options": 0},
+        "routing": {"model": "typed-decisions", "reason": "typed workflow"},
+    }
+    projected = _project_jev_strict(fixture)
+
+    page = (Path(__file__).resolve().parents[1] / "docs" / "http-api.md").read_text(encoding="utf-8")
+
+    def bullet_keys(label):
+        for line in page.splitlines():
+            if line.startswith("- a `%s` answer keeps" % label):
+                back = line.split("keeps", 1)[1]
+                return set(re.findall(r"`([A-Za-z_][A-Za-z_0-9]*)`", back))
+        raise AssertionError("bullet for %r not found" % label)
+
+    assert set(projected["answers"]["queue"]) == bullet_keys("choice"), \
+        "doc says %r, handler emits %r" % (sorted(bullet_keys("choice")),
+                                            sorted(projected["answers"]["queue"]))
+    assert set(projected["answers"]["urgency"]) == bullet_keys("score")
+    assert set(projected["answers"]["threat"]) == bullet_keys("noul")
+
+    # The noul bullet must not shrink the discriminator away.
+    assert "noul only" not in page, "pre-fix 'noul only' wording is still on the page"

@@ -1,5 +1,6 @@
 package com.convaiinnovations.laya.json;
 
+import com.convaiinnovations.laya.lang.UnicodeTables;
 import java.math.BigInteger;
 import java.util.List;
 import java.util.Locale;
@@ -47,7 +48,26 @@ public final class PythonJson {
         return out.toString();
     }
 
+    /**
+     * How deep {@code dumps} will descend.
+     *
+     * <p>The identity set closed the CYCLIC case; a deep ACYCLIC caller-supplied state still
+     * threw {@link StackOverflowError} -- the same {@link Error} the cycle fix exists to stop.
+     */
+    private static final int MAX_DEPTH = 512;
+
     private static void write(StringBuilder out, Object value, Set<Object> open) {
+        write(out, value, open, 0);
+    }
+
+    private static void write(StringBuilder out, Object value, Set<Object> open, int depth) {
+        if (depth > MAX_DEPTH) {
+            throw new Json.JsonException("value nested deeper than " + MAX_DEPTH + " levels");
+        }
+        writeValue(out, value, open, depth);
+    }
+
+    private static void writeValue(StringBuilder out, Object value, Set<Object> open, int depth) {
         if (value == null) {
             out.append("null");
         } else if (value instanceof String) {
@@ -64,11 +84,11 @@ public final class PythonJson {
             out.append(value.toString());
         } else if (value instanceof Map) {
             enter(open, value);
-            writeObject(out, (Map<?, ?>) value, open);
+            writeObject(out, (Map<?, ?>) value, open, depth);
             open.remove(value);
         } else if (value instanceof List) {
             enter(open, value);
-            writeArray(out, (List<?>) value, open);
+            writeArray(out, (List<?>) value, open, depth);
             open.remove(value);
         } else {
             throw new Json.JsonException(
@@ -85,7 +105,8 @@ public final class PythonJson {
         }
     }
 
-    private static void writeObject(StringBuilder out, Map<?, ?> map, Set<Object> open) {
+    private static void writeObject(StringBuilder out, Map<?, ?> map, Set<Object> open,
+            int depth) {
         out.append('{');
         boolean first = true;
         for (Map.Entry<?, ?> entry : map.entrySet()) {
@@ -95,7 +116,7 @@ public final class PythonJson {
             first = false;
             writeString(out, key(entry.getKey()));
             out.append(": ");
-            write(out, entry.getValue(), open);
+            write(out, entry.getValue(), open, depth + 1);
         }
         out.append('}');
     }
@@ -133,13 +154,14 @@ public final class PythonJson {
                 + key.getClass().getName());
     }
 
-    private static void writeArray(StringBuilder out, List<?> list, Set<Object> open) {
+    private static void writeArray(StringBuilder out, List<?> list, Set<Object> open,
+            int depth) {
         out.append('[');
         for (int i = 0; i < list.size(); i++) {
             if (i > 0) {
                 out.append(", ");
             }
-            write(out, list.get(i), open);
+            write(out, list.get(i), open, depth + 1);
         }
         out.append(']');
     }
@@ -188,6 +210,89 @@ public final class PythonJson {
      * JSON, and is deliberately what CPython does by default, so a state carrying one produces the
      * same tokens here as there rather than a different error.
      */
+    /**
+     * CPython's {@code repr} for a string, which is what a {@code %r} in a message interpolates.
+     *
+     * <p>Needed because the router's reason strings are built with {@code %r} and one of them
+     * interpolates the mixed segment -- a slice of the caller's own text. So this sees arbitrary
+     * input, not a short language code, and every rule below is reachable from a pasted ticket.
+     *
+     * <p>The rules, in CPython's order:
+     *
+     * <ul>
+     *   <li>The quote is a single quote, unless the string holds a single quote and no double
+     *       quote, in which case the whole thing is double-quoted and nothing needs escaping.
+     *       A string holding both is single-quoted with its single quotes escaped.
+     *   <li>A backslash and the chosen quote are backslash-escaped; newline, carriage return and
+     *       tab get their letter escapes.
+     *   <li>Anything {@link UnicodeTables#isPrintable} calls unprintable becomes a numeric escape
+     *       -- backslash-x and two hex digits below U+0100, backslash-u and four below U+10000,
+     *       backslash-U and eight above it -- in LOWERCASE hex. (Spelled out rather than shown:
+     *       a backslash-u sequence in a Java comment is translated before the file is lexed, so
+     *       writing the escape here would stop this file compiling.)
+     *   <li>Everything else passes through as itself, including every non-ASCII printable
+     *       character: CPython 3 does not escape those.
+     * </ul>
+     *
+     * <p>That last pair is where an ASCII-only escape check goes wrong, and it is not a corner:
+     * U+00A0 NO-BREAK SPACE is unprintable to CPython and arrives in pasted text constantly, so
+     * stopping at U+007F would write a raw control character into an API response.
+     */
+    public static String repr(String value) {
+        if (value == null) {
+            return "None";
+        }
+        char quote = value.indexOf('\'') >= 0 && value.indexOf('"') < 0 ? '"' : '\'';
+        StringBuilder out = new StringBuilder(value.length() + 2);
+        out.append(quote);
+        int i = 0;
+        while (i < value.length()) {
+            int cp = value.codePointAt(i);
+            i += Character.charCount(cp);
+            if (cp == quote || cp == '\\') {
+                out.append('\\').appendCodePoint(cp);
+            } else if (cp == '\n') {
+                out.append("\\n");
+            } else if (cp == '\r') {
+                out.append("\\r");
+            } else if (cp == '\t') {
+                out.append("\\t");
+            } else if (UnicodeTables.isPrintable(cp)) {
+                out.appendCodePoint(cp);
+            } else if (cp < 0x100) {
+                out.append(String.format(Locale.ROOT, "\\x%02x", cp));
+            } else if (cp < 0x10000) {
+                out.append(String.format(Locale.ROOT, "\\u%04x", cp));
+            } else {
+                out.append(String.format(Locale.ROOT, "\\U%08x", cp));
+            }
+        }
+        return out.append(quote).toString();
+    }
+
+    /**
+     * CPython's {@code %.0f}: the nearest integer, halves to EVEN.
+     *
+     * <p>{@code String.format("%.0f", v)} rounds halves UP, so the two disagree on every halfway
+     * value -- {@code 12.5} is {@code "12"} in CPython and {@code "13"} in Java. The router
+     * reports a percentage of letters with this, and a share of one in eight letters is exactly
+     * 12.5, so the disagreement is reachable rather than theoretical.
+     */
+    public static String percent0(double fraction) {
+        double scaled = 100.0 * fraction;
+        if (Double.isNaN(scaled)) {
+            return "nan";
+        }
+        if (Double.isInfinite(scaled)) {
+            // CPython's %-formatting spells these in lower case, which is NOT how `repr` spells
+            // them: `'%.0f' % float('nan')` is "nan" where `repr` gives "NaN". Latent today --
+            // both call sites are finite by construction -- and wrong the moment one is not.
+            return scaled > 0 ? "inf" : "-inf";
+        }
+        // Math.rint is IEEE ties-to-even, which is the rule; a long keeps a share above 2^31.
+        return Long.toString((long) Math.rint(scaled));
+    }
+
     public static String repr(double value) {
         if (Double.isNaN(value)) {
             return "NaN";

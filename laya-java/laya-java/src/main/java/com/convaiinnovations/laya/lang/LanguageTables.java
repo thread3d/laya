@@ -28,8 +28,22 @@ public final class LanguageTables {
     private LanguageTables() {
     }
 
-    /** One named non-Latin script and the code-point ranges that belong to it. */
+    /**
+     * One named non-Latin script and the code-point ranges that belong to it.
+     *
+     * <p>The array is copied in and out, so a table a caller holds cannot be edited under
+     * detection. Nothing on the hot path reads it -- {@link #lookupScript} does -- so the copy
+     * costs nothing that matters.
+     */
     public record Script(String name, int[] ranges) {
+        public Script {
+            ranges = ranges.clone();
+        }
+
+        @Override
+        public int[] ranges() {
+            return ranges.clone();
+        }
     }
 
     /**
@@ -62,6 +76,97 @@ public final class LanguageTables {
             new Script("hangul", new int[] {4352, 4607, 12592, 12687, 44032, 55215}),
             new Script("kana", new int[] {12352, 12447, 12448, 12543, 12784, 12799}),
             new Script("han", new int[] {13312, 19903, 19968, 40959, 63744, 64255}));
+
+    /**
+     * {@link #SCRIPT_RANGES} flattened and sorted by code point, as inclusive
+     * [lo, hi] pairs, with {@link #SCRIPT_LOOKUP_NAMES} naming each one.
+     *
+     * <p>Detection resolves a script with a binary search over this instead of
+     * walking the 25 scripts in order the way the reference does. The two agree
+     * exactly because no two ranges overlap -- the generator refuses to emit this
+     * table otherwise, since the first-match rule would then be unrepresentable in a
+     * sorted table -- and a test sweeps every code point to prove it.
+     */
+    private static final int[] SCRIPT_LOOKUP = {
+            880, 1023, 1024, 1327, 1328, 1423, 1424, 1535, 1536, 1791, 1872, 1919, 2208, 2303,
+            2304, 2431, 2432, 2559, 2560, 2687, 2688, 2815, 2816, 2943, 2944, 3071, 3072, 3199,
+            3200, 3327, 3328, 3455, 3456, 3583, 3584, 3711, 3712, 3839, 3840, 4095, 4096, 4255,
+            4256, 4351, 4352, 4607, 4608, 4991, 6016, 6143, 7936, 8191, 11744, 11775, 12352, 12447,
+            12448, 12543, 12592, 12687, 12784, 12799, 13312, 19903, 19968, 40959, 42560, 42655,
+            43232, 43263, 44032, 55215, 63744, 64255, 64336, 65023, 65136, 65279
+    };
+
+    /**
+     * The script each pair of {@link #SCRIPT_LOOKUP} belongs to, as an index into
+     * {@link #SCRIPT_NAMES}.
+     *
+     * <p>An index rather than the name, so that counting letters by script needs no
+     * boxing, no hashing and no string comparison per character: the tally is an
+     * {@code int[]} and the names are attached once at the end. The reference does a
+     * dictionary update per non-Latin letter instead.
+     */
+    private static final int[] SCRIPT_LOOKUP_INDEX = {
+            0, 1, 2, 3, 4, 4, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 22, 20, 21, 0,
+            1, 23, 23, 22, 23, 24, 24, 1, 5, 22, 24, 4, 4
+    };
+
+    /** The named scripts, in the order the reference declares them. */
+    private static final String[] SCRIPT_NAMES = {
+            "greek", "cyrillic", "armenian", "hebrew", "arabic", "devanagari", "bengali", "gurmukhi",
+            "gujarati", "oriya", "tamil", "telugu", "kannada", "malayalam", "sinhala", "thai", "lao",
+            "tibetan", "myanmar", "georgian", "ethiopic", "khmer", "hangul", "kana", "han"
+    };
+
+    /** How many named scripts there are. */
+    public static final int SCRIPT_COUNT = SCRIPT_NAMES.length;
+
+    /**
+     * The largest code point any named script claims.
+     *
+     * <p>An early exit worth having: every letter above it -- the CJK extension
+     * planes, the kana supplement, and every astral script -- is counted under
+     * "other", and that is the text most likely to be long.
+     */
+    public static final int SCRIPT_MAX_CODE_POINT = 0xFEFF;
+
+    /**
+     * The named script claiming {@code codePoint}, or null when none does.
+     *
+     * <p>Equivalent to scanning {@link #SCRIPT_RANGES} in order and taking the first
+     * match, in O(log n) comparisons rather than O(n) range tests.
+     */
+    public static String lookupScript(int codePoint) {
+        int index = lookupScriptIndex(codePoint);
+        return index < 0 ? null : SCRIPT_NAMES[index];
+    }
+
+    /**
+     * The index into {@link #SCRIPT_NAMES} of the script claiming {@code codePoint},
+     * or -1 when none does.
+     */
+    public static int lookupScriptIndex(int codePoint) {
+        if (codePoint > SCRIPT_MAX_CODE_POINT) {
+            return -1;
+        }
+        int low = 0;
+        int high = SCRIPT_LOOKUP_INDEX.length - 1;
+        while (low <= high) {
+            int mid = (low + high) >>> 1;
+            if (codePoint < SCRIPT_LOOKUP[mid * 2]) {
+                high = mid - 1;
+            } else if (codePoint > SCRIPT_LOOKUP[mid * 2 + 1]) {
+                low = mid + 1;
+            } else {
+                return SCRIPT_LOOKUP_INDEX[mid];
+            }
+        }
+        return -1;
+    }
+
+    /** The name of the script at {@code index}. */
+    public static String scriptName(int index) {
+        return SCRIPT_NAMES[index];
+    }
 
     /**
      * Function words per language, in the order Python declares them.

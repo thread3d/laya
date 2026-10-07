@@ -1,8 +1,12 @@
 package com.convaiinnovations.laya.json;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.convaiinnovations.laya.Fixtures;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
@@ -120,6 +124,92 @@ final class PythonJsonTest {
         map.put("self", map);
         org.junit.jupiter.api.Assertions.assertThrows(Json.JsonException.class,
                 () -> PythonJson.dumps(map));
+    }
+
+    @Test
+    @DisplayName("repr spells every recorded string the way CPython does")
+    void reprMatchesCpython() {
+        @SuppressWarnings("unchecked")
+        List<Object> cases = (List<Object>) Fixtures.load("python_json.json").get("repr_strings");
+        int escaped = 0;
+        int doubleQuoted = 0;
+        for (Object entry : cases) {
+            @SuppressWarnings("unchecked")
+            List<Object> pair = (List<Object>) entry;
+            String input = (String) pair.get(0);
+            String expected = (String) pair.get(1);
+            assertEquals(expected, PythonJson.repr(input),
+                    "repr of " + expected + " (" + input.length() + " chars)");
+            if (expected.indexOf('\\') >= 0) {
+                escaped++;
+            }
+            if (expected.startsWith("\"")) {
+                doubleQuoted++;
+            }
+        }
+        assertTrue(cases.size() >= 30, "only " + cases.size() + " repr cases");
+        assertTrue(escaped >= 15, "only " + escaped + " cases actually escape something");
+        assertTrue(doubleQuoted >= 1, "no case exercises the double-quoted form, which is the"
+                + " branch for a string holding a single quote and no double quote");
+    }
+
+    @Test
+    @DisplayName("repr escapes every unprintable code point in Unicode, and no printable one")
+    void reprDigestMatchesCpython() {
+        // The listed cases cover the rules a reader can name; this covers the boundary nobody
+        // enumerated. 148,998 code points are printable and the rest are not, and an ASCII-only
+        // escape check -- which is what the .NET port does -- passes every named case above while
+        // leaving U+00A0 and U+200B raw in an API response.
+        MessageDigest digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is required of every JVM", impossible);
+        }
+        for (int cp = 0; cp < 0x110000; cp++) {
+            if (cp >= 0xD800 && cp <= 0xDFFF) {
+                continue;
+            }
+            String value = "a" + new String(Character.toChars(cp)) + "b";
+            digest.update(PythonJson.repr(value).getBytes(StandardCharsets.UTF_8));
+        }
+        StringBuilder hex = new StringBuilder(64);
+        for (byte value : digest.digest()) {
+            hex.append(Character.forDigit((value >> 4) & 0xF, 16));
+            hex.append(Character.forDigit(value & 0xF, 16));
+        }
+        assertEquals(Fixtures.load("python_json.json").get("repr_digest"), hex.toString(),
+                "repr disagrees with CPython somewhere in Unicode");
+    }
+
+    @Test
+    @DisplayName("percent0 rounds halves to even, as CPython's %.0f does")
+    void percent0MatchesCpython() {
+        @SuppressWarnings("unchecked")
+        List<Object> cases = (List<Object>) Fixtures.load("python_json.json").get("percent0");
+        int distinguishing = 0;
+        for (Object entry : cases) {
+            @SuppressWarnings("unchecked")
+            List<Object> pair = (List<Object>) entry;
+            double fraction = ((Number) pair.get(0)).doubleValue();
+            String expected = (String) pair.get(1);
+            assertEquals(expected, PythonJson.percent0(fraction), "percent0 of " + fraction);
+            // Java's own formatter rounds halves up, so count how many of these would be wrong
+            // with it -- a count of zero would mean this test proves nothing.
+            if (!expected.equals(String.format(java.util.Locale.ROOT, "%.0f", 100.0 * fraction))) {
+                distinguishing++;
+            }
+        }
+        assertTrue(cases.size() >= 25, "only " + cases.size() + " percent cases");
+        assertTrue(distinguishing >= 3,
+                "only " + distinguishing + " of these differ from String.format(\"%.0f\"), so"
+                + " this test would not notice half-up rounding");
+    }
+
+    @Test
+    @DisplayName("repr of null is None, as a %r of None would print")
+    void reprOfNull() {
+        assertEquals("None", PythonJson.repr((String) null));
     }
 
     @Test

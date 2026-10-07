@@ -82,6 +82,7 @@ SCRIPT_SUITES = [
     "tests/test_conformal_abstention.py",
     "tests/test_cli.py",
     "tests/test_cli_lang_guess.py",
+    "tests/test_evidence.py",
     "tests/test_mcp.py",
     "tests/test_mcp_device.py",
     "tests/test_langchain.py",
@@ -111,6 +112,7 @@ PYTEST_SUITES = [
     "tests/test_audit_regressions.py",
     "tests/test_truncation_direction.py",
     "tests/test_compile.py",
+    "tests/test_finetune_entrypoints.py",
 ]
 
 

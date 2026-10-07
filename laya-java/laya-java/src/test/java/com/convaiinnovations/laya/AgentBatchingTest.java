@@ -165,15 +165,73 @@ final class AgentBatchingTest {
     }
 
     @Test
-    @DisplayName("no questions is refused, and no states is an empty result rather than a call")
+    @DisplayName("no questions is an empty answer per state, and no states is an empty list")
     void degenerateInputs(@TempDir Path root) throws IOException {
+        // This asserted that no questions is REFUSED. The reference returns empty answers and
+        // zero usage with no tokenization and no forward pass -- so throwing meant the two
+        // runtimes could not be swapped under a question set derived from a filter, where an
+        // empty schema or a fully disabled rule set is a well-formed request.
         TinyCheckpoint.write(root, 128, 48);
         try (TinyCheckpoint.RecordingSession session = new TinyCheckpoint.RecordingSession();
              Agent agent = TinyCheckpoint.agent(root, session)) {
-            assertThrows(IllegalArgumentException.class,
-                    () -> agent.predict("s", new LinkedHashMap<>()));
+            Prediction one = agent.predict("s", new LinkedHashMap<>());
+            assertTrue(one.answers().isEmpty(), "no questions, no answers");
+            assertEquals(0, one.usage().inputTokens());
+            assertEquals(0, one.usage().outputTokens());
+
+            List<Prediction> many = agent.predictBatch(List.of("a", "b"), new LinkedHashMap<>());
+            assertEquals(2, many.size(), "one empty result per state");
+            for (Prediction prediction : many) {
+                assertTrue(prediction.answers().isEmpty());
+                assertEquals(0, prediction.usage().inputTokens());
+            }
+
             assertTrue(agent.predictBatch(List.of(), twoQuestions()).isEmpty());
-            assertTrue(session.batches.isEmpty(), "an empty batch must not reach the graph");
+            assertTrue(agent.predictBatch(List.of(), new LinkedHashMap<>()).isEmpty());
+            assertTrue(session.batches.isEmpty(),
+                    "no questions means no tokenization and no forward pass");
+        }
+    }
+
+    @Test
+    @DisplayName("a LIST state truncates from the left, so the newest turns survive")
+    void listStateTruncatesLeft(@TempDir Path root) throws IOException {
+        // The reference's rule is `truncate_left = isinstance(state, list)`, and a conversation is
+        // serialised newest-last. Cutting from the right threw away the current turn and answered
+        // about the opening of the conversation -- measured on a 120-turn history as one option's
+        // probability moving by 3.8x, while `usage` stayed byte-identical so nothing a caller
+        // could read revealed it.
+        TinyCheckpoint.write(root, 96, 32);
+        try (TinyCheckpoint.RecordingSession session = new TinyCheckpoint.RecordingSession();
+             Agent agent = TinyCheckpoint.agent(root, session)) {
+            List<Object> history = new java.util.ArrayList<>();
+            for (int turn = 0; turn < 40; turn++) {
+                Map<String, Object> message = new LinkedHashMap<>();
+                message.put("role", turn % 2 == 0 ? "user" : "agent");
+                message.put("text", "turn " + turn);
+                history.add(message);
+            }
+            Map<String, Question> one = new LinkedHashMap<>();
+            one.put("urgent", Question.noul("Is this urgent?"));
+
+            Prediction listed = agent.predict(history, one);
+            assertTrue(listed.usage().stateTokensDropped() > 0,
+                    "the fixture must actually truncate, or this proves nothing");
+
+            // The surviving window is the TAIL. The tiny checkpoint is byte-level, so the kept
+            // ids decode back to text: the last turn must be present and the first must not.
+            long[] kept = session.batches.get(0).inputIds()[0];
+            StringBuilder decoded = new StringBuilder();
+            for (long id : kept) {
+                if (id < 243) {
+                    decoded.append((char) id);
+                }
+            }
+            String window = decoded.toString();
+            assertTrue(window.contains("turn 39"),
+                    "the newest turn must survive, got: " + window);
+            assertFalse(window.contains("turn 0\""),
+                    "the oldest turn must be the one dropped, got: " + window);
         }
     }
 
@@ -252,15 +310,28 @@ final class AgentBatchingTest {
     }
 
     @Test
-    @DisplayName("a null state is answered, as Python answers it")
-    void nullStateIsAnswered(@TempDir Path root) throws IOException {
-        // Python's serialize_state hands None to json.dumps, which writes "null", and the model is
-        // asked about that. `List.of` used to reject it with a bare NullPointerException.
+    @DisplayName("a null state is REFUSED, as Python refuses it")
+    void nullStateIsRefused(@TempDir Path root) throws IOException {
+        // This test asserted the opposite, with a comment claiming Python answers a null state
+        // because serialize_state writes "null". Both Python backends raise
+        // `TypeError("state must not be None; pass a string, dict, or list")` -- and the
+        // reference's own comment gives that very serialisation as the REASON: answering it would
+        // be a confident decision about the four characters "null", byte-identical to passing the
+        // string. A caller whose state field is absent must hear about it.
         TinyCheckpoint.write(root, 128, 48);
         try (TinyCheckpoint.RecordingSession session = new TinyCheckpoint.RecordingSession();
              Agent agent = TinyCheckpoint.agent(root, session)) {
-            Prediction got = agent.predict(null, twoQuestions());
-            assertEquals(4, got.usage().stateTokens(), "the four characters of \"null\"");
+            assertThrows(IllegalArgumentException.class,
+                    () -> agent.predict(null, twoQuestions()));
+            assertThrows(IllegalArgumentException.class,
+                    () -> agent.predictBatch(java.util.Collections.singletonList(null),
+                            twoQuestions()));
+            // and one null among several is refused by index, not silently answered
+            IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+                    () -> agent.predictBatch(java.util.Arrays.asList("a", null),
+                            twoQuestions()));
+            assertTrue(failure.getMessage().contains("index 1"), failure.getMessage());
+            assertTrue(session.batches.isEmpty(), "nothing may reach the graph");
         }
     }
 

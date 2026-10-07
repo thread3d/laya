@@ -19,7 +19,10 @@ Calibration goes through `laya.calibrate.fit_temperature_map`, so a fine-tuned c
 fitted with the same clamp and buckets the runtime applies instead of a local copy of the
 fitter. `calibration_report` says per question type what that fit rests on, and `finetune` warns
 when it rests on too little: a short run can otherwise save a checkpoint whose temperatures never
-moved from 1.0, and nothing but the numbers would show it.
+moved from 1.0, and nothing but the numbers would show it. It also warns when predictions have
+collapsed to the class prior -- a near-constant logit (or calibration CE stuck at ln K) that
+looks like a finished run on an unlearnable task, but is often just too few updates on a small
+dataset (#963).
 
 Items keep the question and the tokenized state rather than a finished sequence, because a
 shuffled epoch needs to rebuild the head. States are tokenized once per row and shared by
@@ -37,7 +40,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tupl
 
 import torch
 
-from .calibrate import MIN_TYPE_N, fit_temperature_map
+from .calibrate import MIN_TYPE_N, fit_abstention_thresholds, fit_temperature_map
 from .common import (
     OPTION_LAYOUTS,
     QTYPE_NAMES,
@@ -48,10 +51,12 @@ from .common import (
     build_model,
     build_sequence,
     collate_items,
+    ece_score,
     encode_text,
     proper_reward,
     render_options,
     serialize_state,
+    temp_bucket,
     uses_parallel_layout,
 )
 
@@ -59,6 +64,13 @@ LOSSES = ("soft-ce", "rlcd")
 # Below this many calibration items of a type, a fitted temperature is reported as resting on
 # little evidence. MIN_TYPE_N (laya.calibrate) is the floor below which it is not fitted at all.
 CALIB_WARN_N = 50
+# Mean within-row logit range below this is the silent collapse to a constant (usually
+# the class prior) measured in #963: 0.01 on a collapsed head vs 0.62 untuned.
+COLLAPSE_LOGIT_RANGE = 0.05
+# Calibration mean cross-entropy within this relative distance of ln K is the other
+# collapse signal from #963 (training CE stuck at ln 4). The reported training loss is
+# not used: the default `rlcd` objective is not cross-entropy.
+COLLAPSE_CE_REL = 0.02
 _MASKED = -1e4
 
 
@@ -107,6 +119,9 @@ class TrainConfig:
     label_column: str = "label"
     question_id: str = "label"
     instructions: Optional[str] = None
+    eval_data: Optional[str] = None
+    target_error: float = 0.10
+    min_abstain_n: int = 10
 
     def validate(self) -> None:
         if self.loss not in LOSSES:
@@ -125,6 +140,12 @@ class TrainConfig:
             raise ValueError("calib_frac must be in [0, 1), got %r" % (self.calib_frac,))
         if isinstance(self.label_smoothing, bool) or not (0.0 <= self.label_smoothing < 1.0):
             raise ValueError("label_smoothing must be in [0, 1), got %r" % (self.label_smoothing,))
+        if isinstance(self.target_error, bool) or not (0.0 <= self.target_error <= 1.0):
+            raise ValueError("target_error must be in [0, 1], got %r" % (self.target_error,))
+        if isinstance(self.min_abstain_n, bool) or not isinstance(self.min_abstain_n, int) or self.min_abstain_n < 1:
+            raise ValueError("min_abstain_n must be a positive integer, got %r" % (self.min_abstain_n,))
+        if self.eval_data is not None and not isinstance(self.eval_data, str):
+            raise ValueError("eval_data must be a string path, got %r" % (self.eval_data,))
 
 
 # ------------------------------------------------------------------------------------- data
@@ -753,6 +774,188 @@ def calibration_report(records: Sequence[Tuple[int, Any, Any, int]],
     return report
 
 
+def evaluate_records(records: Sequence[Tuple[int, Any, Any, int]],
+                     temperature: Optional[Sequence[float]] = None,
+                     temperature_by_options: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+    """Evaluate loss, accuracy, top-1 confidence, ECE and Brier scores on `records`.
+
+    `records` is a sequence of `(qtype, logits, target, k)` tuples as returned by
+    `calibration_records`. Predictions and confidences are scaled using `temperature` /
+    `temperature_by_options` if provided. Returns overall metrics and per-question-type
+    breakdowns.
+
+    `brier` is the multi-class Brier score over the full probability vector:
+    `mean(sum((p - target)**2))`. `brier_top1` is the binary Brier score of top-1
+    confidence as P(correct): `mean((max(p) - correct)**2)`.
+    """
+    import numpy as np
+
+    if not records:
+        return {
+            "items": 0,
+            "loss": 0.0,
+            "accuracy": 0.0,
+            "mean_confidence": 0.0,
+            "ece": None,
+            "brier": None,
+            "brier_top1": None,
+            "by_type": {},
+        }
+
+    losses: List[float] = []
+    corrects: List[bool] = []
+    confs: List[float] = []
+    briers_mc: List[float] = []
+    briers_top1: List[float] = []
+    by_type: Dict[int, Dict[str, List[Any]]] = {
+        qt: {"losses": [], "corrects": [], "confs": [], "briers_mc": [], "briers_top1": []} for qt in QTYPE_NAMES
+    }
+
+    for qt, logits, target, k in records:
+        z = np.asarray(logits[:k], dtype=float)
+        t = np.asarray(target[:k], dtype=float)
+        bucket = temp_bucket(qt, k)
+        if temperature_by_options and bucket in temperature_by_options:
+            scale = float(temperature_by_options[bucket])
+        elif temperature is not None and isinstance(temperature, (list, tuple)) and qt < len(temperature):
+            scale = float(temperature[qt])
+        elif isinstance(temperature, (int, float)):
+            scale = float(temperature)
+        else:
+            scale = 1.0
+        scale = max(scale, 1e-4)
+        z_scaled = z / scale
+        z_max = np.max(z_scaled)
+        exp_z = np.exp(z_scaled - z_max)
+        sum_exp_z = np.sum(exp_z)
+        p = exp_z / sum_exp_z
+        log_p = z_scaled - z_max - np.log(sum_exp_z)
+        loss = float(-np.sum(t * log_p))
+
+        pred = int(np.argmax(p))
+        gold = int(np.argmax(t))
+        correct = bool(pred == gold)
+        conf = float(np.max(p))
+        b_mc = float(np.sum((p - t) ** 2))
+        b_top1 = float((conf - float(correct)) ** 2)
+
+        losses.append(loss)
+        corrects.append(correct)
+        confs.append(conf)
+        briers_mc.append(b_mc)
+        briers_top1.append(b_top1)
+
+        if qt in by_type:
+            by_type[qt]["losses"].append(loss)
+            by_type[qt]["corrects"].append(correct)
+            by_type[qt]["confs"].append(conf)
+            by_type[qt]["briers_mc"].append(b_mc)
+            by_type[qt]["briers_top1"].append(b_top1)
+
+    total_items = len(records)
+    acc = float(np.mean(corrects)) if corrects else 0.0
+    mean_loss = float(np.mean(losses)) if losses else 0.0
+    mean_conf = float(np.mean(confs)) if confs else 0.0
+    ece_val = float(ece_score(np.asarray(confs, dtype=float), np.asarray(corrects, dtype=bool))) if len(corrects) >= 2 else None
+    brier_val = float(np.mean(briers_mc)) if briers_mc else None
+    brier_top1_val = float(np.mean(briers_top1)) if briers_top1 else None
+
+    by_type_summary = {}
+    for qt, name in QTYPE_NAMES.items():
+        t_losses = by_type[qt]["losses"]
+        t_corrects = by_type[qt]["corrects"]
+        t_confs = by_type[qt]["confs"]
+        t_briers_mc = by_type[qt]["briers_mc"]
+        t_briers_top1 = by_type[qt]["briers_top1"]
+        if t_losses:
+            t_ece = float(ece_score(np.asarray(t_confs, dtype=float), np.asarray(t_corrects, dtype=bool))) if len(t_corrects) >= 2 else None
+            t_brier = float(np.mean(t_briers_mc))
+            t_brier_top1 = float(np.mean(t_briers_top1))
+            by_type_summary[name] = {
+                "items": len(t_losses),
+                "loss": round(float(np.mean(t_losses)), 4),
+                "accuracy": round(float(np.mean(t_corrects)), 4),
+                "mean_confidence": round(float(np.mean(t_confs)), 4),
+                "ece": round(t_ece, 4) if t_ece is not None else None,
+                "brier": round(t_brier, 4) if t_brier is not None else None,
+                "brier_top1": round(t_brier_top1, 4) if t_brier_top1 is not None else None,
+            }
+
+    return {
+        "items": total_items,
+        "loss": round(mean_loss, 4),
+        "accuracy": round(acc, 4),
+        "mean_confidence": round(mean_conf, 4),
+        "ece": round(ece_val, 4) if ece_val is not None else None,
+        "brier": round(brier_val, 4) if brier_val is not None else None,
+        "brier_top1": round(brier_top1_val, 4) if brier_top1_val is not None else None,
+        "by_type": by_type_summary,
+    }
+
+
+def collapse_stats(records: Sequence[Tuple[int, Any, Any, int]]) -> Optional[Dict[str, float]]:
+    """Mean within-row logit range, mean soft-CE and mean ln K on records with k >= 2.
+
+    A 1-option row cannot collapse to a prior, so it is skipped. Empty input, or only
+    1-option rows, returns None.
+    """
+    import numpy as np
+
+    ranges, ces, lnks = [], [], []
+    for _qt, logits, target, k in records:
+        k = int(k)
+        if k < 2:
+            continue
+        z = np.asarray(logits, dtype=float).ravel()[:k]
+        t = np.asarray(target, dtype=float).ravel()[:k]
+        mass = float(t.sum())
+        if mass <= 0.0:
+            continue
+        t = t / mass
+        ranges.append(float(z.max() - z.min()))
+        logp = z - np.logaddexp.reduce(z)
+        ces.append(float(-(t * logp).sum()))
+        lnks.append(math.log(k))
+    if not ranges:
+        return None
+    n = len(ranges)
+    return {
+        "n": float(n),
+        "mean_logit_range": sum(ranges) / n,
+        "mean_ce": sum(ces) / n,
+        "mean_ln_k": sum(lnks) / n,
+    }
+
+
+def prior_collapse_message(records: Sequence[Tuple[int, Any, Any, int]]) -> Optional[str]:
+    """Warning text if calibration logits have collapsed to the class prior, else None.
+
+    The default 4-epoch budget is sized for a few thousand typed decisions. On a few
+    hundred or a thousand labelled rows the head can finish with every option at the
+    same logit -- chance-level, and silent. #963 measured a mean within-row range of
+    0.01 against 0.62 for the untuned checkpoint, and training CE stuck at ln K.
+
+    Fired when the mean within-row logit range is below `COLLAPSE_LOGIT_RANGE`, or when
+    mean soft-CE on the same records is within `COLLAPSE_CE_REL` of mean ln K.
+    """
+    stats = collapse_stats(records)
+    if stats is None:
+        return None
+    reasons = []
+    if stats["mean_logit_range"] < COLLAPSE_LOGIT_RANGE:
+        reasons.append("mean within-row logit range %.3g" % stats["mean_logit_range"])
+    mean_ce, mean_lnk = stats["mean_ce"], stats["mean_ln_k"]
+    if mean_lnk > 0.0 and abs(mean_ce - mean_lnk) <= COLLAPSE_CE_REL * mean_lnk:
+        reasons.append("calibration cross-entropy %.3f is within %.0f%% of ln K ~ %.3f"
+                       % (mean_ce, COLLAPSE_CE_REL * 100.0, mean_lnk))
+    if not reasons:
+        return None
+    return ("laya.train: predictions collapsed to the class prior (%s). "
+            "The default epoch budget is often too small on a few hundred or a thousand "
+            "labelled rows. Try more epochs, more data, or another seed."
+            % "; ".join(reasons))
+
+
 def finetune(data: str, model_dir: str, output_dir: str, config: Optional[TrainConfig] = None,
              device: Optional[str] = "auto") -> Dict[str, Any]:
     """Preprocess, train, calibrate and save; returns a summary of the run.
@@ -779,8 +982,111 @@ def finetune(data: str, model_dir: str, output_dir: str, config: Optional[TrainC
     if not items:
         raise ValueError("%s produced no training items (skipped: %r)" % (data, skipped))
     train_items, calib_items = split_calibration(items, config.calib_max, config.calib_frac, config.calib_seed)
-    print("train items %d, calibration items %d, skipped %r, device %s"
-          % (len(train_items), len(calib_items), skipped, dev), flush=True)
+
+    eval_skipped = {}
+    eval_mode = None
+    is_held_out = False
+    eval_source = None
+    eval_items = []
+    eval_note = None
+
+    if config.eval_data:
+        eval_source = config.eval_data
+        eval_rows = read_data(config.eval_data, text_column=config.text_column, label_column=config.label_column,
+                              question_id=config.question_id, instructions=config.instructions)
+        eval_items, eval_skipped = items_from_rows(tok, eval_rows, max_len, head_max_len, label_smoothing=0.0)
+
+        if not eval_items:
+            eval_mode = None
+            is_held_out = False
+            eval_note = ("Evaluation file %s yielded 0 usable items (skipped: %r); "
+                         "no evaluation performed." % (config.eval_data, eval_skipped))
+            warnings.warn("laya.train: %s" % (eval_note,), RuntimeWarning, stacklevel=2)
+            print("eval items 0 from %s (skipped %r)" % (config.eval_data, eval_skipped), flush=True)
+        else:
+            # Build input signatures from normalized, usable items:
+            # (state token ids, normalized question schema).
+            # Checked separately from targets to detect shared inputs even when labels differ (#967).
+            train_input_sigs = {
+                (tuple(it["state_ids"]), json.dumps(it["q"], sort_keys=True))
+                for it in train_items
+            }
+            calib_input_sigs = {
+                (tuple(it["state_ids"]), json.dumps(it["q"], sort_keys=True))
+                for it in calib_items
+            }
+
+            train_overlap_count = sum(
+                1 for it in eval_items
+                if (tuple(it["state_ids"]), json.dumps(it["q"], sort_keys=True)) in train_input_sigs
+            )
+            calib_overlap_count = sum(
+                1 for it in eval_items
+                if (tuple(it["state_ids"]), json.dumps(it["q"], sort_keys=True)) in calib_input_sigs
+            )
+            total_overlap_count = sum(
+                1 for it in eval_items
+                if (tuple(it["state_ids"]), json.dumps(it["q"], sort_keys=True)) in train_input_sigs
+                or (tuple(it["state_ids"]), json.dumps(it["q"], sort_keys=True)) in calib_input_sigs
+            )
+
+            if total_overlap_count > 0:
+                eval_mode = "overlapping_eval"
+                is_held_out = False
+                if train_overlap_count > 0 and calib_overlap_count > 0:
+                    eval_note = (
+                        "Evaluation set contains inputs that overlap training data (%d) and calibration data (%d) "
+                        "(total %d/%d items); metrics do not reflect strictly independent held-out evaluation."
+                        % (train_overlap_count, calib_overlap_count, total_overlap_count, len(eval_items))
+                    )
+                elif train_overlap_count > 0:
+                    eval_note = (
+                        "Evaluation set contains rows that overlap training data (%d/%d items); "
+                        "metrics do not reflect strictly independent held-out evaluation."
+                        % (train_overlap_count, len(eval_items))
+                    )
+                else:
+                    eval_note = (
+                        "Evaluation set contains inputs that overlap calibration data (%d/%d items); "
+                        "metrics do not reflect strictly independent held-out evaluation."
+                        % (calib_overlap_count, len(eval_items))
+                    )
+                print("eval items %d from %s (skipped %r, %d overlapping training/calibration items)"
+                      % (len(eval_items), config.eval_data, eval_skipped, total_overlap_count), flush=True)
+            else:
+                eval_mode = "held_out"
+                is_held_out = True
+                eval_note = "Metrics reflect independent held-out evaluation."
+                print("eval items %d from %s (skipped %r, 0 overlapping training/calibration items)"
+                      % (len(eval_items), config.eval_data, eval_skipped), flush=True)
+    elif calib_items:
+        eval_items = calib_items
+        eval_source = "calibration_slice"
+        eval_mode = "in_sample_calibration"
+        is_held_out = False
+        eval_note = ("Metrics reflect in-sample calibration fit, not independent held-out evaluation. "
+                     "Provide --eval for held-out validation.")
+    else:
+        eval_items = []
+        eval_source = None
+        eval_mode = None
+        is_held_out = False
+        eval_note = "No evaluation performed (0 calibration items and no --eval set was provided)."
+        warnings.warn("laya.train: dataset has 0 calibration items and no --eval set was provided; "
+                      "skipping evaluation to avoid reporting training fit as generalization.",
+                      RuntimeWarning, stacklevel=2)
+
+    print("train items %d, calibration items %d, eval items %d%s, skipped %r, device %s"
+          % (len(train_items), len(calib_items), len(eval_items),
+             (" (" + str(eval_source) + ")") if eval_source else "", skipped, dev), flush=True)
+
+    # Evaluate base checkpoint on eval items prior to training
+    before_eval = None
+    if eval_items:
+        base_records = calibration_records(model, tok, eval_items, dev, max_len, head_max_len, parallel=parallel)
+        base_temp = cfg.get("temperature")
+        base_temp_by_options = cfg.get("temperature_by_options")
+        before_eval = evaluate_records(base_records, base_temp, base_temp_by_options)
 
     def checkpoint_latest(epoch, _loss):
         save_checkpoint(model, tok, dict(cfg, max_len=max_len, head_max_len=head_max_len),
@@ -790,22 +1096,111 @@ def finetune(data: str, model_dir: str, output_dir: str, config: Optional[TrainC
                           on_epoch_end=checkpoint_latest, parallel=parallel)
 
     records = calibration_records(model, tok, calib_items, dev, max_len, head_max_len, parallel=parallel)
+    collapse_msg = prior_collapse_message(records)
+    if collapse_msg:
+        # Same channel as the weak-calibration notes: a checkpoint that predicts the
+        # class prior for every input otherwise looks like a finished, unlearnable task.
+        warnings.warn(collapse_msg, RuntimeWarning, stacklevel=2)
     fitted = fit_temperature_map(records)
     calibration = calibration_report(records, fitted["temperature"])
     for name, entry in calibration.items():
         for issue in entry["issues"]:
-            # Logged as a warning rather than left to the report alone: a checkpoint whose
-            # confidences were never calibrated looks the same as one that was.
             warnings.warn("laya.train: %s calibration: %s" % (name, issue), RuntimeWarning, stacklevel=2)
+
+    try:
+        abstention_thresholds = fit_abstention_thresholds(
+            records,
+            temperature=fitted["temperature"],
+            temperature_by_options=fitted["temperature_by_options"],
+            target_error=config.target_error,
+            min_bucket_n=config.min_abstain_n,
+        )
+    except Exception as e:
+        warnings.warn("laya.train: failed to fit abstention thresholds: %s" % (e,), RuntimeWarning, stacklevel=2)
+        abstention_thresholds = {}
+
+    # Evaluate fine-tuned checkpoint at fitted temperatures
+    after_eval = None
+    comparison = None
+    if eval_items:
+        after_records = calibration_records(model, tok, eval_items, dev, max_len, head_max_len, parallel=parallel)
+        after_eval = evaluate_records(after_records, fitted["temperature"], fitted["temperature_by_options"])
+        comparison = {
+            "delta_accuracy": round(after_eval["accuracy"] - before_eval["accuracy"], 4),
+            "delta_loss": round(after_eval["loss"] - before_eval["loss"], 4),
+            "delta_ece": round(after_eval["ece"] - before_eval["ece"], 4) if (after_eval["ece"] is not None and before_eval["ece"] is not None) else None,
+            "delta_brier": round(after_eval["brier"] - before_eval["brier"], 4) if (after_eval["brier"] is not None and before_eval["brier"] is not None) else None,
+            "delta_brier_top1": round(after_eval["brier_top1"] - before_eval["brier_top1"], 4) if (after_eval["brier_top1"] is not None and before_eval["brier_top1"] is not None) else None,
+            "delta_mean_confidence": round(after_eval["mean_confidence"] - before_eval["mean_confidence"], 4),
+        }
+        if eval_mode == "held_out":
+            print("\n=== Evaluation (before vs after fine-tuning on %d held-out items from %s) ==="
+                  % (len(eval_items), eval_source), flush=True)
+        elif eval_mode == "overlapping_eval":
+            print("\n=== Evaluation (before vs after fine-tuning on %d items from %s; overlaps training data) ==="
+                  % (len(eval_items), eval_source), flush=True)
+        else:
+            print("\n=== Calibration Evidence (in-sample calibration slice, %d items; not held-out) ==="
+                  % (len(eval_items)), flush=True)
+        print("%-22s %-14s %-14s %-14s" % ("Metric", "Before", "After", "Delta"), flush=True)
+        print("-" * 65, flush=True)
+        for metric, key in [("Accuracy", "accuracy"), ("Loss", "loss"), ("ECE", "ece"),
+                            ("Brier (multi-class)", "brier"), ("Brier (top-1)", "brier_top1"),
+                            ("Mean Confidence", "mean_confidence")]:
+            b_val = before_eval.get(key)
+            a_val = after_eval.get(key)
+            d_val = comparison.get("delta_" + key)
+            b_str = "%.4f" % b_val if b_val is not None else "N/A"
+            a_str = "%.4f" % a_val if a_val is not None else "N/A"
+            d_str = ("%+.4f" % d_val) if d_val is not None else "N/A"
+            print("%-22s %-14s %-14s %-14s" % (metric, b_str, a_str, d_str), flush=True)
+        print("-" * 65 + "\n", flush=True)
+
+    if eval_note is None:
+        if eval_mode == "held_out":
+            eval_note = "Metrics reflect independent held-out evaluation."
+        elif eval_mode == "overlapping_eval":
+            eval_note = ("Evaluation set contains rows that overlap training data; "
+                         "metrics do not reflect strictly independent held-out evaluation.")
+        elif eval_mode == "in_sample_calibration":
+            eval_note = ("Metrics reflect in-sample calibration fit, not independent held-out evaluation. "
+                         "Provide --eval for held-out validation.")
+        else:
+            eval_note = "No evaluation performed (0 calibration items and no --eval set was provided)."
+
+    train_report = {
+        "eval_source": eval_source,
+        "eval_mode": eval_mode,
+        "is_held_out": is_held_out,
+        "eval_items": len(eval_items),
+        "note": eval_note,
+        "before": before_eval,
+        "after": after_eval,
+        "comparison": comparison,
+        "calibration": calibration,
+        "abstention_thresholds": abstention_thresholds,
+        "training": asdict(config),
+    }
+
     out_cfg = dict(cfg, max_len=max_len, head_max_len=head_max_len, fine_tuned=True,
                    temperature=fitted["temperature"])
-    # An inherited bucket map takes precedence at inference and would mask the new fit.
     out_cfg.pop("temperature_by_options", None)
     if fitted["temperature_by_options"]:
         out_cfg["temperature_by_options"] = fitted["temperature_by_options"]
     out_cfg["training"] = dict(out_cfg.get("training") or {}, laya_train=asdict(config),
-                               laya_train_calibration=calibration)
+                               laya_train_calibration=calibration,
+                               train_report=train_report)
+    if abstention_thresholds:
+        out_cfg["training"]["abstention_thresholds"] = abstention_thresholds
     save_checkpoint(model, tok, out_cfg, output_dir)
+
+    checkpoint_latest_dir = os.path.join(output_dir, "checkpoint_latest")
+    if os.path.isdir(checkpoint_latest_dir):
+        # Synchronize final calibrated config so checkpoint_latest matches the final artifact
+        tmp_cfg = os.path.join(checkpoint_latest_dir, "rl_agent_config.json.tmp")
+        with open(tmp_cfg, "w", encoding="utf-8") as f:
+            json.dump(out_cfg, f, indent=2)
+        os.replace(tmp_cfg, os.path.join(checkpoint_latest_dir, "rl_agent_config.json"))
 
     # Save the questions schema alongside the checkpoint for inference reuse
     sample_questions = {}
@@ -816,28 +1211,36 @@ def finetune(data: str, model_dir: str, output_dir: str, config: Optional[TrainC
                 if qid not in sample_questions:
                     sample_questions[qid] = qdef
                 elif sample_questions[qid] != qdef:
-                    # `warnings` is imported at module scope. A function-local `import warnings`
-                    # here would make the name local for the whole of `finetune`, and the
-                    # calibration warnings above it would then raise UnboundLocalError.
                     warnings.warn("Conflicting schema detected for question %r across rows; "
                                   "keeping first seen definition." % (qid,))
     if sample_questions:
-        for d in (output_dir, os.path.join(output_dir, "checkpoint_latest")):
-            os.makedirs(d, exist_ok=True)
-            tmp_path = os.path.join(d, "questions.json.tmp")
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(sample_questions, f, indent=2)
-            os.replace(tmp_path, os.path.join(d, "questions.json"))
+        for d in (output_dir, checkpoint_latest_dir):
+            if os.path.isdir(d):
+                tmp_path = os.path.join(d, "questions.json.tmp")
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    json.dump(sample_questions, f, indent=2)
+                os.replace(tmp_path, os.path.join(d, "questions.json"))
+
+    # Save train_report.json beside questions.json and checkpoint
+    for d in (output_dir, checkpoint_latest_dir):
+        if os.path.isdir(d):
+            tmp_report = os.path.join(d, "train_report.json.tmp")
+            with open(tmp_report, "w", encoding="utf-8") as f:
+                json.dump(train_report, f, indent=2)
+            os.replace(tmp_report, os.path.join(d, "train_report.json"))
 
     return {
         "train_items": len(train_items),
         "calibration_items": len(calib_items),
+        "eval_items": len(eval_items),
         "skipped": skipped,
         "epoch_loss": history,
         "temperature": fitted["temperature"],
         "temperature_by_options": fitted["temperature_by_options"],
         "n_by_bucket": fitted["n_by_bucket"],
         "calibration": calibration,
+        "abstention_thresholds": abstention_thresholds,
+        "train_report": train_report,
         "output_dir": output_dir,
     }
 
@@ -869,6 +1272,17 @@ def dry_run(data: str, model_dir: str, config: Optional[TrainConfig] = None) -> 
         "max_len": max_len,
         "head_max_len": head_max_len,
     }
+    if config.eval_data:
+        eval_rows = read_data(config.eval_data, text_column=config.text_column, label_column=config.label_column,
+                              question_id=config.question_id, instructions=config.instructions)
+        eval_items, eval_skipped = items_from_rows(tok, eval_rows, max_len, head_max_len, label_smoothing=0.0)
+        summary["eval_data"] = config.eval_data
+        summary["eval_rows_read"] = len(eval_rows)
+        summary["eval_valid_items"] = len(eval_items)
+        summary["eval_skipped"] = eval_skipped
+        print("dry-run: eval %d rows read, %d valid items, skipped: %r"
+              % (len(eval_rows), len(eval_items), eval_skipped), flush=True)
+
     print("dry-run: %d rows read, %d valid items, skipped: %r"
           % (len(rows), len(items), skipped), flush=True)
     return summary

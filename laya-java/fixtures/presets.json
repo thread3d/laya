@@ -169,5 +169,158 @@
       "type": "noul",
       "instructions": "Does `message` suggest the customer may leave for a competitor or cancel?"
     }
+  },
+  "state_field": {
+    "email_questions": "body",
+    "guard_questions": "prompt",
+    "moderation_questions": "post",
+    "router_questions": "request",
+    "triage_questions": "message"
+  },
+  "state_field_hostile": {
+    "no-backticks": null,
+    "two-fields": null,
+    "same-field-twice": "message",
+    "empty": null,
+    "missing-instructions": null,
+    "null-instructions": null,
+    "non-word-backticks": null,
+    "underscored-field": "customer_message",
+    "backtick-in-criteria-only": null
+  },
+  "hostile_specs": {
+    "no-backticks": {
+      "q": {
+        "type": "noul",
+        "instructions": "Is this urgent?"
+      }
+    },
+    "two-fields": {
+      "a": {
+        "type": "noul",
+        "instructions": "Does `message` ask for a refund?"
+      },
+      "b": {
+        "type": "noul",
+        "instructions": "Is `body` urgent?"
+      }
+    },
+    "same-field-twice": {
+      "a": {
+        "type": "noul",
+        "instructions": "Does `message` ask for a refund?"
+      },
+      "b": {
+        "type": "noul",
+        "instructions": "Is `message` urgent?"
+      }
+    },
+    "empty": {},
+    "missing-instructions": {
+      "q": {
+        "type": "noul"
+      }
+    },
+    "null-instructions": {
+      "q": {
+        "type": "noul",
+        "instructions": null
+      }
+    },
+    "non-word-backticks": {
+      "q": {
+        "type": "noul",
+        "instructions": "Read `a-b` and `c d`."
+      }
+    },
+    "underscored-field": {
+      "q": {
+        "type": "noul",
+        "instructions": "Read `customer_message`."
+      }
+    },
+    "backtick-in-criteria-only": {
+      "q": {
+        "type": "choice",
+        "instructions": "Pick one.",
+        "criteria": {
+          "x": "look at `message`"
+        }
+      }
+    }
+  },
+  "email_questions_custom": {
+    "category": {
+      "type": "choice",
+      "instructions": "Which team should handle the email in `body`?",
+      "criteria": {
+        "ops": "incidents and deploys",
+        "legal": "contracts and compliance"
+      }
+    },
+    "is_spam": {
+      "type": "noul",
+      "instructions": "Is this email unsolicited spam or bulk marketing?"
+    },
+    "is_phishing": {
+      "type": "noul",
+      "instructions": "Is this email a phishing or scam attempt to steal money, credentials, or personal data?",
+      "criteria": {
+        "true": "phishing, scam, or fraud",
+        "false": "a legitimate email"
+      }
+    },
+    "urgency": {
+      "type": "score",
+      "instructions": "How urgent is the request in `body`?",
+      "criteria": [
+        "no time pressure",
+        "needs attention soon",
+        "blocking issue or hard deadline"
+      ]
+    },
+    "needs_reply": {
+      "type": "noul",
+      "instructions": "Does the sender expect a reply?"
+    }
+  },
+  "email_questions_empty_categories": {
+    "category": {
+      "type": "choice",
+      "instructions": "Which team should handle the email in `body`?",
+      "criteria": {
+        "billing": "invoices, payments, refunds",
+        "technical": "bugs, outages, integrations",
+        "sales": "pricing, demos, new purchases",
+        "security": "phishing, scams, account compromise",
+        "hr": "hiring, leave, payroll",
+        "other": "none of the above"
+      }
+    },
+    "is_spam": {
+      "type": "noul",
+      "instructions": "Is this email unsolicited spam or bulk marketing?"
+    },
+    "is_phishing": {
+      "type": "noul",
+      "instructions": "Is this email a phishing or scam attempt to steal money, credentials, or personal data?",
+      "criteria": {
+        "true": "phishing, scam, or fraud",
+        "false": "a legitimate email"
+      }
+    },
+    "urgency": {
+      "type": "score",
+      "instructions": "How urgent is the request in `body`?",
+      "criteria": [
+        "no time pressure",
+        "needs attention soon",
+        "blocking issue or hard deadline"
+      ]
+    },
+    "needs_reply": {
+      "type": "noul",
+      "instructions": "Does the sender expect a reply?"
+    }
   }
 }

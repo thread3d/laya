@@ -156,7 +156,7 @@ with per-field confidence, probabilities, the raw answers, and the usage and rou
 result = agent.decide(state, schema=Ticket, return_details=True)
 result.values["department"]            # "billing"
 result.answer_confidence["department"] # 0.94  max(p): the quantity min_confidence gates on
-result.confidence["department"]        # 0.71  normalized entropy, which depends on label count
+result.confidence["department"]        # 0.79  1 - H(p)/log(k) on this 3-option `choice` field
 result.probabilities["department"]     # {"billing": 0.94, "support": 0.06, "sales": 0.0}
 result.usage                           # {"input_tokens": ..., "output_tokens": 0,
                                        #  "state_tokens": ..., "state_tokens_dropped": ...,
@@ -177,10 +177,15 @@ to the code that builds it.
 `answer_confidence` is `max(p)`, the probability mass on the answer being reported. It is what
 temperature scaling fits, what every calibration figure in this repository is computed on, and what
 `min_confidence` is compared against — which is the reason to gate on it rather than on
-`confidence`. `confidence` is normalized entropy, which depends on how many options the question
-had: `tests/test_confidence.py` pins that a two-option distribution comes back as 0.90 on a `noul`
-and 0.53 on an equivalent `choice`, so it does not compare against a threshold. A field that
-reported no usable `answer_confidence` maps to `None`, which is not the same as a reported `0.0`.
+`confidence`. `confidence` is not one formula. On a `choice` or a `score` it is normalized entropy,
+`1 - H(p) / log(k)`, whose scale moves with the number of options the question had. On a `noul` it is
+`max(p_true, 1 - p_true)`, the probability of the side being reported, which over two options is
+`max(p)`. `tests/test_confidence.py` pins a two-option distribution as 0.90 on a `noul` against 0.53
+on an equivalent `choice`; 0.53 is what entropy gives at `k = 2`, so the 0.90 is the second formula and
+not the first at a smaller option count. The schema above mixes both — `department` is a `choice`,
+`needs_human` a `noul` — so one `DecisionResult.confidence` dict can hold two scales at once, which is
+why neither reading compares against a threshold you have not measured per type. A field that reported
+no usable `answer_confidence` maps to `None`, which is not the same as a reported `0.0`.
 
 Gate on the same quantity the gate uses:
 

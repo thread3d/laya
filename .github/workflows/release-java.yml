@@ -58,7 +58,10 @@ jobs:
       - name: The suite was not vacuous
         run: >
           python3 scripts/check_test_results.py laya-java/build/test-results/test
-          --min-tests 80 --allow-aborted
+          # 631 of the 640 registered tests run without a checkpoint. 440 left 191 of
+          # slack, so the whole decode family could have vanished from this lane with the
+          # gate still green -- and a floor that does not bind is not a gate.
+          --min-tests 625 --allow-aborted
 
       - name: Build the jars
         run: ./gradlew --no-daemon build -x test
@@ -94,6 +97,21 @@ jobs:
           distribution: temurin
           java-version: "17"
           cache: gradle
+      - name: Refuse to publish anything but a tag
+        run: |
+          # Central is append-only: a version published once can never be replaced. On a
+          # workflow_dispatch from a branch, GITHUB_REF_NAME is the BRANCH, so the version became
+          # the branch name -- `:main` -- and the snapshot guard did not match it. The build job's
+          # version check is guarded by this same condition and was simply skipped, so the two
+          # jobs disagreed about what was being released.
+          case "$GITHUB_REF" in
+            refs/tags/laya-java-v*) : ;;
+            *)
+              echo "::error::refusing to publish from $GITHUB_REF; tag the release as" \
+                   "laya-java-vX.Y.Z and run this on the tag"
+              exit 1
+              ;;
+          esac
       - name: Version from the tag
         run: |
           tag="${GITHUB_REF_NAME#laya-java-v}"
@@ -111,6 +129,23 @@ jobs:
           MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
         run: |
-          test -n "$LAYA_SIGNING_KEY" || { echo "::error::LAYA_SIGNING_KEY is unset; see the header"; exit 1; }
-          test -n "$MAVEN_CENTRAL_USERNAME" || { echo "::error::MAVEN_CENTRAL_USERNAME is unset; see the header"; exit 1; }
+          # All four, not two. Without the passphrase the build calls useInMemoryPgpKeys(key,
+          # null) and uploads UNSIGNED artifacts, which Central rejects only after the upload --
+          # a much worse place to find out.
+          #
+          # A loop rather than four `test -n` lines. Written out, the four were 111 to 161 columns
+          # and no longer read as the parallel checks they are, and each one exited on the FIRST
+          # thing it found -- so a release missing two secrets cost two tagged runs to discover.
+          # This names all of them at once.
+          missing=""
+          for secret in LAYA_SIGNING_KEY LAYA_SIGNING_PASSWORD \
+                        MAVEN_CENTRAL_USERNAME MAVEN_CENTRAL_PASSWORD; do
+            [ -n "${!secret:-}" ] || missing="$missing $secret"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::unset secret(s):$missing -- see this workflow's header for how each" \
+                 "one is produced. Note the signing passphrase in particular: without it the" \
+                 "bundle is built UNSIGNED and Central rejects it only after the upload."
+            exit 1
+          fi
           ./gradlew --no-daemon publishAllPublicationsToCentralRepository

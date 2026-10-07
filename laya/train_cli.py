@@ -27,6 +27,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to training data file (.jsonl or .csv).",
     )
     parser.add_argument(
+        "--eval",
+        "--eval-data",
+        dest="eval_data",
+        default=None,
+        help="Path to evaluation dataset (.jsonl or .csv) for before/after assessment.",
+    )
+    parser.add_argument(
         "--out",
         "--output-dir",
         dest="output_dir",
@@ -118,6 +125,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Freeze encoder weights, training classification heads only.",
     )
     parser.add_argument(
+        "--target-error",
+        type=float,
+        default=0.10,
+        help="Target error rate for fitting abstention thresholds in [0, 1] (default: 0.10).",
+    )
+    parser.add_argument(
+        "--min-abstain-n",
+        type=int,
+        default=10,
+        help="Minimum items in a bucket required to fit an abstention threshold (default: 10).",
+    )
+    parser.add_argument(
         "--device",
         default="auto",
         help="Compute device ('auto', 'cpu', 'cuda', 'mps'; default: 'auto').",
@@ -185,6 +204,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         label_column=args.label_column,
         question_id=args.question_id,
         instructions=args.instructions,
+        eval_data=args.eval_data,
+        target_error=args.target_error,
+        min_abstain_n=args.min_abstain_n,
     )
 
     try:

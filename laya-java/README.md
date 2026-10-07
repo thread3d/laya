@@ -11,11 +11,22 @@ four questions about a document cost one batched encode rather than four round t
 ## Status
 
 Implemented: tokenizer, sequence builder, config, ONNX inference (fused or split graph), answer
-decoding, `predict`, `predictBatch`, usage and truncation reporting.
+decoding, `predict`, `predictBatch`, usage and truncation reporting, script and language detection
+(`lang.LanguageDetection`), the question presets (`Presets`), the checkpoint `Router` with its
+load-and-evict lifecycle, the embedding `Shortlist` with its LRU cache, and the email cleaner
+and state builder (`LayaEmail`).
 
-Not implemented yet: hooks, the language `Router`, `predictLong`, shortlist, structured `decide`,
-the `laya-java-client` HTTP module, Android. **Not published to Maven Central** — see
+Not implemented yet: hooks, `predictLong`, structured `decide`, the
+`laya-java-client` HTTP module, Android. **Not published to Maven Central** — see
 [Installing](#installing).
+
+## Where to go next
+
+| | |
+|---|---|
+| [MODELS.md](MODELS.md) | how to get the checkpoint and the graph `Agent.open` takes |
+| [samples/](samples/) | three runnable programs: quickstart, routing and shortlisting, benchmark |
+| [CHANGELOG.md](CHANGELOG.md) | what is in 0.1.0, and where Java is not Python |
 
 ## Export a graph (once per checkpoint)
 
@@ -138,14 +149,162 @@ List<Prediction> out2 = agent.predictBatch(states, questions, "en",
 Results come back in the caller's order whatever the grouping was. `batchSize` bounds peak memory
 and `sortByLength` cuts padding; neither changes an answer.
 
+## Routing between checkpoints
+
+The English checkpoint does not degrade gently off English, it collapses — 0.100 on 20-option
+MASSIVE Hindi intent against 0.050 for random guessing, and it reports high confidence while doing
+so. So a `Router` picks the checkpoint before the question is asked.
+
+```java
+import com.convaiinnovations.laya.Router;
+import java.nio.file.Path;
+
+try (Router router = Router.builder()
+        .checkpointsRoot(Path.of("./checkpoints"))   // ./checkpoints/english, /multilingual, ...
+        .maxLoaded(2)                                // a memory ceiling, not a cache hint
+        .build()) {
+
+    Router.RouteDecision decided = router.route(state);
+    System.out.println(decided.model() + ": " + decided.reason());
+    // multilingual: non-Latin script (devanagari, 100% of letters); the English checkpoint
+    // cannot read it
+
+    Prediction answer = router.predict(state, questions);   // routes, loads, answers
+}
+```
+
+`route` runs no model and reads no disk, so it is safe on every request. Precedence, highest
+first: an explicit model, an explicit task, a detected typed-decisions workflow (opt-in only), an
+explicit language, a caller's hint, the built-in detection, then the configured default.
+
+`maxLoaded` evicts the least recently used checkpoint, and `Router.Lease` keeps one open for as
+long as you hold it — `predict` leases internally, so the ordinary path needs no thought. An agent
+handed in with `attach` is never closed: the caller keeps ownership.
+
+A deployment whose traffic is mostly not English should set
+`defaultCheckpoint(Checkpoint.MULTILINGUAL)`: an unidentified Latin-script state is no evidence of
+English, and that is the only knob which says so.
+
+## Detection on its own
+
+`lang.LanguageDetection` is the router's evidence, usable without one:
+
+```java
+import com.convaiinnovations.laya.lang.LanguageDetection;
+
+LanguageDetection.Analysis seen = LanguageDetection.analyse(state);
+seen.script();              // "latin", "han", "devanagari", ... or "unknown"
+seen.language();            // best effort, null when undecided
+seen.english();             // whether the English checkpoint can read it
+seen.mixedSegment();        // the line or field that made a mostly-English state non-English
+```
+
+Undecided is not English: when nothing identifies the language, non-English letters or a shared
+Swedish–Danish marker still prefer the multilingual checkpoint.
+
+## Presets
+
+Five ready-made question sets, word for word the reference's:
+
+```java
+import com.convaiinnovations.laya.Presets;
+
+Map<String, Question> questions = Presets.triage();        // or email(), guard(),
+                                                           // moderation(), router()
+Presets.stateField(questions);                             // "message" — the key it reads
+```
+
+Each call returns a fresh mutable map, so dropping a question you do not want is safe. A preset
+names the state key it reads in backticks, and `stateField` reads it back out — so a caller can
+place its text under the right key instead of guessing.
+
+## Shortlisting a large label set
+
+Choice options share one `head_max_len`, so a seventeen-label set leaves few tokens per label.
+`Shortlist` embeds the state and each option, keeps the top `k`, and runs one prediction over the
+reduced set — no second decision pass.
+
+```java
+import com.convaiinnovations.laya.Shortlist;
+
+Shortlist.Embedder embedder = texts -> myBiEncoder.embed(texts);   // your vectors
+Shortlist.Shortlisted out = Shortlist.predict(agent, state, questions,
+        Shortlist.cached(embedder), 20);
+
+out.prediction();                    // the answer, over the kept labels only
+out.shortlist().get("intent");       // which labels survived, and their scores
+```
+
+`Shortlist.cached(...)` embeds each text once under an LRU bound, so a fixed label list is
+embedded on the first call and only the new query thereafter. `k` at or above the label count is a
+passthrough: the labels come back in order and **the embedder is never called**.
+
+Both `Agent` and `Router` implement `Predictor`, so shortlisting works identically against a fixed
+checkpoint or a routed one.
+
+## Cleaning an email
+
+`laya.email`'s cleaner and state builder. The markers cover English, Portuguese, Spanish and
+French mail clients, because the router already sends the last three to the multilingual
+checkpoint and an English-only cleaner left their quoted history — often a *different* request —
+weighing on the answer as much as the new message.
+
+```java
+import com.convaiinnovations.laya.LayaEmail;
+import java.util.Map;
+
+String body = """
+        I was charged twice for order 8812. Please refund one of them.
+
+        Atenciosamente,
+        Ana Souza
+        Enviado do meu iPhone
+
+        Esta mensagem e confidencial e de uso exclusivo do destinatario.
+
+        Em ter., 3 de set. de 2025, Suporte <suporte@x.com> escreveu:
+        > Podemos ajudar?
+        """;
+
+// quoted history, sign-off, device footer and disclaimer all go
+String clean = LayaEmail.cleanEmailBody(body);
+
+Map<String, Object> state = LayaEmail.emailState("Cobranca duplicada", body, "ana@x.com");
+// {subject=Cobranca duplicada, body=I was charged twice..., from=ana@x.com}
+
+Prediction p = agent.predict(state, LayaEmail.emailQuestions());
+```
+
+`emailState` takes the same `maxChars` budget and passes it through, and it is worth raising for
+a long message: at the default the body stops after 3,000 characters, so a request arriving in
+the last paragraphs never reaches the model.
+
+What it deliberately does **not** cut is the interesting half. `From: my side the integration
+works, but please refund...` is prose, not a header, so a reply header is recognised only when an
+address follows it or its own `Sent:`/`Enviado:` line does. `Thanks for the quick reply.` is not
+a sign-off, `Obrigado pelo retorno, mas ...` is a request, and `Is this confidential?` is a
+question — a cleaner that is too eager deletes what the sender actually wrote, which is worse
+than leaving one boilerplate line behind.
+
 ## Lower-level pieces
 
 ```java
+import com.convaiinnovations.laya.config.AgentConfig;
+import com.convaiinnovations.laya.tokenizer.Tokenizer;
+import java.nio.file.Path;
+
 Tokenizer tok = Tokenizer.fromModelDirectory(Path.of("./checkpoint"));
 int[] ids = tok.encode("charged twice");
 int[] capped = tok.encode(longText, 48);          // stops early; same prefix as the full encoding
+String text = tok.decode(ids);                    // ids back to text; special tokens dropped
+String withSpecials = tok.decode(ids, false);     // ...kept
 AgentConfig cfg = AgentConfig.fromModelDirectory(Path.of("./checkpoint"));
 ```
+
+`decode` follows the reference rather than tidying after it, and on the multilingual checkpoint
+that means it is **lossy**: `Metaspace` prepends its marker, so `decode(encode("Hello world"))` is
+`" Hello world"`. The English checkpoint happens to round-trip. Correcting the space would make
+every window of a long document tokenize differently from the reference, so the loss is kept.
 
 `Agent.using(tokenizer, config, session)` assembles an agent from parts — for a caller that already
 holds them, or to drive the batching and usage accounting through a stub
@@ -174,6 +333,31 @@ LAYA_CHECKPOINTS=/path/to/checkpoints \
 LAYA_ONNX_GRAPH=/path/to/model/laya.onnx \
   ./gradlew test
 ```
+
+A blank value counts as absent, so a CI cell that owns no graph can set `LAYA_ONNX_GRAPH=''`
+without turning an abort into a failure.
+
+### Testing on another JDK
+
+The artifact is compiled for 17 and the toolchain pins the **compiler** to 17, so installing a
+different JDK does not change what the tests run on. `-PtestJavaVersion` moves the test JVM only —
+the bytecode stays at release 17:
+
+```bash
+./gradlew test -PtestJavaVersion=24    # compiled for 17, executed on 24
+```
+
+CI runs the model-free suite on **17, 21 and 24** — three different Unicode versions (13.0, 15.0
+and 16.0). The artifact is compiled for 17, so it runs on 17 and anything newer; those three are
+the versions the suite is actually asserted against.
+
+This matters more here than in most ports. `\p{L}` and `\p{N}` in `java.util.regex` follow the
+JDK's own Unicode version, and `Character.isLetter` disagrees with itself across JDK 17 (Unicode
+13.0) and JDK 24 (Unicode 16.0) on 751 of the code points this port has to classify — 0 of 751 on
+one, 751 of 751 on the other. Everything Unicode-shaped is therefore compiled in from the
+reference, and this flag is how that is checked. `TestJvmVersionTest` asserts the tests really are
+running on the JDK that was asked for, because Gradle writes `<properties/>` empty into the JUnit
+XML and nothing downstream can tell 17 from 24.
 
 ## Parity: generated, not asserted
 

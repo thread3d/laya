@@ -42,6 +42,9 @@ public final class Tokenizer {
     private final Map<String, Integer> specials;
     private final Map<String, Integer> roles;
     private final String maskToken;
+    private final TokenDecoder decoder;
+    /** Ids the reference's decode drops unless asked not to; see {@link #decode(int[])}. */
+    private final java.util.Set<Integer> specialIds;
 
     /** The roles a checkpoint names in {@code tokenizer_config.json}, in sequence-building order. */
     private static final String[] ROLE_KEYS =
@@ -136,6 +139,7 @@ public final class Tokenizer {
 
         this.normalizer = Normalizer.from(objectOrNull(document, "normalizer"));
         this.preTokenizer = PreTokenizer.from(objectOrNull(document, "pre_tokenizer"));
+        this.decoder = TokenDecoder.from(objectOrNull(document, "decoder"));
 
         // --- the id map: model.vocab UNION added_tokens, with added_tokens authoritative.
         //
@@ -153,6 +157,17 @@ public final class Tokenizer {
         }
 
         List<AddedToken> added = readAddedTokens(document);
+        // The ids a decode drops by default. Taken from each added token's own `special` flag
+        // rather than from the laya config's four roles: the english checkpoint declares 116
+        // added tokens and the config names only cls/sep/mask/pad, so the roles would leave
+        // every other control token in the decoded text.
+        java.util.Set<Integer> special = new java.util.LinkedHashSet<>();
+        for (AddedToken token : added) {
+            if (token.special()) {
+                special.add(token.id());
+            }
+        }
+        this.specialIds = java.util.Set.copyOf(special);
         for (AddedToken token : added) {
             Integer existing = vocab.get(token.content());
             if (existing != null && existing != token.id()) {
@@ -340,6 +355,50 @@ public final class Tokenizer {
     // ------------------------------------------------------------------ lookups
 
     /** The number of distinct ids this tokenizer can emit, counting added tokens. */
+    /**
+     * These ids back into text, dropping special tokens -- the reference's default.
+     *
+     * <p>Used by {@code predictLong}, which splits a long state into overlapping token windows and
+     * hands each one back as text so it is re-tokenized as an ordinary state.
+     *
+     * <p><b>This does not round-trip, and is not meant to.</b> On the english checkpoint it
+     * happens to; on the multilingual one {@code "Hello world"} decodes to {@code " Hello world"},
+     * because Metaspace prepends U+2581 when encoding and the decoder turns every U+2581 back
+     * into a space. That is the reference's behaviour and the port reproduces it exactly -- a
+     * decode that trimmed the space would re-tokenize each window differently and move every
+     * answer downstream.
+     */
+    public String decode(int[] ids) {
+        return decode(ids, true);
+    }
+
+    /**
+     * These ids back into text.
+     *
+     * @param ids                the token ids, in order
+     * @param skipSpecialTokens  drop ids flagged {@code special} in {@code added_tokens}, which is
+     *                           what the reference does unless told otherwise
+     */
+    public String decode(int[] ids, boolean skipSpecialTokens) {
+        if (ids == null) {
+            throw new IllegalArgumentException("ids must not be null");
+        }
+        List<String> pieces = new ArrayList<>(ids.length);
+        for (int id : ids) {
+            if (skipSpecialTokens && specialIds.contains(id)) {
+                continue;
+            }
+            String token = idToToken(id);
+            if (token == null) {
+                // An id outside the vocabulary. The crate skips it; failing here would turn a
+                // caller's off-by-one into an exception from a method whose job is to be lossy.
+                continue;
+            }
+            pieces.add(token);
+        }
+        return decoder.decode(pieces);
+    }
+
     public int vocabSize() {
         return ids.size();
     }

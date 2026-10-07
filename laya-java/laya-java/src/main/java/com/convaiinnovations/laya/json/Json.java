@@ -153,6 +153,43 @@ public final class Json {
 
     // ------------------------------------------------------------------ the reader itself
 
+    /**
+     * How deep a document may nest.
+     *
+     * <p>Without a limit, deeply nested input threw {@link StackOverflowError} -- an
+     * {@link Error}, which a server's {@code catch (Exception)} does not contain and which can
+     * leave a thread's invariants broken. CPython raises a catchable {@code RecursionError}.
+     * Both {@code tokenizer.json} and {@code rl_agent_config.json} arrive from a remote download
+     * and are parsed by this reader, so the input is not trusted; the limit sits far above
+     * anything a real checkpoint nests and far below the stack.
+     */
+    private static final int MAX_DEPTH = 512;
+
+    /** CPython's integer-string limit, which also bounds a quadratic BigDecimal conversion. */
+    private static final int MAX_INTEGER_DIGITS = 4300;
+
+    private int depth;
+
+    /**
+     * A hex digit, ASCII only.
+     *
+     * <p>{@code Character.digit} is Unicode-aware, so fullwidth and Arabic-Indic digits were
+     * accepted as hex: two byte-different documents parsed to the same value, and input CPython
+     * rejects was accepted.
+     */
+    private static int asciiHex(int c) {
+        if (c >= '0' && c <= '9') {
+            return c - '0';
+        }
+        if (c >= 'a' && c <= 'f') {
+            return c - 'a' + 10;
+        }
+        if (c >= 'A' && c <= 'F') {
+            return c - 'A' + 10;
+        }
+        return -1;
+    }
+
     private Object readValue() throws IOException {
         int c = peek();
         switch (c) {
@@ -179,6 +216,17 @@ public final class Json {
     }
 
     private Map<String, Object> readObject() throws IOException {
+        if (++depth > MAX_DEPTH) {
+            throw new JsonException("JSON nested deeper than " + MAX_DEPTH + " levels");
+        }
+        try {
+            return readObjectBody();
+        } finally {
+            depth--;
+        }
+    }
+
+    private Map<String, Object> readObjectBody() throws IOException {
         read();                                     // '{'
         Map<String, Object> out = new LinkedHashMap<>();
         skipWhitespace();
@@ -212,6 +260,17 @@ public final class Json {
     }
 
     private List<Object> readArray() throws IOException {
+        if (++depth > MAX_DEPTH) {
+            throw new JsonException("JSON nested deeper than " + MAX_DEPTH + " levels");
+        }
+        try {
+            return readArrayBody();
+        } finally {
+            depth--;
+        }
+    }
+
+    private List<Object> readArrayBody() throws IOException {
         read();                                     // '['
         List<Object> out = new ArrayList<>();
         skipWhitespace();
@@ -278,7 +337,7 @@ public final class Json {
         int value = 0;
         for (int i = 0; i < 4; i++) {
             int c = read();
-            int digit = Character.digit(c, 16);
+            int digit = asciiHex(c);
             if (c == -1 || digit < 0) {
                 throw fail("a \\u escape needs four hex digits");
             }
@@ -310,6 +369,14 @@ public final class Json {
                 try {
                     return Long.valueOf(literal);
                 } catch (NumberFormatException tooWide) {
+                    if (literal.length() > MAX_INTEGER_DIGITS) {
+                        // CPython refuses past 4,300 digits (the CVE-2020-10735 mitigation), and
+                        // this conversion is QUADRATIC: a 1 MB literal cost 21 seconds of a
+                        // request thread, from one field of an untrusted tokenizer.json.
+                        throw new JsonException("integer literal of " + literal.length()
+                                + " digits exceeds the " + MAX_INTEGER_DIGITS
+                                + " this reader allows");
+                    }
                     return new BigDecimal(literal).toBigIntegerExact();
                 }
             }

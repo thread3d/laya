@@ -94,6 +94,25 @@ The shipped checkpoints work zero-shot, but fine-tuning on decisions from your o
 
 **[nandhakishorm.github.io/laya](https://nandhakishorm.github.io/laya/)**: guides for [prediction hooks](https://nandhakishorm.github.io/laya/hooks/), [schema-driven decisions](https://nandhakishorm.github.io/laya/structured/), [Docker](https://nandhakishorm.github.io/laya/docker/) and [LangChain and LangGraph](https://nandhakishorm.github.io/laya/langchain/), plus a full [API reference](https://nandhakishorm.github.io/laya/reference/).
 
+## What's new in 0.3.29
+
+* **`predict_long` no longer splits a state that fits.** The one-pass shortcut compared the state against the default window instead of the room the questions actually leave, so any state in the band between the two was scanned in two windows and answered with the max or the most confident window rather than the plain answer (#966). On `laya-multilingual` that band is roughly 761 to 989 state tokens, an ordinary email: an 878-token note returned noul 0.998 against `predict`'s 0.752, at twice the forward passes. It now matches `predict` exactly, and an explicit `window=` still scans.
+* **A line of English acronyms no longer routes to the multilingual checkpoint.** `MON`, `DES`, `EST` and `LA` collide with French stopwords, so one line of ordinary abbreviations inside an English state made `analyse` name the whole state French (#1013). The all-caps guard is kept, because a customer shouting in Portuguese is still Portuguese, and the fix separates that case from a line of bare acronyms. A second cause is fixed with it: acronyms were voting in the whole-state verdict too, which no helper was filtering.
+* **A `min_confidence` map key that cannot name a bucket is refused.** The validator checked only that a key was a string, so `{"choice:2-5": 0.9}` passed and then silently gated nothing: the lookup misses, falls back to `default`, then to 0.0 (#1002). A caller who mis-spells one key believed that bucket was gated at 0.9 while every answer in it abstained never.
+* **Fine-tuning reports what it learned, on held-out data.** `laya-train --eval eval.csv` evaluates the base checkpoint before training and the fine-tune after, and writes `train_report.json` with accuracy, loss, ECE, Brier and signed deltas (#967, #887). Evaluation items are checked for overlap against both the training and calibration splits, and a set that overlaps is labelled `overlapping_eval` rather than reported as generalization. With no `--eval` and no calibration items, evaluation is skipped rather than reporting training fit.
+* **A fine-tune that collapses to the class prior now says so.** On a few hundred rows the default epoch budget can finish at chance with a near-constant logit, and the run still looks successful (#968, #963).
+* **`laya-evals evidence --checkpoint DIR`** reads the calibration evidence a fine-tune persists and reports it as `PRESENT`, `MISSING`, `INSUFFICIENT` or `UNKNOWN`, so zero calibration items stops reading as healthy (#964). It loads no weights and does not need torch.
+* **The fine-tuning scripts now share one loop.** `notebooks/laya_finetune_typed_decisions_mps.py` and `research/scripts/finetune_single_device.py` call `laya.train` instead of carrying their own copies, which is what #851 and #885 were: the same temperature-clamp bug fixed twice in parallel (#965, #887).
+* **The default loss stays `rlcd`, now on evidence.** A three-seed panel on typed-decisions says the single-seed soft-CE win does not replicate: paired `soft-ce − rlcd` accuracy is +0.0002 on average and changes sign between seeds, with soft-CE far noisier (std 0.0155 against 0.0016) (#1012, #887, #741).
+* **Java.** `laya-java` gains language routing, the preset question sets, the embedding shortlist and the email cleaner, gated against fixtures recorded from the Python package, plus a JDK matrix lane because `\p{L}` follows the JDK's own Unicode version (#938). Three defects on `main` are fixed with it, including a release workflow that could publish a jar named after a branch, and a release test floor that counted skipped tests.
+* **Thirty-one documentation corrections**, each landing a gate that fails if the page drifts again (#972 to #1011, from @aashish254). The largest class: `confidence` was documented as one entropy formula across every question type, when it is `1 - H/log(k)` for `choice` and `score` and equals `answer_confidence` for `noul`. Others name parameters a tool actually takes, correct key counts, and stop calling the shipped `answer_confidence` calibrated when the loader itself warns that it is not.
+* **Portability.** Six repo reads in `tests/` left the codec to the runner, which is cp1252 on the Windows lane, so a UTF-8 page killed the whole suite at the read rather than failing one assertion. A gate now refuses an unpinned repo read (#1001).
+* **`laya[onnx]` no longer caps NumPy for everyone.** The cap that torch below 2.3 needs is scoped by marker to macOS on Intel, instead of making the extra unresolvable next to anything requiring `numpy>=2` (#947).
+
+44 pull requests from 8 contributors.
+
+---
+
 ## What's new in 0.3.28
 
 * **`laya.backends` was missing from every published wheel.** The package was never added to setuptools' explicit list, so the wheels for 0.3.25, 0.3.26 and 0.3.27 shipped without it (#940). The documented backend selection API was therefore unavailable to anyone who installed with pip: `Agent(backend="eager")` raised `ModuleNotFoundError` and `agent.set_backend("eager")` raised `ImportError`, while the compile guide described both. The default path was unaffected, which is why this went unnoticed; it also only ever worked from a source checkout, which every contributor here uses. A packaging check now keeps the declared list aligned with every importable `laya` source package, so the next one fails at build time instead of at install time.
@@ -121,7 +140,7 @@ The shipped checkpoints work zero-shot, but fine-tuning on decisions from your o
 ## What's new in 0.3.27
 
 * **A plain `import laya` no longer crashes when TensorFlow is installed.** transformers 4.x imports TensorFlow while laya builds the model, and a broken TF build turns that into `Fatal Python error: Bus error` from a library laya never uses (#915). The package now sets `USE_TF=0` the way CI, the Dockerfile and the examples already did.
-* **Per-call hooks reach the batch path.** `Router.predict_batch` and `Router.route_batch` take `hooks`, `on_predict_start`, `on_predict_end` and `hooks_raise`, matching `predict` (#909). The batched dispatch also composes installed hooks properly, so a `set_default_hooks` default no longer fires on `predict` and silently vanishes on `predict_batch`.
+* **Per-call hooks reach the batch path.** `Router.predict_batch` takes `hooks`, `on_predict_start`, `on_predict_end`, `hooks_raise` and `hooks_timeout`, matching `predict`; `Router.route_batch` takes `hooks`, `hooks_raise` and `hooks_timeout`, since it fires only `on_route` and has no predict events for the convenience callables to bind to (#909). The batched dispatch also composes installed hooks properly, so a `set_default_hooks` default no longer fires on `predict` and silently vanishes on `predict_batch`.
 * **A stale abstention flag is cleared on re-evaluation.** Re-running the gate on a reused result dict with a more permissive threshold used to leave `low_confidence: True` behind, so downstream callers treated the answer as permanently abstained (#910).
 * **`predict_long` runs its scan after the hook chain** rather than as a start hook, so laya's own forward pass no longer executes inside `dispatch()` and inherits the caller's hook machinery.
 * **Abstention thresholds are fitted on the scale the gate reads.** With a histogram-binning map installed, the runtime reports a binned confidence; `fit_abstention_thresholds` now fits against that instead of the temperature-scaled value, so a fitted cut and the gate agree.
@@ -983,7 +1002,8 @@ result = agent.predict_long(state, questions, hooks=[AuditLog()])   # the scan, 
 - `choice` / `score` take the most-confident window — averaging over a long, mostly-neutral
   document lets the neutral majority out-vote the one window that saw the deciding span.
 - A state that already fits one window is passed straight to `system_one` (identical output, plus
-  `usage["windows"] = 1`). The key is total: `1` single window, `N` scanned windows, `0` a hook
+  `usage["windows"] = 1`). Without an explicit `window`, that is any state the questions leave
+  room for, since `system_one` reads it whole. The key is total: `1` single window, `N` scanned windows, `0` a hook
   answered the document before the model read any of it.
 - Hooks wrap the inference that answers the state, so on a scanned document `on_predict_start`
   fires once with `ctx.states` holding the decoded windows, not the state you passed in (it was
@@ -1466,7 +1486,8 @@ knows the answer shape never parses an answer map by hand. `laya_shortlist` is t
 it shortlists a many-option choice question to its `k` most likely labels by embedding
 similarity (mean-pooled from the answering checkpoint's own encoder, so no extra model is
 downloaded), answers in one forward pass, and returns per-question shortlist metadata
-(kept labels, cosine scores, `k`, option count). The guardrails shown on every decision
+(kept labels, cosine scores, `k`, option count, and whether the question passed through
+unshortlisted). The guardrails shown on every decision
 tool point clients to `laya_shortlist` for >20-option choices. As with the SDK, use it for structured
 decisions only; not for open Q&A or
 text generation. Tests: `tests/test_mcp.py` (CI, no weights) and

@@ -54,10 +54,47 @@ subprojects {
     tasks.withType<Test>().configureEach {
         useJUnitPlatform()
         testLogging { events("failed", "skipped") }
+        // Run the tests on a DIFFERENT JDK from the one the classes are compiled for, when asked:
+        //
+        //     ./gradlew test -PtestJavaVersion=24
+        //
+        // `options.release` above keeps the bytecode at 17 whatever this is set to, so the
+        // artifact a consumer gets does not change; only the JVM executing the tests does.
+        //
+        // This exists because the toolchain pins the compiler to 17, so a CI matrix that merely
+        // installs another JDK still compiles AND tests on 17 -- a green lane proving nothing.
+        // The property it buys is real and was bought the hard way: `\p{L}` in java.util.regex
+        // follows the JDK's own Unicode version, so the pre-tokenizer returned different token
+        // ids from the same jar on different JDKs. Corretto 17 carries Unicode 13.0 and Corretto
+        // 24 carries 16.0, and `Character.isLetter` disagrees with itself across them on 751 of
+        // the code points this port had to classify. The classes are compiled in from the
+        // reference now, so the answer must not move -- and this is what runs that check.
+        val testJavaVersion = providers.gradleProperty("testJavaVersion")
+        if (testJavaVersion.isPresent) {
+            val want = testJavaVersion.get().trim().toInt()
+            val toolchains = project.extensions.getByType<JavaToolchainService>()
+            // `launcherFor` fails the build when no such JDK is installed, provided
+            // auto-download is off, so a lane asking for a JDK it does not have cannot quietly
+            // fall back to 17 and report a pass for the wrong JVM.
+            javaLauncher.set(toolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(want)) })
+            // And the suite checks it from the inside, because the JUnit XML does not record
+            // which JVM produced it: `<properties/>` comes out empty, so neither the report nor
+            // a later step can tell 17 from 24. Asserting it in-process is the only place the
+            // answer actually exists.
+            systemProperty("laya.test.expectedJavaVersion", want.toString())
+        }
         // Passed through rather than inherited silently, so a lane that forgets them is a lane
         // whose parity tests abort loudly instead of one that quietly tests less.
+        //
+        // Blank counts as absent. A CI matrix cell that does not own a graph writes
+        // `LAYA_ONNX_GRAPH: ''` rather than leaving the variable out -- an expression yielding
+        // the empty string still DEFINES the variable -- and an empty path handed to the tests
+        // is a path that cannot be opened, so the graph-backed factories would fail where they
+        // are supposed to abort by assumption. Treating blank as unset is what makes "this cell
+        // has no graph" and "this machine has no graph" the same case, which is what the tests
+        // are written against.
         listOf("LAYA_CHECKPOINTS", "LAYA_ONNX_GRAPH", "LAYA_PREDICT_GOLDEN").forEach { name ->
-            System.getenv(name)?.let { environment(name, it) }
+            System.getenv(name)?.takeIf { it.isNotBlank() }?.let { environment(name, it) }
         }
     }
 

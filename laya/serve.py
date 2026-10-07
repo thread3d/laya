@@ -163,10 +163,10 @@ def _project_jev_strict(result: Dict[str, Any]) -> Dict[str, Any]:
     """Project a result onto the strict Jev wire contract (`LAYA_JEV_STRICT`).
 
     The Jev `/v1/systemone` response defines exactly three top-level fields
-    (`model`, `answers`, `usage`), and each answer carries only its type's fields:
-    choice = `choice` + `probabilities` + `confidence`, score = `score` +
-    `probabilities` + `confidence` + `legend`, noul = `noul` only, and `usage` the
-    two token counts. Laya's full payload adds more: a root `routing` report, a
+    (`model`, `answers`, `usage`), and each answer carries its discriminator plus its type's
+    fields: choice = `type` + `choice` + `probabilities` + `confidence`, score = `type` +
+    `score` + `probabilities` + `confidence` + `legend`, noul = `type` + `noul`, and `usage`
+    the two token counts. Laya's full payload adds more: a root `routing` report, a
     per-answer `action` head plus the calibrated `answer_confidence`, a
     `confidence` on noul answers, and a usage report extended with the truncation
     facts and the collapsed-options ceiling. Those additions are what a client

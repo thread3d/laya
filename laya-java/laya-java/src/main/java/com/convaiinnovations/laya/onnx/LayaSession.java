@@ -110,6 +110,13 @@ public final class LayaSession implements InferenceSession {
     /** Runs one collated batch. */
     @Override
     public Output run(Collator.Batch batch) {
+        if (closed) {
+            // The guard isClosed()'s javadoc promises ("so a caller gets an API error, not a
+            // backend one") and which did not exist: a use-after-close surfaced ORT's own
+            // IllegalStateException, outside both the OrtException catch below and
+            // InferenceException -- precisely the one error class this API says it never emits.
+            throw new InferenceException("this laya session is closed");
+        }
         List<OnnxTensor> owned = new ArrayList<>();
         try {
             OnnxTensor inputIds = track(owned, OnnxTensor.createTensor(environment, batch.inputIds()));
@@ -138,7 +145,20 @@ public final class LayaSession implements InferenceSession {
                 headInputs.put("hidden_states", hidden);
                 headInputs.put("marker_pos", markerPos);
                 headInputs.put("marker_mask", markerMask);
-                headInputs.put("qtype", qtype);
+                // [B, 1], not [B]. The exporter declares the head's qtype input with a
+                // trailing dimension of 1 (it squeezes it back off internally), so a rank-1
+                // tensor is refused outright: "Invalid rank for input: qtype Got: 1 Expected: 2".
+                // Every split export the only exporter produces therefore failed, and the error
+                // arrived as a per-batch backend failure that reads like a bad model rather than
+                // a bad client. laya-ts passes [n, 1] here for the same reason.
+                long[] flat = batch.qtype();
+                long[][] column = new long[flat.length][1];
+                for (int row = 0; row < flat.length; row++) {
+                    column[row][0] = flat[row];
+                }
+                OnnxTensor qtypeColumn = track(owned,
+                        OnnxTensor.createTensor(environment, column));
+                headInputs.put("qtype", qtypeColumn);
                 headInputs.put("attention_mask", attention);
                 try (OrtSession.Result result = head.run(headInputs, REQUESTED)) {
                     return new Output(floats(result, "logits"), floats(result, "act_logits"));
@@ -184,7 +204,24 @@ public final class LayaSession implements InferenceSession {
                     "the laya graph's " + name + " output is not a tensor but a "
                     + value.getClass().getSimpleName());
         }
-        return (float[][]) ((OnnxTensor) value).getValue();
+        Object raw;
+        try {
+            raw = ((OnnxTensor) value).getValue();
+        } catch (OrtException failure) {
+            throw new InferenceException(
+                    "the laya graph's " + name + " output could not be read", failure);
+        }
+        if (!(raw instanceof float[][])) {
+            // Checked rather than cast. An fp16/fp64 export, or a re-export that changes the rank,
+            // produced a ClassCastException naming neither the graph nor the output -- through a
+            // method whose javadoc promises the backend never leaks, so a caller's
+            // catch (InferenceException) did not catch it.
+            throw new InferenceException(String.format(
+                    "the laya graph's %s output must be a 2-D float tensor, got %s;"
+                    + " re-export the graph with float32 logits of shape [batch, markers]",
+                    name, raw == null ? "null" : raw.getClass().getSimpleName()));
+        }
+        return (float[][]) raw;
     }
 
     /** Whether this session has been closed, so a caller gets an API error, not a backend one. */

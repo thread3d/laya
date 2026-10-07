@@ -2318,6 +2318,54 @@ def test_batch_item_shape_as_documented():
            named == {"state", "questions"} | set(BATCH_ITEM_OVERRIDES), repr(sorted(named)))
 
 
+def test_cli_mcp_page_batch_rows():
+    """Each batch row on the MCP docs page names its own key set, not the sibling's.
+
+    `docs/cli-mcp.md` is the page a client reads before opening the tools/list response, so the
+    `requests` cell is a fourth copy of the shape. Until now the three-copy gate above covered
+    the tool descriptions and the README but not this table, and the `laya_route_batch` row read
+    "same shape as `laya_predict_batch`" -- which is wrong, because `server.py:310` registers the
+    route tool with `batch_item_key_doc(omit=("max_len", "head_max_len"))`. Routing runs no
+    forward pass, so the token budgets are dropped; the row has to say the six keys the tool
+    actually accepts.
+
+    Both rows are read from the rendered markdown (the third `|`-delimited cell of the table),
+    the brace-list is parsed out, and the resulting key set is compared to `batch_item_key_doc`
+    with the same `omit` the server registers. The pre-fix wording is banned by direct substring
+    so the check fails if the row reverts to pointing at the sibling instead of naming itself.
+    """
+    import re
+
+    page = (Path(__file__).resolve().parents[1] / "docs" / "cli-mcp.md").read_text(encoding="utf-8")
+
+    def row_cell(tool):
+        for line in page.splitlines():
+            if line.startswith("| `%s` |" % tool):
+                cells = [c.strip() for c in line.strip().strip("|").split("|")]
+                if len(cells) >= 3:
+                    return cells[2]
+        return None
+
+    for tool, omit in (("laya_predict_batch", ()),
+                       ("laya_route_batch", ("max_len", "head_max_len"))):
+        cell = row_cell(tool)
+        ok("docs-mcp/%s_row_present" % tool, cell is not None, "row not found")
+        if cell is None:
+            continue
+        match = re.search(r"`\{([^`]*)\}`", cell)
+        ok("docs-mcp/%s_row_has_brace_list" % tool, match is not None,
+           "cell=%r" % cell)
+        if match is None:
+            continue
+        named = {part.strip().rstrip("?") for part in match.group(1).split(",")}
+        want = {"state", "questions"} | (set(BATCH_ITEM_OVERRIDES) - set(omit))
+        ok("docs-mcp/%s_row_keys" % tool, named == want,
+           "row=%r want=%r" % (sorted(named), sorted(want)))
+
+    ok("docs-mcp/route_batch_row_drops_sibling_reference",
+       "same shape as `laya_predict_batch`" not in page)
+
+
 def test_models_from_env():
     old = os.environ.get("LAYA_MODELS")
     try:
@@ -2569,6 +2617,136 @@ def test_server_shortlist_k_default():
        "schema=%r library=%r" % (advertised, DEFAULT_SHORTLIST_K))
 
 
+def test_shortlist_metadata_keys_are_documented():
+    """Every key `predict_shortlist` publishes must be named by all three surfaces that list it.
+
+    `laya/shortlist.py` writes a five-key block per question: ``labels``, ``scores``, ``k``,
+    ``n`` and ``passthrough``. The tool description, the README and `docs/cli-mcp.md` each
+    paraphrase that block, and all three stopped at four -- they dropped ``passthrough``, the
+    one key that tells a caller whether the shortlist actually narrowed anything. A question
+    whose option count is at or below ``k`` is answered whole with ``scores`` set to ``None``,
+    so a client that assumes a real ranking was produced reads ``None`` as "no scores" rather
+    than "nothing to rank".
+
+    The key set is read out of `laya/shortlist.py`'s AST rather than typed here, so a sixth key
+    added to the metadata fails this gate on all three pages at once.
+    """
+    import ast
+    import re
+
+    root = Path(__file__).resolve().parents[1]
+    # `encoding="utf-8"` on every read below, for the reason recorded at the README read in the
+    # batch-shape gate: `Path.read_text()` and `open()` default to the locale encoding, which is
+    # cp1252 on the Windows runner, and these pages and `laya/shortlist.py` carry UTF-8.
+    with open(root / "laya" / "shortlist.py", encoding="utf-8") as f:
+        shortlist_src = f.read()
+    # Scoped to predict_shortlist's own body: predict_tournament also builds a `meta[qid]` dict,
+    # and a module-wide walk would depend on which one ast.walk happens to reach first.
+    body = [node for node in ast.walk(ast.parse(shortlist_src))
+            if isinstance(node, ast.FunctionDef) and node.name == "predict_shortlist"]
+    meta_keys = None
+    for node in ast.walk(body[0] if body else ast.parse("")):
+        if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict)
+                and isinstance(node.targets[0], ast.Subscript)
+                and isinstance(node.targets[0].value, ast.Name)
+                and node.targets[0].value.id == "meta"):
+            meta_keys = [ast.literal_eval(k) for k in node.value.keys]
+            break
+    ok("shortlist/meta_keys read from the AST",
+       meta_keys == ["labels", "scores", "k", "n", "passthrough"],
+       "AST read %r from laya/shortlist.py" % (meta_keys,))
+
+    # Each key needs a concept word on the page; the paraphrase never uses the raw key names.
+    REQUIRED = {
+        "labels": r"label",
+        "scores": r"score",
+        "k": r"\bk\b",
+        "n": r"option count",
+        "passthrough": r"passed through|unshortlisted",
+    }
+
+    by_name = {t.name: t for t in asyncio.run(mcp_server.list_tools())}
+    surfaces = {
+        "tool description": by_name["laya_shortlist"].description,
+        "README": (root / "README.md").read_text(encoding="utf-8"),
+        "docs/cli-mcp.md": (root / "docs" / "cli-mcp.md").read_text(encoding="utf-8"),
+    }
+    for where, text in surfaces.items():
+        flat = " ".join(text.split())
+        for key, pattern in REQUIRED.items():
+            ok("shortlist/%s names %s" % (where, key),
+               re.search(pattern, flat) is not None,
+               "the %s never spells the %r metadata key (looked for /%s/)" % (where, key, pattern))
+
+    # The pre-fix wording stopped the list at the option count; a surface that closes the list
+    # there again has dropped a key, whatever else it says.
+    for where, text in surfaces.items():
+        flat = " ".join(text.split())
+        ok("shortlist/%s does not end the list at option count" % where,
+           re.search(r"option count[),. ]*(?:The|the|for each| `k`|$)", flat) is None
+           or re.search(r"option count, and whether", flat) is not None,
+           "the list still closes on the option count: %s" % where)
+
+
+# Called here rather than from the tail list, because that block is where three open PRs each
+# append a line; one insertion point keeps this gate's diff to the lines it actually owns.
+test_shortlist_metadata_keys_are_documented()
+
+
+def test_cli_mcp_page_tool_argument_rows():
+    """Every single-shot tool row on the MCP docs page names every parameter the handler takes.
+
+    The "Main inputs" cell is a fourth copy of the shape, after the validator error message, each
+    tool's registered description, and the README. The existing gate at
+    `test_batch_item_shape_as_documented` covers the batch rows' per-request keys but does not
+    read the six single-shot rows, so a whole control can fall off the table while the tool
+    accepts it. The `laya_decide` row was in that state: the server registers
+    `laya_decide_tool(state, schema, model='auto', min_confidence=None)` and the tool's own
+    description spells out `min_confidence`, but the docs row read
+    "`state`, `schema`, optional `model`" -- so a caller who trusts the table hand-rolls the
+    abstention check on `values`, never learning the tool already nulls an unsure field.
+
+    Each row's third cell is read straight from `docs/cli-mcp.md`, and every public parameter
+    `inspect.signature()` sees on the registered handler must appear backticked in the cell.
+    Batch tools are skipped because their cell uses a `{...}` item shape that the sibling gate
+    above already holds against `batch_item_key_doc`. The pre-fix wording is banned by direct
+    substring so the check fails if the `laya_decide` row reverts.
+    """
+    import inspect
+
+    from laya.mcp import server as server_mod
+
+    page = (Path(__file__).resolve().parents[1] / "docs" / "cli-mcp.md").read_text(encoding="utf-8")
+
+    def row_cell(tool):
+        for line in page.splitlines():
+            if line.startswith("| `%s` |" % tool):
+                cells = [c.strip() for c in line.strip().strip("|").split("|")]
+                if len(cells) >= 3:
+                    return cells[2]
+        return None
+
+    for tool in ("laya_status", "laya_route", "laya_predict",
+                 "laya_shortlist", "laya_preset", "laya_decide"):
+        cell = row_cell(tool)
+        ok("docs-mcp/args_row_%s_present" % tool, cell is not None, "row not found")
+        if cell is None:
+            continue
+        handler = getattr(server_mod, "%s_tool" % tool)
+        params = [
+            p.name for p in inspect.signature(handler).parameters.values()
+            if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+            and not p.name.startswith("_")
+            and p.name not in ("router", "preset_builder")  # server-injected deps
+        ]
+        missing = [p for p in params if "`%s`" % p not in cell]
+        ok("docs-mcp/args_row_%s_names_every_param" % tool, not missing,
+           "missing=%r cell=%r" % (missing, cell))
+
+    ok("docs-mcp/args_row_decide_drops_the_three_param_version",
+       "| `state`, `schema`, optional `model` |" not in page)
+
+
 test_device()
 test_real_device()
 test_private_contract()
@@ -2599,10 +2777,12 @@ test_a_bad_question_is_a_caller_error_not_a_server_fault()
 test_timeout_removed()
 test_models_from_env()
 test_batch_item_shape_as_documented()
+test_cli_mcp_page_batch_rows()
 test_auto_task_env()
 test_default_model_env()
 test_server_registration()
 test_server_shortlist_k_default()
+test_cli_mcp_page_tool_argument_rows()
 
 print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
 for f in FAIL:
