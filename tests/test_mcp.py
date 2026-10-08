@@ -10,6 +10,7 @@ Device and preload-list tests follow the laya.serve environment contract
 (LAYA_DEVICE / LAYA_PRELOAD / LAYA_MODELS / LAYA_THREADS / LAYA_AUTO_TASK /
 LAYA_DEFAULT_MODEL).
 """
+import inspect
 import asyncio
 import os
 import sys
@@ -2482,10 +2483,14 @@ def test_default_model_env():
             mcp_mod._ROUTER = None  # the server caches the Router it built
             return mcp_mod._ensure_router(), build_router()
 
+        # Unset / empty / blank mean "whatever the Router's own default is", read off the
+        # signature rather than restated, so this cannot drift the next time it moves.
+        from laya.router import Router as _Router
+        _stock = inspect.signature(_Router.__init__).parameters["default"].default
         for label, value, want in (
-                ("unset", None, "english"),
-                ("empty", "", "english"),
-                ("blank", "   ", "english"),
+                ("unset", None, _stock),
+                ("empty", "", _stock),
+                ("blank", "   ", _stock),
                 ("canonical", "multilingual", "multilingual"),
                 ("alias", "ml", "multilingual"),
                 ("padded_upper", " MULTI ", "multilingual"),
@@ -2510,8 +2515,8 @@ def test_default_model_env():
         stock_mcp, stock_serve = build(None)
         nonenglish_mcp, nonenglish_serve = build("multilingual")
         for index, state in enumerate(("12345 !!!", "Quero cancelar")):
-            ok("default_model/stock_english_%d" % index,
-               stock_mcp.route(state).model == "english" == stock_serve.route(state).model,
+            ok("default_model/stock_%d" % index,
+               stock_mcp.route(state).model == _stock == stock_serve.route(state).model,
                "mcp=%r serve=%r" % (stock_mcp.route(state).model, stock_serve.route(state).model))
             ok("default_model/fallback_multilingual_%d" % index,
                nonenglish_mcp.route(state).model == "multilingual"

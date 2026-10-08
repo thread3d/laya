@@ -522,7 +522,7 @@ check_true("skip/refusal under hooks_raise=False is warned",
 
 # Router.predict used to turn an empty answer into `ctx.results[0]` -- IndexError, a 500
 # over serve. The same refusal, raised where the contract is written.
-_skip_router = Router()
+_skip_router = Router(default="english")
 _skip_router.attach("english", FakeAgent())
 check_raises("router/skip empty is a ValueError, not an IndexError",
              ValueError,
@@ -530,7 +530,7 @@ check_raises("router/skip empty is a ValueError, not an IndexError",
                                           on_predict_start=lambda ctx: ctx.skip([])))
 
 log = []
-r = Router()
+r = Router(default="english")
 r.add_hook(Tag(log, "router"))
 r.attach("english", FakeAgent())
 r.predict("hello", QUESTIONS)
@@ -573,13 +573,13 @@ class LenFake:
 
 
 lf = LenFake()
-r = Router()
+r = Router(default="english")
 r.attach("english", lf)
 r.predict("hello", QUESTIONS, max_len=256, head_max_len=128)
 check("budget/router per-call reaches the agent", lf.seen, [(256, 128)])
 
 lf = LenFake()
-r = Router()
+r = Router(default="english")
 r.attach("english", lf)
 r.predict("hello", QUESTIONS, on_predict_start=lambda c: setattr(c, "head_max_len", 96))
 check("budget/router hook-set reaches the agent", lf.seen, [(None, 96)])
@@ -592,7 +592,7 @@ class StrictFake:
         return {"model": "x", "answers": {}, "usage": {"input_tokens": 0, "output_tokens": 0}}
 
 
-r = Router()
+r = Router(default="english")
 r.attach("english", StrictFake())
 r.predict("hello", QUESTIONS)
 check("budget/default does not pass override kwargs", True, True)
@@ -639,7 +639,7 @@ class RouteHook:
 
 
 rh = RouteHook()
-r = Router(hooks=[rh])
+r = Router(default="english", hooks=[rh])
 decision = r.route("hello", QUESTIONS)
 check("router/on_route fired", len(rh.decisions), 1)
 check("router/on_route saw the original", rh.decisions[0]["model"], "english")
@@ -667,7 +667,7 @@ lh = LoadHook()
 real_agent = _agent_mod.Agent
 _agent_mod.Agent = BuiltAgent
 try:
-    r = Router(max_loaded=1, hooks=[lh])
+    r = Router(max_loaded=1, default="english", hooks=[lh])
     r.load("english")
     r.load("multilingual")  # evicts english
 finally:
@@ -677,7 +677,8 @@ check("router/on_evict fired on eviction", lh.evicts, ["english"])
 
 
 predict_seen = {}
-r = Router(on_predict_start=lambda ctx: predict_seen.update(decision=dict(ctx.decision)),
+r = Router(default="english",
+           on_predict_start=lambda ctx: predict_seen.update(decision=dict(ctx.decision)),
            on_predict_end=lambda ctx: predict_seen.update(results=ctx.results))
 r.attach("english", FakeAgent())
 out = r.predict("hello", QUESTIONS)
@@ -701,7 +702,7 @@ class PredictSuccessTrace:
 
 
 success_trace = PredictSuccessTrace()
-r = Router(hooks=[success_trace])
+r = Router(default="english", hooks=[success_trace])
 r.attach("english", FakeAgent())
 success_out = r.predict("hello", QUESTIONS)
 check("router/predict success lifecycle", success_trace.events, ["start", "end"])
@@ -724,14 +725,14 @@ class TimedRouter(Router):
 
 
 timed_trace = PredictSuccessTrace()
-timed_router = TimedRouter(hooks=[timed_trace])
+timed_router = TimedRouter(default="english", hooks=[timed_trace])
 timed_router.predict("hello", QUESTIONS)
 timed_ctx = timed_trace.contexts[0]
 check_true("router/success elapsed starts after load", timed_ctx.started_at >= timed_router.load_finished)
 
 
 cached = [{"model": "cached", "answers": {}, "usage": {"input_tokens": 0, "output_tokens": 0}}]
-r = Router()
+r = Router(default="english")
 r.attach("english", FakeAgent())
 skipped = r.predict("hello", QUESTIONS, on_predict_start=lambda c: c.skip(cached))
 check("router/skip returns the cached payload", skipped, cached[0])
@@ -747,7 +748,7 @@ class PerCallRoute:
 
 
 pcr = PerCallRoute()
-r = Router()
+r = Router(default="english")
 r.attach("english", FakeAgent())
 r.predict("hello", QUESTIONS, hooks=[pcr])
 check("router/per-call hooks apply to on_route", len(pcr.decisions), 1)
@@ -800,7 +801,7 @@ class LoadFailRouter(Router):
 load_trace = PredictFailureTrace()
 load_error = None
 try:
-    LoadFailRouter(hooks=[load_trace]).predict("hello", QUESTIONS)
+    LoadFailRouter(default="english", hooks=[load_trace]).predict("hello", QUESTIONS)
 except RuntimeError as exc:
     load_error = exc
 check_true("router/load failure propagates", isinstance(load_error, RuntimeError))
@@ -1159,7 +1160,7 @@ check_true("router_batch/hooks_raise=False warns", any("start hook failed" in st
 
 
 # --------------------------------------------------------------- hooks_concurrent storage
-r = Router()
+r = Router(default="english")
 check("router/hooks_concurrent default True", r.hooks_concurrent, True)
 check_true("router/hooks_concurrent default has no lock", r._hooks_lock is None)
 r = Router(hooks_concurrent=False)
@@ -1380,7 +1381,7 @@ check("defaults/cover router lifecycle", ld.events,
 
 events = []
 _hooks.set_default_hooks([LevelTag("default")])
-r = Router()
+r = Router(default="english")
 r.attach("english", make_fake())
 r.predict("a", QUESTIONS, model="english")
 r.predict_batch([req("b")])

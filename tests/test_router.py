@@ -134,7 +134,9 @@ check("latin_lang/long english stays en",
 # `github` + `com`, so every domain in a state scored a Portuguese hit: two of them crossed the
 # margin and sent an English state with links in it to the multilingual checkpoint, reported as
 # Portuguese. A token whose dot or @ joins word characters is an identifier, not prose.
-_r_dotted = Router()
+# `default="english"` because this block is about identifiers not reading as foreign prose, not
+# about what the stock default is: a state of bare identifiers is language-undecided either way.
+_r_dotted = Router(default="english")
 for label, state in [
     ("url and email fields", {"url": "github.com", "email": "user@acme.com"}),
     ("two bare domains", "github.com acme.com"),
@@ -394,8 +396,9 @@ cases = [
     ("explicit lang en", {"body": "मुझसे दो बार"}, Q_GENERIC, {"lang": "en"}, "english"),
     ("explicit lang de", {"body": "hello there"}, Q_GENERIC, {"lang": "de"}, "multilingual"),
     ("td workflow, auto OFF", {"body": "I was charged twice"}, Q_TD, {}, "english"),
-    ("empty state", {}, Q_GENERIC, {}, "english"),
-    ("none state", None, Q_GENERIC, {}, "english"),
+    # letterless, so these follow `default`, which is multilingual since 0.4.0
+    ("empty state", {}, Q_GENERIC, {}, "multilingual"),
+    ("none state", None, Q_GENERIC, {}, "multilingual"),
 ]
 for label, state, qs, kw, want in cases:
     check("route/" + label, r.route(state, qs, **kw)["model"], want)
@@ -447,17 +450,23 @@ check("route/undecided reason mentions letters",
       "not identified" in _r_lat.route("Müşteriden iki kez ücret alındı ve para iadesi istiyor").reason, True)
 check("route/english still english",
       _r_lat.route("Please refund the duplicate charge on invoice 4411 today.").model, "english")
-check("route/short english still english", _r_lat.route("refund me").model, "english")
+# "refund me" names no language, so it follows `default` like any other undecided text rather
+# than being hard-coded English. With an English default it still reaches the English checkpoint.
+check("route/short english follows default",
+      Router(default="english").route("refund me").model, "english")
 
 # Undecided Latin text follows `default`, as a state with no letters already did. Short messages made
 # only of content words carry nothing that names their language, and hard-coding English for them
 # sent every short Portuguese message to the checkpoint that is 0.97 confident at 0.47 accuracy on
-# `pt`, whatever the router was configured with.
+# `pt`, whatever the router was configured with. Since 0.4.0 the stock default is `multilingual`,
+# so both arms below are exercised: the stock one and an explicit English override.
 _r_ml = Router(default="multilingual")
+_r_en = Router(default="english")
 for text in ["Quero cancelar", "Esqueci minha senha", "Fui cobrado duas vezes",
              "Produto veio quebrado, quero trocar", "refund me"]:
     check("route/undecided follows default " + text[:24], _r_ml.route(text).model, "multilingual")
-    check("route/undecided stock default " + text[:24], _r_lat.route(text).model, "english")
+    check("route/undecided stock default " + text[:24], _r_lat.route(text).model, "multilingual")
+    check("route/undecided english override " + text[:24], _r_en.route(text).model, "english")
 check("route/undecided reason names the default",
       "using default (multilingual)" in _r_ml.route("Esqueci minha senha").reason, True)
 # identified English is not undecided, so a non-English default leaves it alone
@@ -606,7 +615,8 @@ for text in [
     "The son of the director filed a complaint about the duplicate invoice",
 ]:
     check("is_english/romance control " + text[:32], is_english(text), True)
-    check("route/romance control " + text[:32], _r_lat.route(text).model, "english")
+    check("route/romance control " + text[:32],
+          Router(default="english").route(text).model, "english")
 
 # A word several lists claim (`la`, `e`, `o`) says "not English" without saying *which* language, so
 # it may not name one on its own -- the same rule as the 0-0 tie above, which is why the sample
@@ -1547,12 +1557,15 @@ for label, text in (
 # Fullwidth Latin is Latin, not an unlisted script.
 check("unlisted/fullwidth latin is latin", detect_script("ＨＥＬＬＯ"), "latin")
 
-# A state with no letters at all must keep behaving exactly as before.
+# A state with no letters at all takes `default`, whatever that is, which is the behaviour that
+# must not change. Both arms are checked so this cannot pass by agreeing with one constant.
 for label, text in (("empty", ""), ("digits only", "12345 67890"), ("emoji only", "😀😀😀")):
     check("unlisted/letterless " + label + " is still unknown",
           analyse(text)["script"], "unknown")
-    check("unlisted/letterless " + label + " keeps the default",
-          Router().route(text)["model"], "english")
+    check("unlisted/letterless " + label + " keeps the stock default",
+          Router().route(text)["model"], "multilingual")
+    check("unlisted/letterless " + label + " keeps an english default",
+          Router(default="english").route(text)["model"], "english")
 
 # The scripts the table does name must be untouched.
 for label, text, script in (

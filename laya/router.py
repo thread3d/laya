@@ -639,7 +639,17 @@ class Router(HookRegistry):
         revision: Optional[str] = None,
         revisions: Optional[Dict[str, Optional[str]]] = None,
         max_loaded: int = 2,
-        default: str = "english",
+        # The fallback for text whose language detection abstains, not for all traffic:
+        # detected non-Latin script already routes to `multilingual` whatever this says.
+        # `multilingual` since 0.4.0, on the refreshed 51-language sweep: it leads on 50 of
+        # the 51, the one exception being English itself (0.820 against 0.710), and by 0.180
+        # macro accuracy excluding English. The break-even is about 62% English traffic, so a
+        # mostly-English deployment should set `default="english"` back. The asymmetry that
+        # settles it for undecided text is the failure mode rather than the mean: off English
+        # the English checkpoint collapses while staying confident (Khmer 0.000 accuracy at
+        # 0.952 mean confidence), so no `min_confidence` gate downstream can catch it, while
+        # the multilingual checkpoint gives up 0.110 on English and stays gateable.
+        default: str = "multilingual",
         auto_task_detection: bool = False,
         standalone_repos: bool = False,
         preload: bool = False,
@@ -1216,8 +1226,11 @@ class Router(HookRegistry):
         elif det["language_undecided"]:
             # Nothing identifies the language: too short, or only content words ("Quero cancelar",
             # "Esqueci minha senha"). That is no evidence of English either, so it takes the same
-            # `default` as a state with no letters. A deployment that serves mostly non-English
-            # traffic sets `Router(default="multilingual")`; the stock default keeps it English.
+            # `default` as a state with no letters, which is `multilingual` since 0.4.0.
+            # #54 measured the cost of the old English default here: 128 of 200 German
+            # utterances reached this branch and lost 20 accuracy points against
+            # `model="multilingual"` on the same rows. A mostly-English deployment sets
+            # `Router(default="english")`.
             key = self.default
             reason = ("Latin script, language not identified and no non-English letters; "
                       "using default (%s)" % key)

@@ -2,8 +2,9 @@
 
 `Router` chooses a checkpoint for each request and loads its `Agent` when prediction needs it.
 The default router sends English text to the English checkpoint and other supported languages to
-the multilingual checkpoint. You can override that choice, supply your own language hint, or select
-the typed-decisions checkpoint explicitly.
+the multilingual checkpoint. Text whose language it cannot place follows `default`, which is the
+multilingual checkpoint since 0.4.0. You can override that choice, supply your own language hint, or
+select the typed-decisions checkpoint explicitly.
 
 This guide covers model selection and lifecycle. For the question types accepted by prediction,
 see [Structured decisions](structured.md); for lifecycle callbacks, see [Prediction hooks](hooks/index.md).
@@ -51,7 +52,7 @@ Routing checks inputs in this order:
 4. A recognized `lang=` value selects English or multilingual.
 5. A per-call `lang_guess=` or the router's configured `lang_guess` is consulted.
 6. Built-in script and language analysis selects a checkpoint. If there is no reliable language
-   signal, the router uses its configured `default` (English by default).
+   signal, the router uses its configured `default` (multilingual since 0.4.0).
 
 The first matching rule wins. For example, `model="multilingual"` overrides `lang="en"`. Invalid
 model names raise `ValueError` instead of falling through to detection.

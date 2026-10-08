@@ -792,7 +792,7 @@ def test_default_model_reaches_the_router_the_server_builds(monkeypatch):
     # docs/docker.md quote, so moving Router's default has to move those too.
     router, _ = _server_router(monkeypatch)
     assert router.default == Router().default
-    assert router.default == "english"
+    assert router.default == "multilingual"
     for raw, want in (("multilingual", "multilingual"), ("ml", "multilingual"),
                       (" MULTI ", "multilingual"), ("typed-decisions", "typed-decisions")):
         router, _ = _server_router(monkeypatch, LAYA_DEFAULT_MODEL=raw)
@@ -803,10 +803,14 @@ def test_default_model_reaches_the_router_the_server_builds(monkeypatch):
     # this costs no weights.
     ambiguous = ("12345 !!!", "Quero cancelar", "Esqueci minha senha")
     stock, _ = _server_router(monkeypatch)
+    english, _ = _server_router(monkeypatch, LAYA_DEFAULT_MODEL="english")
     portuguese, _ = _server_router(monkeypatch, LAYA_DEFAULT_MODEL="multilingual")
     for state in ambiguous:
-        assert stock.route(state).model == "english", state
-        assert "using default (english)" in stock.route(state).reason, state
+        # the stock default since 0.4.0, and an explicit override in each direction
+        assert stock.route(state).model == "multilingual", state
+        assert "using default (multilingual)" in stock.route(state).reason, state
+        assert english.route(state).model == "english", state
+        assert "using default (english)" in english.route(state).reason, state
         assert portuguese.route(state).model == "multilingual", state
         assert "using default (multilingual)" in portuguese.route(state).reason, state
     # A fallback, not a pin: text the detector can place routes on what it detects.

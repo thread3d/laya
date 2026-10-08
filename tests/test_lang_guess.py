@@ -171,8 +171,9 @@ check("standalone/hint still uses the standalone repo",
 BEFORE = [("plain english", "I was charged twice and want a refund", "english"),
           ("German with umlauts", "Mein Konto wurde zweimal belastet, bitte erstatten Sie", "multilingual"),
           ("Hindi", "यह एक हिंदी वाक्य है", "multilingual"),
-          ("empty", "", "english"),
-          ("digits", "12345", "english")]
+          # letterless, so these follow `default`, which is multilingual since 0.4.0
+          ("empty", "", "multilingual"),
+          ("digits", "12345", "multilingual")]
 for label, s, want in BEFORE:
     check("unchanged/" + label, r0.route(s, GENERIC)["model"], want)
 
@@ -459,7 +460,11 @@ _COMPLAINT = ("I ordered a blender on the 3rd of March and it arrived broken.\n"
               "I asked for a refund the same week and nobody has replied to me since.\n"
               "%s\n"
               "Please tell me when the money will be back on my card.")
-_route = Router(preload=False)
+_route = Router(preload=False, default="english")   # see the note below
+# `default="english"` deliberately: a bare acronym line is language-undecided, so under the
+# stock 0.4.0 default it routes multilingual for want of evidence rather than because it was
+# named French. Pinning the default keeps these rows testing #1013 (the acronym must not be
+# named as foreign prose) instead of re-testing the default, which test_router.py covers.
 check("shouted/bare acronym state routes english",
       _route.route("MON DES EST LA")["model"], "english")
 for _n in (1, 2, 3):
