@@ -1,15 +1,19 @@
-"""YU-344: the Kaggle 2xT4 DDP notebook converged onto the canonical training primitives.
+"""YU-344: the Kaggle 2xT4 DDP path converged onto the canonical training primitives.
 
-Weight-free checks: the distributed script keeps its process-group / shard
-orchestration but delegates item construction, encoding, collation, the RLCD
-loss, the calibration holdout, record building and temperature fitting to
-`laya.train` / `laya.common` / `laya.calibrate`.
+Weight-free checks. This fork moved the RLCD loop out of the notebook into
+`laya/finetune.py`, so the same code runs on the Kaggle T4 pair, MPS and CPU; the notebook
+drives it instead of owning a copy. The loop keeps the process-group / shard orchestration
+but delegates the model, the reward and the temperature fit to `laya.common` /
+`laya.calibrate`. Upstream still writes the loop into a `%%writefile train_ddp.py` cell and
+asserts its imports there; asserting the delegating shape here is what keeps this fork's
+notebook from growing a private copy back. The last four classes cover the shared
+primitives the loop is built from, and pass either way.
 
 Run: python tests/test_kaggle_ddp_convergence.py
 """
 import json
 import os
-import random
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -20,46 +24,46 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np  # noqa: E402
-import torch  # noqa: E402
 
 from laya.calibrate import fit_temperature_map  # noqa: E402
 from laya.common import TEMP_MAX, TEMP_MIN, collate_items  # noqa: E402
 from laya.train import sigma_at, split_calibration  # noqa: E402
 
 NOTEBOOK = Path(__file__).resolve().parents[1] / "notebooks" / "laya_finetune_typed_decisions_2xT4_kaggle.ipynb"
-
-
-def _cell(nb, i):
-    return "".join(nb["cells"][i]["source"])
+MODULE = Path(__file__).resolve().parents[1] / "laya" / "finetune.py"
 
 
 class NotebookDelegationTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.nb = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
-        cls.ddp = _cell(cls.nb, 8)
-        cls.prep = _cell(cls.nb, 6)
+        cls.cells = ["".join(cell["source"]) for cell in cls.nb["cells"]]
+        cls.loop = MODULE.read_text(encoding="utf-8")
 
-    def test_ddp_script_imports_canonical_primitives(self):
-        for name in ("encode_item", "rlcd_loss", "save_checkpoint", "sigma_at",
-                     "split_calibration", "calibration_records"):
-            self.assertIn(name, self.ddp)
-        self.assertIn("collate_items", self.ddp)
-        self.assertIn("fit_temperature_map", self.ddp)
+    def test_notebook_writes_no_training_script(self):
+        written = [cell.splitlines()[0] for cell in self.cells if cell.startswith("%%writefile")]
+        self.assertEqual(written, [], "the notebook owns a private training script again")
 
-    def test_ddp_script_has_no_private_training_semantics(self):
-        for gone in ("def collate_train_batch", "def fit_one_temp",
-                     "def build_training_item", "def fit_one_temperature"):
-            self.assertNotIn(gone, self.ddp)
+    def test_notebook_delegates_the_loop(self):
+        self.assertTrue(
+            any(re.search(r"from laya\.finetune import .*train_rlcd", cell) for cell in self.cells),
+            "the notebook no longer drives laya.finetune.train_rlcd")
 
-    def test_prep_cell_uses_canonical_item_construction(self):
-        self.assertIn("items_from_rows", self.prep)
-        self.assertNotIn("def build_training_item", self.prep)
+    def test_module_owns_the_orchestration(self):
+        self.assertIn("def train_rlcd", self.loop)
+        # Sharding is module-private: it is the part that stays out of the notebook.
+        self.assertIn("train_items[rank::world_size]", self.loop)
+
+    def test_module_delegates_model_and_reward(self):
+        # ...while the semantics come from the canonical primitives, not a second copy of them.
+        self.assertIn("from .common import build_model, proper_reward", self.loop)
+        for gone in ("def proper_reward", "class DecisionModel"):
+            self.assertNotIn(gone, self.loop)
 
     def test_calibration_held_out_before_sharding(self):
-        split_at = self.ddp.index("split_calibration")
-        shard_at = self.ddp.index("train_items[rank::world_size]")
-        self.assertLess(split_at, shard_at)
+        holdout_at = self.loop.index("calib_idx")
+        shard_at = self.loop.index("train_items[rank::world_size]")
+        self.assertLess(holdout_at, shard_at)
 
 
 class SplitCalibrationTest(unittest.TestCase):
