@@ -251,6 +251,20 @@ in
       '';
     };
 
+    tournamentGroup = lib.mkOption {
+      type = lib.types.nullOr (lib.types.ints.between 2 100);
+      default = null;
+      example = 16;
+      description = ''
+        Answer a `choice` with more options than this by elimination, in groups
+        of this size, on /v1/systemone and /v1/systemone/batch (sets
+        `LAYA_TOURNAMENT_GROUP`), and raise their option cap from 100 to 255.
+        Every option still comes back in `probabilities`; one eliminated in an
+        earlier round carries 0.0. null leaves it off, so every choice is read
+        in one pass as before.
+      '';
+    };
+
     revision = lib.mkOption {
       type = lib.types.nullOr (lib.types.strMatching "[A-Za-z0-9._/-]+");
       default = null;
@@ -284,6 +298,22 @@ in
       '';
     };
 
+    extraModels = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = ''{"my-checkpoint": "/var/lib/laya/my-checkpoint"}'';
+      description = ''
+        Checkpoints to register beside the bundled ones (sets
+        `LAYA_EXTRA_MODELS`), as a JSON object mapping a name to its source: a
+        Hub repo id, a local checkpoint directory, or a `["repo", "subfolder"]`
+        pair. A name matching a bundled checkpoint re-points it, which is how a
+        fine-tune is served under `english` without a code change. The server
+        parses and validates this at startup and refuses to start on a malformed
+        value or a name it will not accept, so this module passes it through
+        rather than restating the rules. null registers nothing.
+      '';
+    };
+
     defaultModel = lib.mkOption {
       type = lib.types.nullOr (lib.types.strMatching "[A-Za-z0-9._/-]+");
       default = null;
@@ -291,13 +321,13 @@ in
       description = ''
         Checkpoint a state with no language evidence falls back to (sets
         `LAYA_DEFAULT_MODEL`): text with no letters at all, or Latin script too
-        short to identify a language. Set it to `multilingual` when most traffic
-        on this host is not English. Text the detector can place is routed on
+        short to identify a language. Set it to `english` when most traffic
+        on this host is English. Text the detector can place is routed on
         what it detects, so this is a fallback and not a pin. The spellings
         accepted, and the aliases among them, are laya's own -- the server
         checks the value against them at startup and refuses to start on a name
         it does not know, so this module deliberately lists none. null leaves
-        laya's default, which is `english`.
+        laya's default, which is `multilingual`.
       '';
     };
 
@@ -363,8 +393,12 @@ in
         LAYA_MAX_TOKEN_BUDGET = toString cfg.maxTokenBudget;
       } // lib.optionalAttrs (cfg.maxBatchTokens != null) {
         LAYA_MAX_BATCH_TOKENS = toString cfg.maxBatchTokens;
+      } // lib.optionalAttrs (cfg.tournamentGroup != null) {
+        LAYA_TOURNAMENT_GROUP = toString cfg.tournamentGroup;
       } // lib.optionalAttrs (cfg.revision != null) {
         LAYA_REVISION = cfg.revision;
+      } // lib.optionalAttrs (cfg.extraModels != null) {
+        LAYA_EXTRA_MODELS = cfg.extraModels;
       } // lib.optionalAttrs (cfg.defaultModel != null) {
         LAYA_DEFAULT_MODEL = cfg.defaultModel;
       } // {

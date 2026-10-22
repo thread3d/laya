@@ -80,10 +80,13 @@ exactly the keys `false` and `true`, and the polarity is unchanged: `noul` is st
  "labels": {"false": "automatic", "true": "escalate"}}
 ```
 
-Labels are not a way to fix a question the model gets wrong. `noul` follows its own option
-labels, most strongly on the English checkpoint, so a label pair that reads as a decision
-("approve" / "reject") can pull the answer toward the label rather than the state. Validate any
-relabelling on your own data before relying on it.
+Labels move the answer, in both directions. `noul` follows its own option labels, most strongly
+on the English checkpoint, so a label pair that reads as a decision ("approve" / "reject") can
+pull the answer toward the label rather than the state. That same pull is the one workaround for
+the wordings in [#1244](https://github.com/NandhaKishorM/laya/issues/1244) that answer without
+reading the state at all: naming the two options restores the question, where rewording it does
+not reliably. So labels are worth reaching for when an answer ignores the state, and worth
+suspecting when an answer tracks the label. Validate any relabelling on your own data either way.
 
 ### `score` — an ordered level
 
@@ -236,6 +239,10 @@ That mirrors what the library does for a `choice` question written as a list of 
   return the cancellation label for a state that says *not* to cancel, with high confidence, on
   both checkpoints. See [#377](https://github.com/NandhaKishorM/laya/issues/377).
 - **`noul` can follow its labels rather than the state**, so validate any relabelling.
+- **A `noul` instruction asking whether something is "positive" can answer no for every state**,
+  at confidence 1.0, on both PyTorch checkpoints. Setting `labels` to the two words restores it;
+  capitalising the word helps in some wordings and not in others. See
+  [#1244](https://github.com/NandhaKishorM/laya/issues/1244).
 - **More options is not free.** Past roughly 20 the model degrades quickly; use the shortlist
   helper to reduce a large label space before asking, or split it into a coarse and a fine
   question.

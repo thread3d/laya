@@ -26,8 +26,20 @@ from tokenizers.models import WordLevel  # noqa: E402
 from transformers import BertConfig, BertModel, PreTrainedTokenizerFast  # noqa: E402
 
 from laya import load  # noqa: E402
-from laya.calibrate import records_from_labeled  # noqa: E402
+from laya.calibrate import fit_temperature_map, records_from_labeled  # noqa: E402
 from laya.common import DecisionModel, QTYPES, TEMP_MIN, TEMP_MAX  # noqa: E402
+
+
+def _config_only_save_checkpoint(model, tok, cfg, path):
+    """`save_checkpoint`'s config write, without the weights it also owns.
+
+    This suite owns the shape of `rl_agent_config.json`, not `model.safetensors`. Binding the
+    notebook's own call to `save_checkpoint` is what still fails when it stops persisting the
+    config; reproducing how the dict is built here is what would miss a notebook regression.
+    """
+    os.makedirs(path, exist_ok=True)
+    with open(os.path.join(path, "rl_agent_config.json"), "w", encoding="utf-8") as fh:
+        json.dump(cfg, fh, indent=2)
 
 
 def export_notebook_config(cfg, fitted_temps, output_dir):
@@ -264,6 +276,18 @@ class CalibrationPersistenceTests(unittest.TestCase):
         # so a range wider than the runtime's is caught in both directions.
         peaked = [([10.0, 0.0], [0.5, 0.5]) for _ in range(20)]
         dipped = [([0.0, 4.0], [0.0, 1.0]) for _ in range(20)]
+
+        # With no entry point owning a hand-rolled fit, the tree sweep below can match
+        # nothing, so drive the fit every entry point now reaches with the same two inputs:
+        # the bound this test exists for is asserted either way.
+        for label, sel in (("peaked", peaked), ("dipped", dipped)):
+            t_fit = fit_temperature_map(
+                [(QTYPES["choice"], z, t, len(z)) for z, t in sel]
+            )["temperature"][QTYPES["choice"]]
+            self.assertGreaterEqual(
+                t_fit, TEMP_MIN, "fit_temperature_map(%s) fitted %.4g" % (label, t_fit))
+            self.assertLessEqual(
+                t_fit, TEMP_MAX, "fit_temperature_map(%s) fitted %.4g" % (label, t_fit))
 
         for rel, name, body in fitters:
             with self.subTest(source=rel, function=name):

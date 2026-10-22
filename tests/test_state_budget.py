@@ -24,6 +24,23 @@ fires on the spare budget, while they still fit), that 16 is a minimum *reserved
 per option the head grows past the cap and takes the state's room with it). The last sections of
 this file pin the page to `build_head` — behaviourally, and by reading the budget's literals out of
 the function instead of typing them in here.
+
+A third surface teaches the same budget from the other side: the *default scan window* of
+`predict_long`, which `window_budget` guards with a floor. README.md and
+`docs/hooks/patterns.md` both stated the guarded quantity on its own, which is wrong exactly where
+the floor is the answer -- at `max_len=512, head_max_len=448` the stated figure is 56 while the scan
+runs 64-token windows -- and neither page said that the state's room still binds below the floor, or
+that a head which fills the sequence is refused instead of scanning at the 0 the subtraction leaves.
+The final sections pin those two pages to `window_budget`, and `window_budget` to what they now
+promise.
+
+A fourth surface teaches the budget by naming where it can be set: `docs/routing.md`'s
+`predict_batch()` section listed the four per-request *routing* overrides and stopped, so the two
+token budgets a request can carry -- the per-request form of the very thing this suite measures --
+were missing from the guide that sells heterogeneous batches. The last sections read the keys out of
+`Router.route_batch` and `Router.predict_batch` themselves (indexed for required, `.get()` for
+optional, with the routing delegation verified) and pin the page to them, plus `structured.py`'s
+own declared list of those keys, which is what `decide_batch` builds per-request dicts from.
 """
 import ast
 import inspect
@@ -34,7 +51,7 @@ import textwrap
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from laya.common import build_head, build_sequence, render_options  # noqa: E402
+from laya.common import build_head, build_sequence, render_options, state_room, window_budget  # noqa: E402
 
 PASS, FAIL, SKIPPED = [], [], []
 
@@ -459,6 +476,310 @@ def test_page_arithmetic_is_build_head_arithmetic():
               int(result), want)
 
 
+# ------------------------------------------- the default scan window, against the floor it teaches
+
+# `window_budget` has guarded the default window with a floor since the feature landed, and the two
+# markdown pages that teach the default taught the guarded quantity alone. Scoped to the pages that
+# teach the *window* on purpose, like the docstring gate in tests/test_predict_long.py: the bare
+# subtraction is a true statement about the STATE room elsewhere in the README (`state_room`
+# measures the head that was actually built), and a sweep that demanded the floor on every mention
+# of it would be wrong.
+
+DOC_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+WINDOW_PAGES = ("README.md", os.path.join("docs", "hooks", "patterns.md"))
+SUBTRACTION = re.compile(r"max_len\s*-\s*head_max_len")
+
+
+def _window_default_expr():
+    """The default window exactly as `window_budget` computes it, as `(expression, floor)`.
+
+    Read out of the function rather than typed in here, so a page holding a stale number fails
+    instead of agreeing with itself -- and so does the other direction, a `window_budget` that
+    stopped guarding the default, because then the guard this function looks for is not there.
+    """
+    src = textwrap.dedent(inspect.getsource(window_budget))
+    tree = ast.parse(src)
+    assigns = [node for node in ast.walk(tree)
+               if isinstance(node, ast.Assign)
+               and any(getattr(t, "id", "") == "requested" for t in node.targets)]
+    assert assigns, (
+        "`window_budget` no longer works the default out into `requested`, so this suite cannot read "
+        "the expression the pages have to teach")
+    calls = [node for node in ast.walk(assigns[0])
+             if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "max"
+             and len(node.args) == 2 and isinstance(node.args[0], ast.Constant)
+             and isinstance(node.args[0].value, int)]
+    assert calls, (
+        "`window_budget` no longer guards the default window with max(<constant>, the budget), so "
+        "the floor README.md and docs/hooks/patterns.md teach is not the code's: the prose has to "
+        "change, not these assertions")
+    return ast.get_source_segment(src, calls[0]), calls[0].args[0].value
+
+
+def _markdown_paragraphs():
+    """Paragraphs of the repo's markdown, as `(repo-relative path, first line, normalised text)`.
+
+    A paragraph is a run of contiguous non-blank lines -- the unit a reader sees, and the unit both
+    pages carry this teaching in. Code fences come along as paragraphs too, so a fence that pairs
+    the budget with the word `window` has to teach the floor like prose does.
+    """
+    paths = [os.path.join(DOC_ROOT, "README.md")]
+    for dirpath, _dirnames, filenames in sorted(os.walk(os.path.join(DOC_ROOT, "docs"))):
+        for filename in sorted(filenames):
+            if filename.endswith(".md"):
+                paths.append(os.path.join(dirpath, filename))
+
+    out = []
+    for path in paths:
+        with open(path, encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+        start, block = None, []
+        for i, line in enumerate(lines, 1):
+            if line.strip():
+                if start is None:
+                    start = i
+                block.append(line)
+            elif block:
+                out.append((os.path.relpath(path, DOC_ROOT), start,
+                            re.sub(r"\s+", " ", " ".join(block))))
+                start, block = None, []
+        if block:
+            out.append((os.path.relpath(path, DOC_ROOT), start, re.sub(r"\s+", " ", " ".join(block))))
+    return out
+
+
+def test_the_window_default_is_floored():
+    """Widening the head stops shaving the default once the floor is reached.
+
+    The ground truth the two pages have to match: at `max_len=512` a `head_max_len=448` leaves a
+    budget under the floor and the scan still runs floor-sized windows, and at 504 the budget is 0
+    while the window is still the floor. The 4-option question leaves room far above the floor here,
+    so it is the floor that decides and not the room clamp.
+    """
+    expr, floor = _window_default_expr()
+    tok = _FakeTok()
+    for head_max_len in (448, 504):
+        budget = 512 - head_max_len - 8
+        assert budget < floor, (
+            "fixture: head_max_len=%d has to leave a budget under the floor, or the floor is not "
+            "what this case tests (budget %d, floor %d)" % (head_max_len, budget, floor))
+        room = state_room(tok, Q, 512, head_max_len)
+        assert room > floor, (
+            "fixture: this question has to leave room above the floor (%d), or the room clamp and "
+            "not the floor decides the window" % room)
+        size, step, got_room = window_budget(tok, [Q], 512, head_max_len)
+        assert size == floor, (
+            "the default window at max_len=512, head_max_len=%d is %d, not the budget's %d: `%s` "
+            "alone is what the pages must not teach" % (head_max_len, size, budget, expr))
+        assert got_room == room and step == floor // 2, (
+            "the floor is meant to size the window, not to move the room or the stride: %d/%d"
+            % (got_room, step))
+
+
+def test_the_room_still_binds_below_the_floor():
+    """The floor does not rescue a state from its own options, and a full head is refused.
+
+    A question whose head leaves less room than the floor scans at that room, and a head that fills
+    the sequence raises instead of scanning at the 0 the subtraction would leave -- both of them are
+    in docs/hooks/patterns.md now, so they need a witness in the code.
+    """
+    expr, floor = _window_default_expr()
+    tok = _FakeTok()
+    tight = _many_options(110)
+    room = state_room(tok, tight, 512, 192)
+    assert 0 < room < floor, (
+        "fixture: this question has to leave room under the floor, got %d against floor %d -- the "
+        "fake tokenizer's head arithmetic moved, and the page's claim with it" % (room, floor))
+    size, step, got_room = window_budget(tok, [tight], 512, 192)
+    assert (size, step, got_room) == (room, room // 2, room), (
+        "a question under the floor has to scan at its own room, not at the floor: %r"
+        % ((size, step, got_room),))
+
+    full = _many_options(130)
+    assert state_room(tok, full, 512, 192) == 0, (
+        "fixture: this question has to fill the sequence, or the refusal below tests nothing")
+    try:
+        window_budget(tok, [full], 512, 192)
+    except ValueError as e:
+        assert "no room for the state" in str(e), (
+            "the refusal has to say why the scan cannot proceed: %s" % str(e)[:120])
+    else:
+        raise AssertionError(
+            "a head that fills the sequence must be refused, not scan at the 0 `%s` would leave "
+            "unguarded" % expr)
+
+
+def test_no_page_states_the_window_budget_without_the_floor():
+    """Every markdown paragraph pairing the budget with `window` teaches the floored expression."""
+    expr, _floor = _window_default_expr()
+    paragraphs = _markdown_paragraphs()
+    for page in WINDOW_PAGES:
+        assert any(path == page for path, _line, _text in paragraphs), (
+            "the sweep read no paragraph from %s, so it cannot check what the page teaches" % page)
+
+    bare = []
+    for path, line, text in paragraphs:
+        restated = text.replace(expr, "")
+        found = SUBTRACTION.search(restated)
+        if found and re.search(r"\bwindows?\b", restated, re.I):
+            bare.append("%s:%d -- ...%s..." % (path, line,
+                                               restated[max(0, found.start() - 60):found.end() + 60]))
+    assert not bare, (
+        "these paragraphs state the window budget as the bare subtraction, which is not what "
+        "`window_budget` computes -- the default is `%s`: %s" % (expr, bare))
+
+
+def test_both_pages_teach_the_floored_default():
+    """The floor has to be taught as the default on both pages that carry the word `window`."""
+    expr, floor = _window_default_expr()
+    paragraphs = _markdown_paragraphs()
+    for page in WINDOW_PAGES:
+        stated = [para for path, _line, para in paragraphs
+                  if path == page and expr in para and "window" in para.lower()]
+        assert stated, (
+            "%s no longer states the default window as `%s` (floor %d), so the page teaches a "
+            "number the code does not compute" % (page, expr, floor))
+        taught = [para for para in stated
+                  if re.search(r"default\w*", para[max(0, para.find(expr) - 220):
+                                                   para.find(expr)].lower())]
+        assert taught, (
+            "%s carries `%s`, but nowhere inside the sentence that names the default -- a page can "
+            "state the floor beside a different claim and still teach the budget to a reader"
+            % (page, expr))
+
+
+# ------------------------------------------- the keys a batch request may set, against the page
+
+# The sections above pin the budget's *arithmetic*. This one pins the page that teaches where the
+# budget can be set at all, which is the other half of why a budget is usable: `docs/routing.md`'s
+# `predict_batch()` section listed four per-request keys where `Router` reads six, omitting the two
+# token budgets. So the per-request form of `max_len` -- the reason one wide question does not shrink
+# the rest of the batch, which is this file's whole subject -- was undiscoverable on the page that
+# sells heterogeneous batches, while `Router.predict_batch`'s docstring and
+# `laya/structured.py`'s `_ROUTER_REQUEST_KEYS` both named all six. Nothing compared the guide to the
+# methods, so the omission cost nothing to keep.
+#
+# Scoped to the two sentences that list a request's keys on purpose, the way the window sweep is
+# scoped to the pages that teach the window: `docs/routing.md` is the guide a reader of
+# `predict_batch()` lands on, and the reference page is generated from the docstring, which is
+# already right. A third page, README.md, names all six and passes unchanged.
+
+ROUTING_PAGE = os.path.join("docs", "routing.md")
+
+# Per method: the paragraph's anchor, and the span inside it that is the list of optional keys.
+# Anchored by wording, not by line number, so a rewrite of either sentence fails here with a message
+# instead of checking nothing.
+REQUEST_SECTIONS = {
+    "route_batch": ("Every `route_batch()` item needs",
+                    re.compile(r"optional routing overrides \((?P<list>[^)]*)\)")),
+    "predict_batch": ("Each request requires",
+                      re.compile(r"it may also include (?P<list>.*?)[.;]")),
+}
+BACKTICKED = re.compile(r"`([a-z_]+)`")
+
+
+def _batch_request_keys():
+    """`{method: (required, optional)}` as `Router` actually reads them off a request dict.
+
+    Required are the keys indexed out of a request (`request["state"]`), optional the keys looked up
+    with `.get()`, which is how `Router` distinguishes an unset override from an empty one. Read from
+    the source rather than transcribed here, so a key added to the code and not to the page fails,
+    and a page promising a key the code stopped reading fails too.
+
+    `predict_batch` gets its routing overrides from `route_batch`, which it calls with the requests
+    it was handed; that delegation is checked, not assumed, and the optional set is the union of the
+    two methods only once it is found.
+    """
+    path = os.path.join(DOC_ROOT, "laya", "router.py")
+    with open(path, encoding="utf-8") as fh:
+        tree = ast.parse(fh.read())
+    router = next(node for node in tree.body
+                  if isinstance(node, ast.ClassDef) and node.name == "Router")
+    methods = {node.name: node for node in router.body if isinstance(node, ast.FunctionDef)}
+    for name in REQUEST_SECTIONS:
+        assert name in methods, (
+            "`Router.%s` is no longer a method of `laya/router.py`, so nothing here can say what a "
+            "batch request may name" % name)
+
+    def receiver(node):
+        while isinstance(node, ast.Subscript):
+            node = node.value
+        return node.id if isinstance(node, ast.Name) else ""
+
+    def reads(name):
+        required, optional = set(), set()
+        for node in ast.walk(methods[name]):
+            if isinstance(node, ast.Subscript):
+                if receiver(node.value).startswith("request") and isinstance(node.slice, ast.Constant):
+                    required.add(node.slice.value)
+            elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                  and node.func.attr == "get"
+                  and receiver(node.func.value).startswith("request")
+                  and node.args and isinstance(node.args[0], ast.Constant)):
+                optional.add(node.args[0].value)
+        return required, optional
+
+    route = reads("route_batch")
+    predict = reads("predict_batch")
+    delegates = any(
+        isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "route_batch" and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "self" and node.args
+        and receiver(node.args[0]).startswith("request")
+        for node in ast.walk(methods["predict_batch"]))
+    assert delegates, (
+        "`Router.predict_batch` no longer routes its requests through `self.route_batch(requests, ...)`, "
+        "so the routing overrides a batch item may name have to be re-derived before the guide is "
+        "called complete")
+    return {"route_batch": route,
+            "predict_batch": (predict[0], predict[1] | route[1])}
+
+
+def _page_request_sentences():
+    """`{method: paragraph}` for the two sentences in `docs/routing.md` that list a request's keys."""
+    paragraphs = {method: [text for path, _line, text in _markdown_paragraphs()
+                           if path == ROUTING_PAGE and anchor in text]
+                  for method, (anchor, _pattern) in REQUEST_SECTIONS.items()}
+    for method, listed in paragraphs.items():
+        assert len(listed) == 1, (
+            "%s carries %d paragraphs containing %r, and this sweep reads exactly one: the page has "
+            "to keep one sentence per method that lists what a request may name"
+            % (ROUTING_PAGE, len(listed), REQUEST_SECTIONS[method][0]))
+    return {method: listed[0] for method, listed in paragraphs.items()}
+
+
+def test_the_routing_page_lists_every_key_a_batch_request_can_set():
+    """What the guide names as optional is what `Router` reads, key for key."""
+    derived = _batch_request_keys()
+    for method, paragraph in _page_request_sentences().items():
+        match = REQUEST_SECTIONS[method][1].search(paragraph)
+        assert match, (
+            "%s still has the %s paragraph, but no longer in the form that lists the optional keys "
+            "(looked for: %s), so the page has to be re-read against this message"
+            % (ROUTING_PAGE, method, REQUEST_SECTIONS[method][1].pattern))
+        named = set(BACKTICKED.findall(match.group("list")))
+        required, optional = derived[method]
+        assert named == optional, (
+            "`Router.%s` reads %s off a request, but the guide's %s sentence names %s"
+            % (method, sorted(optional), method, sorted(named) or "nothing"))
+        for key in sorted(required):
+            assert "`%s`" % key in paragraph, (
+                "`Router.%s` indexes `request[\"%s\"]`, which raises on a request that omits it, so "
+                "the page has to say the key is required" % (method, key))
+
+
+def test_the_declared_request_key_list_is_the_one_router_reads():
+    """`structured._ROUTER_REQUEST_KEYS` cannot drift from the methods it documents itself."""
+    from laya.structured import _ROUTER_REQUEST_KEYS
+    derived = _batch_request_keys()
+    read = derived["route_batch"][1] | derived["predict_batch"][1]
+    assert set(_ROUTER_REQUEST_KEYS) == read, (
+        "`laya/structured.py` declares the keys `Router.predict_batch` reads off each request as %s, "
+        "while the two methods read %s -- one of the two is stale, and `decide_batch` builds its "
+        "per-request dicts from the declaration"
+        % (sorted(_ROUTER_REQUEST_KEYS), sorted(read)))
+
+
 if __name__ == "__main__":
     for fn in (test_state_budget_is_sized_from_the_actual_head,
                test_dropping_the_minus_one_is_caught,
@@ -470,6 +791,12 @@ if __name__ == "__main__":
                test_page_does_not_reserve_sixteen_for_the_instruction,
                test_page_does_not_put_the_option_block_inside_the_cap,
                test_page_arithmetic_is_build_head_arithmetic,
+               test_the_window_default_is_floored,
+               test_the_room_still_binds_below_the_floor,
+               test_no_page_states_the_window_budget_without_the_floor,
+               test_both_pages_teach_the_floored_default,
+               test_the_routing_page_lists_every_key_a_batch_request_can_set,
+               test_the_declared_request_key_list_is_the_one_router_reads,
                test_readme_quotes_the_measured_figures):
 
         try:

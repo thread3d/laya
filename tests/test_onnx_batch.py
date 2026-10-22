@@ -308,6 +308,84 @@ check("router/results carry the routing key", [sorted(r) for r in routed],
 check("router/two states share one session run", router_agent.session.calls, [2 * 2])
 
 
+# ---------------------------------------------------------------- single-option questions
+# The exported graph traces the decision head's `topk(2)` (the eager forward's one-option branch is
+# a Python `if` on the marker count, which the trace bakes in), so ONNX Runtime refused a run whose
+# questions all had one option -- "k argument [2] should not be greater than specified axis dim
+# value [1]" -- while the PyTorch Agent answered it. This stub enforces the same rule, and scores a
+# masked slot -1e4 the way the graph's `masked_fill` does.
+class _ExportedGraphSession:
+    def __init__(self):
+        self.marker_widths = []
+        self.masks = []
+
+    def run(self, names, inputs):
+        mask = inputs["marker_mask"]
+        self.marker_widths.append(mask.shape[1])
+        self.masks.append(mask.tolist())
+        if mask.shape[1] < 2:
+            raise RuntimeError("[ONNXRuntimeError] : 1 : FAIL : Non-zero status code returned while "
+                               "running TopK node. Status Message: k argument [2] should not be "
+                               "greater than specified axis dim value [%d]" % mask.shape[1])
+        logits = np.where(mask, 1.0 + np.arange(mask.shape[1], dtype=np.float32), -1e4).astype(np.float32)
+        act = np.tile(np.array([[0.25, 0.75]], dtype=np.float32), (len(mask), 1))
+        return [logits, act]
+
+
+ONE_OPTION = {"dept": {"type": "choice", "instructions": "Which team?", "criteria": {"billing": "money"}}}
+ONE_LEVEL = {"level": {"type": "score", "instructions": "How urgent?", "criteria": ["not urgent"]}}
+
+for label, questions, key, want in (("choice", ONE_OPTION, "dept", {"billing": 1.0}),
+                                    ("score", ONE_LEVEL, "level", {"0": 1.0})):
+    single = _bare_onnx()
+    single.session = _ExportedGraphSession()
+    try:
+        got = single.predict("aa", questions)["answers"][key]["probabilities"]
+    except RuntimeError as e:
+        got = str(e)[:80]
+    check("single option/a one-option %s is answered, not refused by the graph" % label, got, want)
+    check("single option/%s: the extra slot is padded and masked" % label, single.session.masks, [[[True, False]]])
+
+single = _bare_onnx()
+single.session = _ExportedGraphSession()
+try:
+    got = [r["answers"]["dept"]["probabilities"] for r in single.predict_batch(STATES, ONE_OPTION)]
+except RuntimeError as e:
+    got = str(e)[:80]
+check("single option/the batch path answers too, in one run", (got, single.session.marker_widths),
+      ([{"billing": 1.0}] * len(STATES), [2]))
+
+wide = _bare_onnx()
+wide.session = _ExportedGraphSession()
+wide.predict("aa", QUESTIONS)
+check("single option/a run that already has two or more slots is sent as before",
+      wide.session.marker_widths, [3])
+
+
+# ---------------------------------------------------------------- question token reuse
+# Agent.predict_batch caches question tokenizations across states (@_reuse_question_tokens);
+# ONNXAgent.predict_batch shares that cache, so question instructions and options are encoded once
+# per batch rather than once per state document.
+tok_records = []
+
+
+class _TrackingTok(_FakeTok):
+    def __call__(self, text, **kw):
+        tok_records.append(text)
+        return super().__call__(text, **kw)
+
+
+tracking_agent = _bare_onnx()
+tracking_agent.tok = _TrackingTok()
+tracking_agent.predict_batch(STATES, QUESTIONS)
+dept_instruction = "choice question: Which team?"
+check("reuse/question instruction encoded once across the batch",
+      tok_records.count(dept_instruction), 1)
+check("reuse/total tokenizations capped by reuse across states",
+      len(tok_records), 7 + len(STATES))
+
+
+
 # --------------------------------------------------------------------------- report
 print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
 for f in FAIL:

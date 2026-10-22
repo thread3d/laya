@@ -29,7 +29,7 @@ python -m pip install laya
 
 With [uv](https://docs.astral.sh/uv/), run `uv add laya` in a uv project or `uv pip install laya` in a virtual environment.
 
-Python 3.10 or newer. Optional extras: `laya[serve]` (HTTP server), `laya[mcp]` (MCP server), `laya[langchain]` (LangChain and LangGraph), `laya[llamaindex]` (LlamaIndex selectors), `laya[crewai]` (CrewAI routing), `laya[onnx]` (ONNX Runtime), `laya[fast]` (TileLang GPU fast path). Step-by-step setup for each platform, CPU-only or GPU PyTorch builds, and troubleshooting are in [Installation details](#installation-details).
+Python 3.10 or newer. Optional extras: `laya[serve]` (HTTP server), `laya[mcp]` (MCP server), `laya[langchain]` (LangChain and LangGraph), `laya[llamaindex]` (LlamaIndex selectors), `laya[crewai]` (CrewAI routing), `laya[onnx]` (ONNX Runtime), `laya[fast]` (TileLang GPU fast path), `laya[structured]` (pydantic models in `decide`). Step-by-step setup for each platform, CPU-only or GPU PyTorch builds, and troubleshooting are in [Installation details](#installation-details).
 
 For TypeScript / Node.js / browser, see [`laya-ts/`](https://github.com/NandhaKishorM/laya/tree/main/laya-ts/). npm releases (`npm install laya-ts`) are published from this repository's `laya-ts-v*` release tags.
 
@@ -94,15 +94,33 @@ The shipped checkpoints work zero-shot, but fine-tuning on decisions from your o
 
 **[nandhakishorm.github.io/laya](https://nandhakishorm.github.io/laya/)**: guides for [prediction hooks](https://nandhakishorm.github.io/laya/hooks/), [schema-driven decisions](https://nandhakishorm.github.io/laya/structured/), [Docker](https://nandhakishorm.github.io/laya/docker/) and [LangChain and LangGraph](https://nandhakishorm.github.io/laya/langchain/), plus a full [API reference](https://nandhakishorm.github.io/laya/reference/).
 
-## What's new in 0.4.0
+## What's new in 0.4.13
 
-* **The routing default is now `multilingual`.** Text whose language the detector cannot place
-  used to fall back to the English checkpoint. On the 51-language sweep the multilingual
-  checkpoint leads on 50 of the 51, the exception being English itself (0.820 against 0.710),
-  and by 0.180 macro accuracy excluding English. Identified English still routes to the English
-  checkpoint, so only undecided text moves. Set `Router(default="english")` or
-  `LAYA_DEFAULT_MODEL=english` to restore the old behaviour; the break-even is around 62%
-  English traffic.
+* **`OptionStabilityHook`'s rename probe kept the option's meaning.** Renaming
+  `{"approve": None, "reject": None}` to letters sent the model bare `A` and `B`, so a probe
+  described as meaning-preserving was measuring a question the model could not read; the list form
+  `["approve", "reject"]` had always kept the text. The label is now carried into the description,
+  as the list form does (#1286, issue #1285). Separately, `soft_stability` is reported unrounded
+  and `calibrate_reliability` no longer quantizes its candidate cutoffs, so replaying a reported
+  score reproduces the decision the hook made (#1289, issue #1288). The hook is also ported to
+  TypeScript, with a 128-case fixture recorded from the Python reference (#1290).
+* **Language detection can say why.** `analyse(state, explain=True)` adds a `diagnostic` naming the
+  branch that decided and, for an override, which nested value triggered it: a German message under
+  `payload.customer` now reports that path rather than only the verdict. `laya --explain` exposes it
+  on the routing path. Opt-in, and the default result is byte-identical (#1284, issue #1276).
+* **Four fail-closed type guards.** A remote decision body that is valid JSON but not an object
+  leaked `AttributeError` past the fail-closed branch in the tool selector and in agno, taking the
+  `fallback_tool` down with it (#1293, #1296). `bool` subclasses `int`, so a JSON `"minimum": true`
+  became a score bound of 1 and `"answer_confidence": true` a confidence of 1.0; both are now
+  refused (#1294, #1295).
+* **`predict_batch` in the Python HTTP SDK**, one `POST /v1/systemone/batch` for a list of states,
+  results in input order, no splitting and no fallback to single requests (#1297).
+* **The Rust and .NET SDKs match the Python package exactly** in routing, language detection,
+  email, float rounding and config parsing, and Rust gains `predict_long` (#1292, #1291). Every
+  routing golden in both regenerates byte-identically from this Python tree.
+* **Decoding is a little cheaper.** The softmax normalises in place and `answer_confidence` uses a
+  native clamp rather than NumPy's scalar dispatcher, which is 3.8x on that helper (#1299). All 30
+  real-weight decision rows are unchanged.
 
 Earlier releases are in the [GitHub releases](https://github.com/NandhaKishorM/laya/releases).
 
@@ -285,11 +303,11 @@ checkpoint goes from 24/58 correct at its default 192-token option budget to 34/
 accuracy back, because `max_len` then leaves fewer tokens for the request itself. [Honest
 limits](#honest-limits) describes the same budget ceiling for a 77-option question.
 
-Device selection is automatic, in this order: **CUDA → MPS → CPU**. Mixed precision is used on
+Device selection is automatic, in this order: **CUDA → MPS → XPU → CPU**. Mixed precision is used on
 CUDA; CPU and MPS run fp32. Override with `device=`, which is accepted by both entry points:
 
 ```python
-agent = laya.load("convaiinnovations/laya", device="cpu")      # or "cuda", "mps"
+agent = laya.load("convaiinnovations/laya", device="cpu")      # or "cuda", "mps", "xpu"
 router = Router(preload=True, device="mps")
 ```
 
@@ -402,6 +420,10 @@ pip install "laya[serve]"
 python examples/server.py               # http://127.0.0.1:8000
 ```
 
+On Windows, `start.bat` does the same from a clone: it creates `.venv` with whichever supported
+Python is installed, installs CPU torch and the `serve` extra on first run, then starts the server
+and opens the browser. `start.bat 8080` picks a different port.
+
 Open `http://127.0.0.1:8000` in a browser for the playground, or hit it directly:
 
 ```bash
@@ -433,9 +455,13 @@ comes back with `abstention` and `abstention_threshold` fields naming whether it
 Router was built with", so a caller never has to send them back as `null`; a body that names
 `hooks`, `hooks_raise`, `hooks_timeout`, `on_predict_start`, or `on_predict_end` is refused with
 422 rather than silently dropped, matching what `laya-serve` does for the same fields. On
-`/predict/batch`, `min_confidence` reaches `Router.predict_batch` as a call argument rather than
-a per-request key; the other three travel inside each request dict, so states in one batch may
-name different budgets.
+`/predict/batch` the controls are read once, from the batch body: `min_confidence` becomes a call
+argument to `Router.predict_batch`, and the other three are copied into every request dict, so all
+states in one call share one budget. A `max_len` written inside a state is not a control there --
+it stays part of the state, and the body's value is what every state gets. Per-request budgets do
+exist one level down, in `Router.predict_batch`, which cannot share a forward pass between requests
+naming different budgets and so makes one pass per budget; the batch endpoint just gives an HTTP
+caller no way to name them separately.
 
 `/predict/batch` accepts two optional body fields that control the shape of the forward passes
 without changing any answer: `batch_size` (states per pass; omit it and the whole batch is one
@@ -446,6 +472,15 @@ Measured on the running server: 64 real reviews of 91–2,293 characters, one ch
 3.04s sorted, a paired median of **1.77x** (min 1.76x), and 64/64 labels identical in input order.
 `batch_size: 8` on its own was 4.95s, so the length grouping is what earns the second factor:
 1.66x over the sized batch.
+
+### Python HTTP client
+
+Applications that call a separate `laya-serve` can use the
+[Python HTTP client](https://github.com/NandhaKishorM/laya/blob/main/sdk/python/README.md)
+without installing the inference dependencies. It provides synchronous `predict()` and
+`health()` calls using the standard library. From this checkout, install it with
+`python -m pip install ./sdk/python` in the application environment; keep `laya[serve]`
+in the server environment. The separate `laya-client` distribution is not yet published to PyPI.
 
 ### JavaScript / TypeScript
 
@@ -528,7 +563,7 @@ questions = {
         "criteria": {
             "billing": "invoices, payments, refunds",
             "technical": "bugs, outages, system errors",
-            "sales": "pricing, new contracts",
+            "sales": "pricing, new contracts, plan upgrades",
             "other": "everything else"
         }
     },
@@ -568,9 +603,20 @@ res_hi["routing"]
 # {
 #   'model': 'multilingual',
 #   'repo': 'convaiinnovations/laya/multilingual',
-#   'reason': 'non-Latin script (devanagari, 100% of letters); the English checkpoint cannot read it'
+#   'reason': 'non-Latin script (devanagari, 100% of letters); the English checkpoint cannot read it',
+#   'detection': {'script': 'devanagari', 'script_profile': {'devanagari': 1.0},
+#                 'language': None, 'is_english': False, 'language_undecided': True,
+#                 'diacritic_rate': 0.0, 'non_latin_fraction': 1.0, 'mixed_segment': None},
+#   'workflow': None
 # }
 ```
+
+All five keys are always present. `detection` is the
+[`laya.lang.analyse`](#supplying-your-own-language-detection) result the decision was made from,
+and is `None` whenever routing decided before detection ran: `model=`, `task=`, a detected
+workflow, a decisive `lang=` and a resolving `lang_guess` all take precedence over it and
+short-circuit it. `workflow` names the typed-decisions workflow whose question ids matched, and is
+`None` when none did.
 
 Inspect a routing decision without running any forward pass:
 
@@ -594,7 +640,7 @@ router = Router(default="english")
 ```
 
 Running one of the shipped servers rather than your own `Router`, the same setting is
-`LAYA_DEFAULT_MODEL=multilingual` — in the environment of `laya-serve`, the MCP server or the
+`LAYA_DEFAULT_MODEL=english` — in the environment of `laya-serve`, the MCP server or the
 `laya-serve` container ([docs/docker.md](https://github.com/NandhaKishorM/laya/blob/main/docs/docker.md)). It is the routing fallback only: text
 the detector can place is routed on what it detects, whatever this is set to.
 
@@ -630,7 +676,7 @@ results = router.predict_batch(requests, batch_size=8, sort_by_length=True)
 
 ### Why Route: The Evidence
 
-On a shared benchmark (17,416 questions, one T4 GPU, identical questions per model):
+On a shared benchmark (17,416 questions, one T4 GPU, identical questions per model — seed 13, 20 options per choice question, the first 300 test rows per language, from `research/results/t4_colab_benchmark.json`; `tests/test_doc_tables.py` checks every cell of this table against that file):
 
 | Benchmark / Task | English (`laya`) | Multilingual (`laya-multilingual`) | `Router` (Routed) |
 |---|---|---|---|
@@ -686,8 +732,14 @@ Routing asks one question: *can the English checkpoint read this state?* The bui
 ```python
 from laya.lang import analyse
 analyse("Care este ora in Tokyo?")
-# {'script': 'latin', 'language': 'en', 'is_english': True}   -> the English checkpoint
+# {'script': 'latin', 'script_profile': {'latin': 1.0}, 'language': 'en', 'is_english': True,
+#  'language_undecided': False, 'diacritic_rate': 0.0, 'non_latin_fraction': 0.0,
+#  'mixed_segment': None}                                     -> the English checkpoint
 ```
+
+`is_english` is the key routing reads. `language_undecided` separates "read as English" from
+"carried no usable signal, so the default applies", and `mixed_segment` names the line or field
+that made a mostly-English state non-English (`None` when none did).
 
 If you already run a language-identification model, hand routing the answer instead of relying on the heuristic. `lang_guess` takes a language code or a callable receiving the state, and is checked after an explicit `lang=` and before detection:
 
@@ -750,13 +802,16 @@ Configuration is by environment variable: `LAYA_HOST`, `LAYA_PORT`,
 `LAYA_THREADS` (cap torch intra-op threads for CPU inference — keep at or below
 physical cores), `LAYA_AUTO_TASK`, `LAYA_DEFAULT_MODEL` (the checkpoint a state with no
 language evidence falls back to, `multilingual` by default; set it to `english` when most of
-your traffic is not English), `LAYA_MAX_LOADED` (checkpoints resident at
+your traffic is English), `LAYA_MAX_LOADED` (checkpoints resident at
 once, 2 by default; raise it to 3 when `LAYA_AUTO_TASK` makes a third one
 reachable on demand, or the server rebuilds one every time routing switches),
 `LAYA_IDLE_UNLOAD_SECONDS` (unload idle checkpoints; `0` disables it, `300` frees device memory
-after five minutes and makes the next request pay a cold load), and `LAYA_API_KEY` (when set, clients must
+after five minutes and makes the next request pay a cold load), `LAYA_EXTRA_MODELS` (a JSON object
+`{"my-checkpoint": "/path/to/it"}` registering extra checkpoints — Hub repo ids, local directories
+or `["repo", "subfolder"]` pairs — beside the bundled ones), and `LAYA_API_KEY` (when set, clients must
 send `Authorization: Bearer <key>`). A client's `model` field is honoured when it
-names a Laya checkpoint (`english`/`multilingual`/`typed-decisions` or a published Hub id).
+names a Laya checkpoint (`english`/`multilingual`/`typed-decisions`, a `LAYA_EXTRA_MODELS` name,
+or a published Hub id).
 `jev-1` and `convaiinnovations/laya` still mean the router auto-selects by script/language.
 A path or an unpublished Hub id (`/path/to/checkpoint`, `org/repo`) is a 422 on both
 `/v1/systemone` and `/v1/systemone/batch` instead of being answered by another checkpoint.
@@ -906,9 +961,11 @@ result = agent.predict_long(state, questions, hooks=[AuditLog()])   # the scan, 
   `usage["windows"]` at 0, because no window scored it.
 
 A smaller `window` isolates a short deciding span better (it becomes a larger fraction of its
-window); the default (`max_len - head_max_len`) favors context and throughput. Either way the
-window is capped at the room the questions leave for the state inside `max_len`, so a window is
-never re-truncated on the way to the model and `token_start`/`token_end` describe the span it read:
+window); the default (`max(64, max_len - head_max_len - 8)` — 312 tokens on the English checkpoint
+at its 512/192 defaults, 760 on the other two at 1,024/256) favors context and throughput. Either
+way the window is capped at the room the questions leave for the state inside `max_len`, so a
+window is never re-truncated on the way to the model and `token_start`/`token_end` describe the
+span it read:
 many options leave little room (on the English checkpoint, 2 options leave 483 state tokens and
 100 leave 100), and a window past that room used to be cut short silently. Output shape matches
 `predict`, with `usage["windows"]` added.
@@ -1013,7 +1070,7 @@ A threshold also depends on the autocast dtype. On CUDA at compute capability 8 
 
 ### Opt-in abstention: `min_confidence`
 
-`predict`, `predict_batch`, `system_one` and `decide` — on `Agent`, `Router` and `ONNXAgent` — take an opt-in `min_confidence`, off by default. It is a caller-side policy on top of the emitted confidence: every answer whose `answer_confidence` falls below the threshold is flagged `low_confidence: True`, with the raw answer, probabilities and confidence left intact for inspection.
+`predict`, `predict_batch`, `system_one`, `decide` and `decide_batch` — on `Agent`, `Router` and `ONNXAgent` — take an opt-in `min_confidence`, off by default: a number, or a per-bucket map. It is a caller-side policy on top of the emitted confidence: every answer whose `answer_confidence` falls below its threshold is flagged `low_confidence: True`, with the raw answer, probabilities and confidence left intact for inspection.
 
 ```python
 res = agent.predict(state, questions, min_confidence=0.85)
@@ -1025,7 +1082,23 @@ else:
     route_automatically(ans["choice"])
 ```
 
-The threshold reads `answer_confidence` (`max(p)`) — the calibrated quantity, invariant to the number of options — never the entropy `confidence`. With `decide(..., min_confidence=...)` a low-confidence field comes back as `None` in the schema output, while `return_details=True` keeps the answer and its confidence. [LangChain `LayaRouter`](https://github.com/NandhaKishorM/laya/blob/main/docs/langchain.md)'s `confidence_threshold` reads the same value: `answer_confidence` when the answer carries it, `confidence` otherwise. Left unset, `min_confidence` changes nothing.
+The threshold reads `answer_confidence` (`max(p)`) — the field temperature scaling fits, and the one the calibration figures describe — never the entropy `confidence`, which is normalised by the option count. It is not, however, a quantity that means the same thing at every option count. On the committed T4 run (`research/results/t4_colab_benchmark.json`, mean of `max(p)` over each suite's questions), `laya` averages **0.7677** on 3-option XNLI against **0.9659** on 20-option MASSIVE intent, while `laya-multilingual` runs the other way — **0.9152** against **0.8055**. Same field, same run, opposite ordering between the two checkpoints: one flat cutoff abstains at a different accuracy target for every question shape, and neither checkpoint's direction is a rule to extrapolate.
+
+That is why `min_confidence` also accepts a per-bucket map (#394). These are illustrative cuts — fit them, as below:
+
+```python
+res = agent.predict(state, questions, min_confidence={
+    "choice:3-5": 0.90,     # three-option questions (an NLI shape)
+    "choice:11+": 0.98,     # many-option routing (a 20-option intent shape)
+    "default":    0.85,     # every bucket this map does not name
+})
+```
+
+The keys are `laya/confidence.py::bucket_keys` — the cross-product of the three answer types (`choice`, `score`, `noul`) and the four option bands (`2`, `3-5`, `6-10`, `11+`), twelve in all, spelled exactly as `common.temp_bucket` — plus `"default"`. Each answer is gated at the threshold of its own bucket (`laya/confidence.py::resolve_min_confidence`): a bucket the map omits falls through to `"default"`, and a map that names no `"default"` leaves the unnamed buckets ungated at `0.0` rather than guessing. A key no answer can ever produce is refused by `laya/confidence.py::check_min_confidence_map` at validation instead of quietly gating nothing. `abstention_threshold` echoes the threshold *that answer's* bucket was gated at, so a run mixing shapes can still be re-split by the gate that produced it.
+
+Fit the numbers rather than picking them: `laya/calibrate.py::fit_abstention_thresholds` consumes the same `(qtype, logits, target)` records the temperature fit takes and returns a map `min_confidence` accepts directly, one cut per bucket at a `target_error`. Pass its `binning_map` when the serving agent has one — the runtime recalibrates `answer_confidence` through it before the gate reads it, and a cut fitted without it is on a scale the gate never sees (measured there: the cut held 9.8% error over 50% coverage on un-binned confidences, then admitted 94.5% of answers at 25.6% error once compared against binned ones).
+
+With `decide(..., min_confidence=...)` a low-confidence field comes back as `None` in the schema output, while `return_details=True` keeps the answer and its confidence. [LangChain `LayaRouter`](https://github.com/NandhaKishorM/laya/blob/main/docs/langchain.md)'s `confidence_threshold` reads the same value: `answer_confidence` when the answer carries it, `confidence` otherwise. Left unset, `min_confidence` changes nothing.
 
 A gate is a policy, and a policy whose application you cannot observe is not one. `low_confidence` is written only when the gate fires, so its absence cannot tell you "a gate ran and this answer cleared it" apart from "no gate ran at all" — you could neither compute an abstention rate nor prove the gate was in effect. **When you pass `min_confidence`,** every answer therefore also reports `abstention`:
 
@@ -1149,13 +1222,16 @@ safety = agent.predict({"post": "User comment text"}, laya.moderation_questions(
 
 # 4. Support Ticket Triage (intent, urgency, frustration, churn)
 triage = agent.predict({"message": "My payment failed twice"}, laya.triage_questions())
+
+# 5. Email Triage (category, spam, phishing, urgency, reply expected)
+email = agent.predict({"body": "Your account is locked, verify now"}, laya.email_questions())
 ```
 
 ---
 
 ## LangChain and LangGraph Integration
 
-Fast System 1 routing and guardrails directly inside LangGraph workflows and LCEL chains. Every node also takes core's per-call prediction hooks (`hooks`, `on_predict_start`, `on_predict_end`, `hooks_raise`, `hooks_timeout`):
+Fast System 1 routing and guardrails directly inside LangGraph workflows and LCEL chains. Every node also takes core's per-call prediction hooks (`hooks`, `on_predict_start`, `on_predict_end`, `hooks_raise`, `hooks_timeout`) and the two routing hints that pick the checkpoint answering (`task`, `lang_guess`) — see [Which checkpoint answers](https://github.com/NandhaKishorM/laya/blob/main/docs/langchain.md#9-which-checkpoint-answers):
 
 ```python
 from laya.integrations.langchain import LayaDecision, LayaGuardrail, LayaRouter
@@ -1318,7 +1394,7 @@ TileLang fast path and `compile=True` refuse such a checkpoint, and `backend="au
 
 Laya can be exposed as an [MCP](https://modelcontextprotocol.io) stdio server, so any MCP
 client (OpenClaw, Claude Desktop, Cursor, ...) can call typed decisions as tools
-(`laya_predict`, `laya_predict_batch`, `laya_route`, `laya_route_batch`, `laya_decide`, `laya_shortlist`, `laya_preset`, `laya_status`) without writing glue code.
+(`laya_predict`, `laya_predict_batch`, `laya_predict_long`, `laya_route`, `laya_route_batch`, `laya_decide`, `laya_shortlist`, `laya_tournament`, `laya_preset`, `laya_status`) without writing glue code.
 This is an **optional extra**: the core package has no `mcp` dependency.
 
 ```bash
@@ -1329,8 +1405,9 @@ laya-mcp-server          # or: python -m laya.mcp.server
 To share a `laya-serve` on your own hardware across editor sessions, set
 `LAYA_BASE_URL=http://127.0.0.1:8000` in each MCP client's environment. Its prediction tools use
 HTTP and import no torch; routing stays local. Set `LAYA_API_KEY` to the server's bearer key and
-`LAYA_REMOTE_TIMEOUT` to the allowed HTTP wait (300 seconds by default). `laya_shortlist` is
-unavailable in this mode. See [shared-server MCP setup](https://github.com/NandhaKishorM/laya/blob/main/docs/cli-mcp.md#share-one-model-server-across-mcp-sessions).
+`LAYA_REMOTE_TIMEOUT` to the allowed HTTP wait (300 seconds by default). `laya_shortlist` and
+`laya_tournament` are unavailable in this mode; use `laya_predict` with the HTTP server's
+`LAYA_TOURNAMENT_GROUP` enabled for shared-server tournament selection. See [shared-server MCP setup](https://github.com/NandhaKishorM/laya/blob/main/docs/cli-mcp.md#share-one-model-server-across-mcp-sessions).
 
 Example MCP client configuration (stdio transport):
 
@@ -1378,10 +1455,18 @@ it shortlists a many-option choice question to its `k` most likely labels by emb
 similarity (mean-pooled from the answering checkpoint's own encoder, so no extra model is
 downloaded), answers in one forward pass, and returns per-question shortlist metadata
 (kept labels, cosine scores, `k`, option count, and whether the question passed through
-unshortlisted). The guardrails shown on every decision
-tool point clients to `laya_shortlist` for >20-option choices. As with the SDK, use it for structured
+unshortlisted). `laya_tournament` is the in-process MCP form of [`predict_tournament`](#honest-limits):
+the decision model narrows large choices in balanced groups of `group_size=16` by default,
+then answers the complete request with the finalists. It returns `tournament` metadata per choice
+(`labels`, original count `n`, elimination `rounds`), finalist-only probabilities, and total latency.
+Small choices pass through with `rounds: 0`; narrowed questions report discarded `option_order`
+values under `option_order_dropped`. Routing uses the original request; language, budget and
+confidence controls reach every round. The guardrails shown on every decision
+tool point clients to `laya_shortlist` or `laya_tournament` for >20-option choices. As with the SDK, use it for structured
 decisions only; not for open Q&A or
-text generation. Tests: `tests/test_mcp.py` (CI, no weights) and
+text generation. `laya_predict_long` is the MCP form of [`predict_long`](#long-documents-predict_long): it
+scans a state past the context window in overlapping windows and answers with per-answer
+window attribution plus the window count. Tests: `tests/test_mcp.py` (CI, no weights) and
 `tests/test_mcp_local_e2e.py` (local, real weights and a real stdio handshake).
 
 ---
@@ -1474,7 +1559,7 @@ Full detail, including every workflow and all 51 languages: **[`BENCHMARKS.md`](
 | model | accuracy | soft acc | Brier | ECE | score MAE |
 |---|---|---|---|---|---|
 | **`laya-typed-decisions`** | **0.766** | 0.471 | **0.062** | 0.213 | **0.242** |
-| `laya` | 0.362 | 0.332 | 0.316 | 0.175 | 0.694 |
+| `laya` | 0.362 | 0.331 | 0.315 | 0.174 | 0.694 |
 | `laya-multilingual` | 0.352 | 0.328 | 0.463 | 0.314 | 0.760 |
 | *Jev 1.13.0 (published)* | *0.727* | *0.580* | *0.148* | *0.144* | *0.391* |
 | *teacher self-agreement ceiling* | *0.735* | | | | |
@@ -1575,6 +1660,7 @@ failure; it does not establish calibrated confidence.
 
 ```python
 import laya
+from sentence_transformers import SentenceTransformer  # any local bi-encoder; not a Laya dependency
 
 questions = {
     "intent": {
@@ -1587,11 +1673,14 @@ questions = {
         },
     }
 }
+encoder = SentenceTransformer("BAAI/bge-small-en-v1.5")
+embed_fn = laya.cached_embed_fn(lambda texts: encoder.encode(list(texts), normalize_embeddings=True))
+
 result = laya.predict_shortlist(
     agent,
     {"text": "I was charged twice for a transfer"},
     questions,
-    embed_fn=laya.embed_fn_from_agent(agent),  # or any callable: texts -> (n, dim)
+    embed_fn=embed_fn,  # any callable: texts -> (n, dim); see below before using embed_fn_from_agent
     k=20,
 )
 result["shortlist"]["intent"]["labels"]  # the top 20 labels sent to the model
@@ -1601,7 +1690,26 @@ result["shortlist"]["intent"]["labels"]  # the top 20 labels sent to the model
 
 Shortlisting the same option set on every request re-embeds option texts that do not change. Wrap the embedder once with `laya.cached_embed_fn(embed_fn)` and repeat calls embed only the new query text: lookups are exact string matches into an LRU of at most 4,096 entries (about `maxsize * dim * 4` bytes, so ~12 MB at the default with a 768-dim encoder), and texts missing from the cache are still embedded in one batched call. The wrapper's `cache_info()` reports hits and misses; call `cache_clear()` if the model behind `embed_fn` changes.
 
-[Issue #102](https://github.com/NandhaKishorM/laya/issues/102) reports that a top-20 zero-shot shortlist moved a BANKING77 run from 54.3% to 60.8% on the reporter's setup. Those figures are the reporter's; this repository has not remeasured them.
+**The embedder decides whether the shortlist helps, and so does what it embeds.** On #950's 500 test rows per dataset ([`research/benchmarks/tournament`](https://github.com/NandhaKishorM/laya/blob/main/research/benchmarks/tournament/README.md)'s seed-0 sample, its question, `k=20`, the English checkpoint, Apple MPS; Laya 0.4.6 and 0.4.11 gave the same result on every row), accuracy with recall@20 in brackets:
+
+| shortlist, then one `predict` | BANKING77 | CLINC150 | MASSIVE |
+|---|---|---|---|
+| no shortlist, one question | 0.416 | 0.604 | 0.542 |
+| `embed_fn_from_agent`, through `predict_shortlist` | 0.224 (0.296) | 0.188 (0.198) | 0.184 (0.278) |
+| `bge-small-en-v1.5`, through `predict_shortlist` | 0.630 (0.926) | 0.768 (0.816) | 0.578 (0.892) |
+| `bge-small-en-v1.5`, the message alone | 0.630 (0.980) | **0.872** (0.956) | **0.652** (0.944) |
+
+`predict_shortlist` embeds the question's `instructions` plus the JSON state as the query. To embed only the user's text, rank with `shortlist_choice` (a string state is embedded as it is) and ask about the labels it keeps:
+
+```python
+text = "I was charged twice for a transfer"
+criteria = questions["intent"]["criteria"]
+kept = laya.shortlist_choice(text, criteria, embed_fn, k=20)
+question = dict(questions["intent"], criteria={label: criteria[label] for label in kept})
+answer = agent.predict({"text": text}, {"intent": question})["answers"]["intent"]
+```
+
+Embedding the message alone gave the highest or tied-highest recall@20 for both bi-encoders tried (`bge-small-en-v1.5` and `all-MiniLM-L6-v2`) on all three sets. With `bge-small-en-v1.5` it lifted accuracy by 0.104 on CLINC150 and 0.074 on MASSIVE (paired exact McNemar p < 0.001) and left BANKING77 level, where the JSON state without the instructions did 0.032 better (p = 0.011). `embed_fn_from_agent` stays below one question even on the message alone (0.304 / 0.284 / 0.302). Where no second model can be loaded, `predict_tournament` (item 4 above) scored 0.584 / 0.894 / 0.590 on the same rows. Per-row results and the script: [zhlei07/open-system-one@4cb01b1 `out/laya102/`](https://github.com/zhlei07/open-system-one/tree/4cb01b1/out/laya102) ([#102](https://github.com/NandhaKishorM/laya/issues/102)).
 
 * Ordinal `score` questions are the weakest primitive (SST-5 0.372).
 * **`noul` can follow its option labels instead of the state, most strongly on `laya` (English).** `noul` renders its two options as `false:` / `true:` by default, and on the English checkpoint that label pair can dominate the answer, returning a confident "no" for clearly positive input (#156). Until a retrained checkpoint lands, check `noul` answers on your own data. You can override the model-facing pair while keeping the `noul` result as P(true):

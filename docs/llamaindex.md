@@ -117,10 +117,18 @@ Both synchronous `query()` and asynchronous `aquery()` are supported.
 
 ## 4. Confidence Threshold Gating
 
-Like Laya's LangChain integration, `LayaSingleSelector` and `LayaQueryRouter` read calibrated `answer_confidence` (`max(p)`):
+Like Laya's LangChain integration, `LayaSingleSelector` and `LayaQueryRouter` read `answer_confidence` (`max(p)`):
 
 - **Automatic Fallback:** Specify `fallback_index` (or `fallback_key`) to seamlessly divert uncertain queries to a safe default engine.
 - **Strict Guarding:** Set `raise_on_low_confidence=True` on `LayaSingleSelector` to raise `LayaLowConfidenceError` when input is ambiguous, allowing caller escalation.
+
+`answer_confidence` is the quantity temperature scaling fits and the one every calibration figure
+in the repository is computed on, which is why the threshold reads it rather than the entropy
+`confidence`. It is not calibrated as shipped: `laya-multilingual` ships no fitted temperatures at
+all (`temperature: [1.0, 1.0, 1.0]`, empty `temperature_by_options`), and english's `choice:11+` is
+refused by the loader's own clamp with a warning that says to treat it as uncalibrated. Fit and
+validate any threshold on held-out data at the option counts your workload uses -- see the
+README's [Calibration](https://github.com/NandhaKishorM/laya#calibration) section.
 
 ---
 
@@ -146,10 +154,10 @@ The remote client uses Python's standard library `urllib` with zero heavy depend
 
 `LayaSingleSelector`, `LayaMultiSelector` and `LayaQueryRouter` take the same per-call arguments the
 core API does: the two token budgets (`max_len`, `head_max_len`), the language and abstention
-controls (`lang`, `min_confidence`), and the five prediction-hook
-arguments (`hooks`, `on_predict_start`, `on_predict_end`, `hooks_raise`, `hooks_timeout`). They are
-per selector, so a wide routing step can be given room while the rest of the pipeline keeps the
-checkpoint's defaults.
+controls (`lang`, `min_confidence`), the five prediction-hook arguments (`hooks`, `on_predict_start`,
+`on_predict_end`, `hooks_raise`, `hooks_timeout`), and the two routing hints (`task`, `lang_guess`).
+They are per selector, so a wide routing step can be given room while the rest of the pipeline keeps
+the checkpoint's defaults.
 
 A choice question's options share the checkpoint's *option* budget -- `head_max_len`, 192 tokens on
 `laya` -- and every candidate contributes its name and description, so past roughly 20 tools the
@@ -184,23 +192,53 @@ integration](langchain.md#7-widening-the-token-budget-for-many-options) for that
 **Hooks run on the local path only.** A selector with a `base_url` and `hooks=[...]` raises
 `ValueError` rather than reporting a success whose cache never ran -- a hook is a Python callable
 that runs inside `predict`, and no wire format carries it. Install hooks in the process that runs
-inference. The two budgets do travel to a remote node, in the request body, up to its
-`LAYA_MAX_TOKEN_BUDGET` ceiling; a larger value comes back as a 422.
+inference. The two budgets and the two routing hints do travel to a remote node, in the request body,
+up to its `LAYA_MAX_TOKEN_BUDGET` ceiling; a larger value comes back as a 422.
 
 ### Language and abstention
 
 `lang` pins the language the query is routed and answered in -- selecting the answering
 checkpoint's per-language calibration instead of relying on built-in detection -- and
-`min_confidence` is core's abstention gate: a decision under it comes back as an abstention rather
-than a forced selection. Both are read by `Agent.predict` and `Router.predict` alike and accepted by
+`min_confidence` is core's abstention gate, and that gate marks rather than withholds: an answer
+under it comes back carrying `low_confidence: true`, `abstention: "abstained"` and
+`abstention_threshold` on the raw decision kept in `last_decision`, while the `ToolSelection` this
+selector returns is still the argmax. What gets selected is changed by `confidence_threshold` and
+the knobs in [Confidence Threshold Gating](#4-confidence-threshold-gating); a `min_confidence` on
+its own reports the abstention and selects anyway.
+Both are read by `Agent.predict` and `Router.predict` alike and accepted by
 `laya-serve` in the request body, so a selector forwards them on the local and the remote path. An
 unset one is omitted, not sent as `None`, so it cannot shadow the deployment's own default;
 `min_confidence=0.0` and `lang=""` are real values and are forwarded as given.
+
+### Which checkpoint answers
+
+**The two routing hints choose the checkpoint that selects.** `task="typed-decisions"` pins the
+workflow rather than waiting for auto task detection to recognise the question ids, and `lang_guess`
+takes a language code -- or a callable of the query being selected against -- from something that
+already knows it, consulted after an explicit `lang` and before core's own script detection; any
+non-English code routes to the multilingual checkpoint. A German-documented index is the case the
+hint is for, but the gap is narrower than it looks: measured on sixteen German support queries
+through `Router.route` on `6880462`, one of the eight written without umlauts reaches `english`
+(`Was kostet die MwSt?`, read as "English Latin text"), and none of the eight carrying umlauts or
+`ß` does -- diacritics settle it, and an undecided Latin script now abstains to `multilingual`
+rather than to `english`. `lang_guess="de"` takes that last one off `english` too. See the [LangChain
+integration](langchain.md#9-which-checkpoint-answers) for that table, its reason strings, and the
+check that re-runs the sixteen queries.
 
 ```python
 selector = LayaSingleSelector(
     instructions="Which tool or query engine is best suited to answer this query?",
     lang="de",             # answer German queries in German
-    min_confidence=0.3,    # abstain when no tool clears a 0.3 confidence
+    min_confidence=0.3,    # report an abstention below 0.3; the selection is still made
+    lang_guess="de",       # this index's documents are German
 )
 ```
+
+A selector built on an `Agent` (`agent=Agent(...)`) reads neither routing hint, because an `Agent`
+has no routing step to read them in -- it answers on the checkpoint it was built with. The selector
+stores the hint, and its first call raises `ValueError` naming the argument before `predict` is
+reached rather than taking the call and dropping it. A callable `lang_guess` on a `base_url` selector
+raises before the request goes out, rather than coming back as serve's 422 after it. The same rule
+lives in `laya.integrations._controls`, which the LangChain and CrewAI wrappers import; see the [LangChain
+integration](langchain.md#9-which-checkpoint-answers) for the precedence and the
+recorded before.

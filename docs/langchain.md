@@ -10,6 +10,10 @@ Laya provides fast, non-autoregressive decision components for **LangChain** and
 
 Every node also takes core's per-call decision controls -- the two token budgets (`max_len`, `head_max_len`), the language and abstention controls (`lang`, `min_confidence`), and the five prediction-hook arguments (`hooks`, `on_predict_start`, `on_predict_end`, `hooks_raise`, `hooks_timeout`).
 
+For high-cardinality choice questions, see the [many-option guidance](benchmarks.md#limits-to-check-on-your-own-data)
+and [runtime-parity check](benchmarks.md#check-runtime-parity-before-comparing-accuracy) before
+comparing checkpoint results across backends.
+
 Supports both **local in-process inference** (`Agent` or `Router`) and **remote HTTP inference** against your own `laya-serve` without requiring PyTorch on edge clients.
 
 ---
@@ -74,9 +78,13 @@ result = app.invoke({"input": "I was billed twice for last month's subscription.
 print(result["response"])  # -> "Handling billing..."
 ```
 
-`confidence_threshold` reads `answer_confidence`, the calibrated `max(p)` confidence the
-calibration figures describe, when the answer carries it, and falls back to the entropy
-`confidence` otherwise.
+`confidence_threshold` reads `answer_confidence`, the `max(p)` confidence the calibration figures
+are computed on, when the answer carries it, and falls back to the entropy `confidence` otherwise.
+It is not calibrated as shipped: `laya-multilingual` ships `temperature: [1.0, 1.0, 1.0]` and no
+`temperature_by_options` at all, and the english checkpoint's `choice:11+` entry is refused by the
+loader's own clamp with a warning that says to treat it as uncalibrated. Fit and validate the
+threshold on held-out data at the option counts your workload uses -- see the README's
+[Calibration](https://github.com/NandhaKishorM/laya#calibration) section.
 
 ### Routing with the full conversation
 
@@ -266,8 +274,8 @@ process; pass `max_concurrency=1` there, or call `invoke()` in a loop.
 ### The per-call controls
 
 The node plans the questions itself, but the call it makes is an ordinary one, so it takes the
-same seven per-call arguments as the other four nodes -- the two token budgets and the five
-prediction hooks:
+same nine per-call arguments as the other four nodes -- the two token budgets, the five prediction
+hooks, and the two routing hints of [section 9](#9-which-checkpoint-answers):
 
 ```python
 decide = LayaDecision(
@@ -388,8 +396,12 @@ default); a larger value comes back as a 422.
 Every runnable also takes `lang` and `min_confidence`, the two per-request controls `Agent.predict`
 and `Router.predict` both read and `laya-serve` both accepts in the body. `lang` pins the language
 the state is routed and answered in -- select the answering checkpoint's per-language calibration
-rather than relying on built-in detection -- and `min_confidence` is core's abstention gate: a
-decision under it comes back as an abstention instead of a forced choice. Both are forwarded on the
+rather than relying on built-in detection -- and `min_confidence` is core's abstention gate, which
+marks rather than withholds: an answer under it comes back carrying `low_confidence: true`,
+`abstention: "abstained"` and `abstention_threshold` on the raw decision kept in `last_decision`,
+while the branch label the runnable returns is still the argmax. The label is changed by
+`confidence_threshold` and its `fallback`, not by the gate; a `min_confidence` on its own reports
+the abstention and routes anyway. Both are forwarded on the
 local and the remote path, and an unset one is omitted rather than sent as `None` so it cannot
 shadow a checkpoint's own default. `min_confidence=0.0` and `lang=""` are real values, not absences,
 and are forwarded as given.
@@ -398,7 +410,7 @@ and are forwarded as given.
 router = LayaRouter(
     criteria={"billing": "invoices", "tech": "bugs"},
     lang="es",                        # route and answer in Spanish
-    min_confidence=0.3,               # abstain below a 0.3 calibrated confidence
+    min_confidence=0.3,               # report an abstention below 0.3; the branch is still chosen
 )
 ```
 
@@ -462,3 +474,94 @@ through `on_predict_start=`/`on_predict_end=` instead of `hooks=` measured 359 m
 `laya-serve` has no way to receive or run one, so a node with a `base_url` and any of the five set
 raises `ValueError` naming the arguments rather than reporting success for a cache that never ran.
 Install hooks on the process that runs inference.
+
+---
+
+## 9. Which Checkpoint Answers
+
+`Router.route` decides between the three checkpoints on this precedence -- explicit `model` >
+explicit `task` > detected workflow > explicit `lang` > `lang_guess` > detected script/language --
+and until now a chain step could state only `model` of those six. The two that were missing are the
+two that do not name a repository:
+
+- **`task`** forces a checkpoint by workflow name, so `task="typed-decisions"` answers on the
+  typed-decisions checkpoint without waiting for auto task detection to recognise the question ids.
+  An unknown name raises `ValueError` from core and lists what it does know.
+- **`lang_guess`** is a language code from something that already knows the answer -- a user id, a
+  locale header, an `Accept-Language` value. It is consulted after an explicit `lang` and before
+  detection, and it only answers "can the English checkpoint read this?", so any non-English code
+  routes to the multilingual one. It may also be a callable taking the state, and a blank one falls
+  through to detection, which is how an abstaining language identifier is supposed to behave.
+
+```python
+router = LayaRouter(
+    criteria=queue_criteria,
+    task="typed-decisions",           # this workflow, on that checkpoint, always
+    lang_guess=lambda state: state["locale"][:2],
+)
+```
+
+Both are per node, like the budgets, and unset means unsent: leave one out and the deployment's own
+`Router(task=...)` / `Router(lang_guess=...)` stays in charge rather than being overwritten with
+`None`. `batch()` sends them with every request in the batch, `abatch()` on the same path.
+
+**What the hint moves, measured.** Sixteen German support queries through `Router.route` on
+`6880462` (0.4.2) -- routing only, so no checkpoint is loaded and no answer is taken -- counted by
+which checkpoint the decision lands on:
+
+| German queries | no hint | `lang_guess="de"` |
+|---|---|---|
+| 8 written without umlauts or `ß` | 1 read as English | 0 read as English |
+| 8 carrying umlauts or `ß` | 0 read as English | 0 read as English |
+
+The one miss is `Was kostet die MwSt?`, which detection reads as `"English Latin text"`: an
+abbreviation-heavy short query with no diacritics and no stopword signal. Diacritics settle it on
+their own, so the eight `umlauts or ß` queries all leave `english` without any help from the hint.
+Plain German prose that detection cannot place does not reach the English checkpoint either any
+more -- an undecided Latin script now abstains to the multilingual one (`"Latin script, language
+not identified and no non-English letters; using default (multilingual)"`, asserted in
+`tests/test_router.py`), so the residual gap the hint closes is the false-English read, not the
+undecided one. A caller that knows the language from a user id or an `Accept-Language` header still
+knows better than any guess, which is the argument for the hint. What is *not* claimed here is what
+the two checkpoints then score on those queries -- that needs weights and a labelled set, and this
+table is about which one answers, not how well.
+
+`tests/test_langchain.py` re-runs these sixteen queries against the live router and asserts the
+hint half of the table, so the numbers above cannot quietly go stale behind this paragraph.
+
+**A recorded `before`.** On `6d942c9`, in real (installed `langchain-core`) mode, a node built with
+both hints and a budget, answering through a runner that prints what `predict` received:
+
+```
+node.task           'typed_decisions'        # extra="allow" stores it
+model_extra         {'task': 'typed_decisions', 'lang_guess': 'de'}
+predict() received  {'max_len': 8192}        # and the call sees neither hint
+```
+
+The node *looked* configured -- `router.task` read back what it was given -- and the decision above
+was still taken on the deployment's defaults. The forwarding itself is what the gate asserts, in
+`tests/test_langchain.py`, `tests/test_crewai.py` and `tests/test_llamaindex.py`: no latency claim is
+made for it, because a routing hint changes which weights answer, not how long the pass takes.
+
+**Remote mode sends them; one shape it cannot.** A node with a `base_url` puts both in the request
+body, where `laya-serve` treats them exactly as documented in the [HTTP
+API](http-api.md). The callable form of `lang_guess` does not cross HTTP, so a remote node called
+with one raises `ValueError` before the request goes out rather than coming back as serve's `422`
+after it; install the callable on the `Router` where serve runs, or pass a code.
+
+**`agent=` decides the rule.** A node handed `agent=Agent(...)` is answered by an `Agent`, and an
+`Agent` has no routing step to read a routing hint in -- `Agent.predict` takes neither name. The node
+still stores the hint, since declaring `extra = "allow"` is what lets a subclass add fields; what
+changes is that the first call raises instead of answering on the checkpoint the `Agent` was built
+with, and it raises before `predict` is reached, so no hook runs on a decision that cannot honour the
+hint:
+
+```
+ValueError: task is a routing hint, and Agent.predict does not read it: this runner answers on
+the checkpoint it was built with. Pass a Router as `agent=`, or drop it.
+```
+
+The rule is read from the signature of the call about to be made, not from a list of classes, so a
+runner that declares `**kwargs` is forwarded to rather than refused -- the wrapper cannot tell what
+it reads, and refusing on a guess would block a call that works. `laya.integrations.crewai` and
+`laya.integrations.llamaindex` import the same rule from `laya.integrations._controls`.

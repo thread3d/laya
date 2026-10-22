@@ -1,5 +1,5 @@
 import { Laya, defineQuestions, emailQuestions, triageQuestions, type Questions, type Answer,
-  type Usage, type LanguageDetection, type ChoiceAnswer } from 'laya-client';
+  type Usage, type LanguageDetection, type ChoiceAnswer, type MinConfidenceMap } from 'laya-client';
 
 const client = new Laya();
 const questions = defineQuestions({
@@ -17,6 +17,14 @@ const noul: number = result.answers.refund.noul;
 const routingModel: string | undefined = result.routing?.model;
 const actionProbability: number | undefined = result.answers.team.action?.act_probability;
 const noulConfidence: number | undefined = result.answers.refund.confidence;
+const choiceJevConfidence: number | undefined = result.answers.team.x_jev_confidence;
+const scoreJevConfidence: number | undefined = result.answers.priority.x_jev_confidence;
+// @ts-expect-error Older and strict-mode servers omit the HTTP confidence extension.
+const requiredJevConfidence: number = result.answers.team.x_jev_confidence;
+// @ts-expect-error Jev defines no confidence extension for noul answers.
+result.answers.refund.x_jev_confidence;
+// @ts-expect-error Jev confidence is numeric when present.
+const textJevConfidence: ChoiceAnswer['x_jev_confidence'] = '0.6';
 const stateTokens: number = result.usage.state_tokens;
 const stateTokensDropped: number = result.usage.state_tokens_dropped;
 const truncated: boolean = result.usage.truncated;
@@ -73,6 +81,13 @@ client.predict('hello', questions, { task: 'typed', lang: 'de', langGuess: 'fr',
 client.predict('hello', questions, { minConfidence: { 'choice:2': 0.9, default: 0.3 } });
 // @ts-expect-error A threshold map with a non-threshold value is not a gate.
 client.predict('hello', questions, { minConfidence: { 'choice:2': 'high' } });
+// @ts-expect-error "choice:2-5" matches core's bucket pattern but is not a bucket it can produce.
+client.predict('hello', questions, { minConfidence: { 'choice:2-5': 0.9 } });
+// @ts-expect-error "foo:2" names no option type core can produce.
+client.predict('hello', questions, { minConfidence: { 'foo:2': 0.9 } });
+// A map assembled at run time is still accepted: Record<string, number> stays assignable.
+const dynamicThresholds: MinConfidenceMap = Object.fromEntries([['choice:2', 0.4]]);
+client.predict('hello', questions, { minConfidence: dynamicThresholds });
 new Laya({ model: 'english' });
 // @ts-expect-error A score answer has no choice field.
 result.answers.priority.choice;

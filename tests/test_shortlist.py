@@ -6,6 +6,8 @@ decision model is never constructed.
 import inspect
 import os
 import sys
+import threading
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -656,6 +658,53 @@ check_raises("cache/bad shape raises", lambda: bad_cached(["alpha", "beta"]))
 check("cache/bad shape caches nothing", bad_cached.cache_info()["size"], 0)
 
 
+class NonFiniteEmbed:
+    """`alpha` embeds NaN on the first call and the query vector on every later one.
+
+    A transient NaN is the case the "bad shape" pair above does not cover: the row is
+    shape-valid, so it is not refused -- `nan_to_num` rewrites it to zeros on the way in,
+    exactly as `_embeddings` does for an unwrapped embedder. The difference is that the
+    wrapper then *stores* the repaired row, so the rewrite outlives the call that caused
+    it, while the unwrapped path re-embeds and recovers on its own.
+    """
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, texts):
+        self.calls.append(list(texts))
+        first = len(self.calls) == 1
+        return [[float("nan"), float("nan")] if (first and text == "alpha")
+                else ([1.0, 0.0] if text in ("pay me", "alpha") else [0.8, 0.2])
+                for text in texts]
+
+
+nf_embed = NonFiniteEmbed()
+nf_cached = cached_embed_fn(nf_embed)
+# `cache/nan row stored cleaned` and `cache/cleaned row served from cache`, further down
+# this file, pin the rewrite and that the cache serves it. What they do not pin is that the
+# second call's *rows* are the repaired ones, which is where the wrapper and the unwrapped
+# embedder visibly disagree: a transient NaN costs that option its real embedding forever.
+nf_cached(["alpha"])                       # embeds NaN, stores the zeroed row
+check_true("cache/sticky row stays the repaired one",
+           np.array_equal(nf_cached(["alpha"])[0], [0.0, 0.0]) and len(nf_embed.calls) == 1)
+
+# The consequence a caller actually sees: shortlist membership, not just the numbers.
+NF_CRITERIA = {"alpha": None, "beta": None}
+raw_embed = NonFiniteEmbed()
+raw = (shortlist_choice("pay me", NF_CRITERIA, raw_embed, k=1),
+       shortlist_choice("pay me", NF_CRITERIA, raw_embed, k=1))
+wrapped_embed = NonFiniteEmbed()
+wrapped_fn = cached_embed_fn(wrapped_embed)
+sticky = (shortlist_choice("pay me", NF_CRITERIA, wrapped_fn, k=1),
+          shortlist_choice("pay me", NF_CRITERIA, wrapped_fn, k=1))
+check("cache/unwrapped second call recovers the finite row", raw, (["beta"], ["alpha"]))
+check("cache/wrapped second call keeps the zeroed row", sticky, (["beta"], ["beta"]))
+wrapped_fn.cache_clear()
+check("cache/clearing it restores the unwrapped ranking",
+      shortlist_choice("pay me", NF_CRITERIA, wrapped_fn, k=1), ["alpha"])
+
+
 class FakeTensor:
     """Mimics the detach().float().cpu().numpy() chain of a torch tensor."""
 
@@ -778,6 +827,81 @@ swap_cached(["beta"])
 check("cache/dim clear then re-embed works", swap_cached.cache_info()["size"], 1)
 
 
+# ------------------------------------------------------- the dimensionality guard is a read
+# That guard reads `rows_by_text`, so it needs the lock every other read holds. Measured on the
+# unlocked version: 3 callers plus a `cache_clear()` churner over 6,000 calls (12,000 texts) let
+# 42, 46, 55, 65 and 67 exceptions escape on five runs in a row, each one either a RuntimeError
+# ("OrderedDict mutated during iteration") or a StopIteration out of `next(iter(...))`, raised at
+# the guard line and handed to the caller instead of a matrix. The switch interval is compressed
+# because at CPython's default 5 ms the same workload escaped 0 twice over -- the window between
+# the truthiness test and the iterator is two bytecodes wide, and a thread only lands in it when
+# the interpreter chooses to switch there. The locked build escapes 0 at 1e-6.
+def _race_parse(text):
+    tid, n = text.split("-")
+    return float(int(tid[1:]) * 100000 + int(n))
+
+
+def _race_embed(texts):
+    # Every text embeds to a row of its own, so a call that gets back another text's row is
+    # caught below and not just a call that raises.
+    return np.array([[_race_parse(t)] * 8 for t in texts], dtype=np.float32)
+
+
+def _race_texts(tid, n):
+    # Two texts per call, because a one-text call cannot tell a row bound to the wrong key from
+    # a correct one: there is nothing to compare the position against.
+    return ["t%d-%d" % (tid, n), "t%d-%d" % (tid, n + 5000)]
+
+
+race_errors = []
+race_bad_rows = []
+race_stop = threading.Event()
+race_fn = cached_embed_fn(_race_embed, maxsize=4)
+
+
+def _race_caller(tid):
+    for n in range(2000):
+        texts = _race_texts(tid, n)
+        want = [_race_parse(t) for t in texts]
+        try:
+            rows = race_fn(texts)
+            got = [float(row[0]) for row in rows]
+            if rows.shape != (2, 8) or got != want:
+                race_bad_rows.append((tuple(rows.shape), got, want))
+        except BaseException as exc:
+            race_errors.append(type(exc).__name__)
+
+
+def _race_churner():
+    while not race_stop.is_set():
+        race_fn.cache_clear()
+
+
+_switch_interval = sys.getswitchinterval()
+sys.setswitchinterval(1e-6)
+try:
+    _churner = threading.Thread(target=_race_churner)
+    _churner.start()
+    _callers = [threading.Thread(target=_race_caller, args=(t,)) for t in range(3)]
+    for _caller in _callers:
+        _caller.start()
+    for _caller in _callers:
+        _caller.join()
+    race_stop.set()
+    _churner.join()
+finally:
+    sys.setswitchinterval(_switch_interval)
+
+check_true("cache/concurrent dimensionality guard does not iterate a mutating cache",
+           not race_errors,
+           "%d escaped: %s" % (len(race_errors), sorted(set(race_errors))))
+# The arm above is the one the unlocked build fails; it crashed calls rather than mis-serving
+# them, so this arm measured 0 there too. This one is what catches a wrong row: serving every
+# position from `found[keys[0]]` instead of `found[key]` trips it on all 6,000 calls.
+check_true("cache/concurrent guarded calls return the row for their own text",
+           not race_bad_rows, "%d calls returned %s" % (len(race_bad_rows), race_bad_rows[:3]))
+
+
 # --------------------------------------------------------------- tournament
 class Ranker:
     """Stand-in for Agent that always answers the label it ranks highest, in any group."""
@@ -845,6 +969,232 @@ for bad in (1, 0, -3, True, 2.5, "16"):
 check_raises("tournament/questions must be a dict", lambda: predict_tournament(Ranker([]), "s", []), TypeError)
 check_raises("tournament/choice without criteria",
              lambda: predict_tournament(Ranker([]), "s", {"q": {"type": "choice", "instructions": "pick"}}))
+
+
+# --------------------------------------------- every call's reply is held to the same contract
+# `predict_shortlist` and the tournament's final call both refused a non-dict reply by naming that
+# contract; the tournament's round call indexed the reply instead, so the same agent fault raised
+# Python's indexing error from inside the module. These checks hold the shape guards that close
+# that gap, and pin the bare `KeyError`s the narrowing deliberately leaves where they are.
+class Reply:
+    """Answers every call with ``shape``, so only the reply's shape varies between these stubs.
+
+    A callable ``shape`` is handed the questions, which is how a stub replies to the caller's own
+    request and to the invented group questions differently.
+    """
+
+    def __init__(self, shape):
+        self.shape = shape
+        self.seen = []
+
+    def predict(self, state, questions, **kwargs):
+        self.seen.append(sorted(questions))
+        return self.shape(questions) if callable(self.shape) else self.shape
+
+
+def _message(fn):
+    try:
+        fn()
+    except Exception as exc:
+        return "%s: %s" % (type(exc).__name__, exc)
+    return "no exception"
+
+
+def _outcome(fn):
+    """What a call returns, or the exception it raised.
+
+    A guard that fires where it should not has to fail the check that owns that call site, not
+    abort the suite before the checks below it run.
+    """
+    try:
+        return ("returned", fn())
+    except Exception as exc:
+        return ("raised", "%s: %s" % (type(exc).__name__, exc))
+
+
+# 20 labels at group_size 4 is two rounds -- five groups, then two -- and then the final call over
+# the finalists. `_round` hands one reply shape to every call of such a tournament, as a thunk.
+_TOUR_Q = {"q": {"type": "choice", "criteria": ["l%02d" % i for i in range(20)]}}
+_DICT_MSG = "TypeError: predict/system_one must return a dict, got list"
+
+
+def _round(shape):
+    return lambda: predict_tournament(Reply(shape), "s", _TOUR_Q, group_size=4)
+
+
+def _group_answers(questions):
+    return {"model": "fake", "answers": {qid: {"choice": next(iter(qdef["criteria"]))}
+                                         for qid, qdef in questions.items()}}
+
+
+check("tournament/round reply must be a dict, said by name", _message(_round(["not", "a", "dict"])),
+      _DICT_MSG)
+check("shortlist/reply must be a dict, said by name", _message(
+    lambda: predict_shortlist(Reply(["not", "a", "dict"]), "s", _TOUR_Q,
+                              embed_fn=lambda texts: [[float(i)] for i in range(len(texts))], k=5)),
+    _DICT_MSG)
+check("tournament/round reply without an answers mapping is named too",
+      _message(_round({"model": "fake"})),
+      "TypeError: predict/system_one must return an answers dict, got NoneType")
+# What is deliberately not changed: an answer this module indexes is still looked up directly, so a
+# round that skips a group raises the bare `KeyError` for that group's number, and an answer with no
+# choice raises `KeyError: 'choice'`. `laya-java/fixtures/tournament.json` records both messages as
+# the contract the Java and TypeScript ports are tested against, so naming them here would move
+# three ports and their committed fixtures rather than one module.
+check("tournament/a round that leaves groups out keeps the bare KeyError",
+      _message(_round(lambda q: {"model": "fake", "answers": {"0": {"choice": "l00"}}})),
+      "KeyError: '1'")
+check("tournament/an answer with no choice keeps the bare KeyError",
+      _message(_round(lambda q: {"model": "fake",
+                                 "answers": {qid: {"score": 1.0} for qid in q}})),
+      "KeyError: 'choice'")
+# Each call site is guarded on its own: an agent can answer the caller's request and hand back a
+# list for the invented groups, or the other way round. Either way the round has already run, so a
+# guard only on the last call would not catch the first of these.
+check("tournament/a bad round reply is refused before the final call",
+      _message(_round(lambda q: ["not", "a", "dict"] if "q" not in q else _group_answers(q))),
+      _DICT_MSG)
+_bad_final = Reply(lambda q: ["not", "a", "dict"] if "q" in q else _group_answers(q))
+check("tournament/a bad final reply is refused after the rounds ran",
+      (_message(lambda: predict_tournament(_bad_final, "s", _TOUR_Q, group_size=4)), _bad_final.seen),
+      (_DICT_MSG, [["0", "1", "2", "3", "4"], ["0", "1"], ["q"]]))
+# And a reply that satisfies the contract reaches the same result it did before: the checks are on
+# the shape this module indexes, not on an answer's contents, which the final dict passes through.
+_clean = Reply(_group_answers)
+check("tournament/a well-shaped reply still plays its rounds",
+      _outcome(lambda: (predict_tournament(_clean, "s", _TOUR_Q, group_size=4)["tournament"]["q"]["rounds"],
+                       _clean.seen)),
+      ("returned", (2, [["0", "1", "2", "3", "4"], ["0", "1"], ["q"]])))
+check("tournament/an answer-less final reply is still returned as given",
+      _outcome(lambda: predict_tournament(Reply({"model": "fake"}), "s",
+                                          {"q": {"type": "choice", "criteria": ["a", "b"]}})),
+      ("returned", {"model": "fake",
+                    "tournament": {"q": {"labels": ["a", "b"], "n": 2, "rounds": 0}}}))
+# The contract belongs in the docstring, because a caller picking an agent for this function reads
+# it there -- and it has to say the rounds are covered, since that is the call site that used to be
+# unchecked.
+_doc = " ".join(predict_tournament.__doc__.split())
+_contract = (_doc.split("Every call's reply")[1].split("Extra keyword")[0]
+             if "Every call's reply" in _doc else "")
+check_true("tournament/docstring states the contract for every call",
+           _contract.startswith(" is checked against the same shape, the elimination rounds included")
+           and "answers" in _contract,
+           "the docstring says: " + (_contract or "(no such paragraph)")[:160])
+
+
+# ------------------------------------------------- narrowing drops a stale option_order
+# Nandha on #958: narrowing `criteria` while forwarding a full-length `option_order`
+# "is a core contract question"; his preferred remedy drops the order with a warning,
+# because remapping it onto the kept labels changes the request silently.
+
+
+def _run_catching_warnings(fn):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = fn()
+    return result, [w for w in caught if issubclass(w.category, RuntimeWarning)]
+
+
+def _check_validates(name, qid, qdef):
+    try:
+        Agent._check_question(qid, qdef)
+        check_true(name, True)
+    except ValueError as e:
+        check_true(name, False, str(e))
+
+
+# --- shortlist: a narrowed choice loses its order, once, and says so
+order_q = {
+    "type": "choice",
+    "instructions": "Which desk?",
+    "criteria": dict(full),
+    "option_order": [3, 2, 1, 0],
+}
+order_agent = Recorder()
+out_order, order_warns = _run_catching_warnings(
+    lambda: predict_shortlist(order_agent, state, {"intent": order_q}, TableEmbed(full_vectors), k=2)
+)
+narrowed = order_agent.calls[0][1]["intent"]
+check_true("order/narrowed question carries no option_order", "option_order" not in narrowed)
+check("order/narrowed criteria stay the top 2", list(narrowed["criteria"]), ["tech", "sales"])
+check("order/exactly one RuntimeWarning", len(order_warns), 1)
+check_true(
+    "order/warning names the question and the key",
+    bool(order_warns) and "intent" in str(order_warns[0].message) and "option_order" in str(order_warns[0].message),
+)
+_check_validates("order/narrowed question passes Agent._check_question", "intent", narrowed)
+plain_agent = Recorder()
+out_plain = predict_shortlist(
+    plain_agent, state,
+    {"intent": {k: v for k, v in order_q.items() if k != "option_order"}},
+    TableEmbed(full_vectors), k=2,
+)
+check("order/result equals the call without an order", out_order, out_plain)
+check_true("order/caller question keeps its option_order", "option_order" in order_q)
+
+# --- shortlist: passthrough and non-choice questions are untouched
+passthrough_order = {"type": "choice", "instructions": "pick", "criteria": ["x", "y"], "option_order": [1, 0]}
+pt_agent = Recorder()
+_out, pt_warns = _run_catching_warnings(
+    lambda: predict_shortlist(pt_agent, "s", {"pick": passthrough_order}, TableEmbed({}), k=2)
+)
+check_true("order/passthrough keeps its order", pt_agent.calls[0][1]["pick"] is passthrough_order)
+check("order/passthrough emits no warning", len(pt_warns), 0)
+_check_validates("order/passthrough order still validates", "pick", passthrough_order)
+score_order = dict(score_q, option_order=[3, 2, 1, 0])
+nc_agent = Recorder()
+_out, nc_warns = _run_catching_warnings(
+    lambda: predict_shortlist(nc_agent, "s", {"urgency": score_order}, TableEmbed({}), k=2)
+)
+check_true("order/non-choice keeps its order", nc_agent.calls[0][1]["urgency"] is score_order)
+check("order/non-choice emits no warning", len(nc_warns), 0)
+
+# --- shortlist with list criteria behaves the same way
+list_order = {"type": "choice", "instructions": "pick", "criteria": ["a", "b", "c", "d"],
+              "option_order": [3, 2, 1, 0]}
+list_agent = Recorder()
+_out, list_warns = _run_catching_warnings(
+    lambda: predict_shortlist(
+        list_agent, "a", {"pick": list_order},
+        TableEmbed({"pick\na": [1.0, 0.0], "a": [1.0, 0.0], "b": [0.9, 0.1], "c": [0.1, 0.9], "d": [0.0, 1.0]}),
+        k=2,
+    )
+)
+list_narrowed = list_agent.calls[0][1]["pick"]
+check_true("order/list-criteria narrowed carries no option_order", "option_order" not in list_narrowed)
+check("order/list-criteria one warning", len(list_warns), 1)
+_check_validates("order/list-criteria narrowed validates", "pick", list_narrowed)
+
+# --- tournament: groups and finalists lose the order, once per question
+t_labels = ["l%02d" % i for i in range(8)]
+t_big = {"type": "choice", "instructions": "pick",
+         "criteria": {label: "about " + label for label in t_labels},
+         "option_order": [7, 6, 5, 4, 3, 2, 1, 0]}
+t_small = {"type": "choice", "instructions": "pick", "criteria": ["x", "y"], "option_order": [1, 0]}
+t_ranker = Ranker(t_labels[::-1] + ["y", "x"])
+out_t, t_warns = _run_catching_warnings(
+    lambda: predict_tournament(t_ranker, "s", {"big": t_big, "small": t_small}, group_size=4)
+)
+_bad = []
+for _call_questions, _kwargs in t_ranker.calls:
+    for _qid, _qdef in _call_questions.items():
+        if _qdef.get("type") != "choice":
+            continue
+        if "option_order" in _qdef and _qid == "big":
+            _bad.append("%s kept its order" % _qid)
+        try:
+            Agent._check_question(_qid, _qdef)
+        except ValueError as e:
+            _bad.append("%s: %s" % (_qid, e))
+check_true("order/tournament questions all validate without the order", not _bad, "; ".join(_bad))
+check("order/tournament warns once for the narrowed choice", len(t_warns), 1)
+check_true("order/tournament warning names the question", bool(t_warns) and "big" in str(t_warns[0].message))
+final_t = t_ranker.calls[-1][0]
+check_true("order/tournament passthrough keeps its order", final_t["small"] is t_small)
+check_true(
+    "order/tournament caller keeps its order",
+    t_big["option_order"] == [7, 6, 5, 4, 3, 2, 1, 0],
+)
 
 
 print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
