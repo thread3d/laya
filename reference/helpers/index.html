@@ -1,0 +1,4109 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Multilingual, non-autoregressive System 1 decision engine">
+      
+      
+      
+        <link rel="canonical" href="https://thread3d.github.io/laya/reference/helpers/">
+      
+      
+        <link rel="prev" href="../router/">
+      
+      
+        <link rel="next" href="../train/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="https://raw.githubusercontent.com/NandhaKishorM/laya/main/assets/logo-mark.svg">
+      <meta name="generator" content="zensical-0.0.65">
+    
+    
+      
+        <title>Helpers - Laya</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.40d3fdbb.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#helpers" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Laya" class="md-header__button md-logo" aria-label="Laya" data-md-component="logo">
+      
+  <img src="https://raw.githubusercontent.com/NandhaKishorM/laya/main/assets/logo-mark.svg" alt="Laya">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Laya
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Helpers
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/NandhaKishorM/laya" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    NandhaKishorM/laya
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Laya" class="md-nav__button md-logo" aria-label="Laya" data-md-component="logo">
+      
+  <img src="https://raw.githubusercontent.com/NandhaKishorM/laya/main/assets/logo-mark.svg" alt="Laya">
+
+    </a>
+    Laya
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/NandhaKishorM/laya" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    NandhaKishorM/laya
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Laya
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guides
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_2">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Guides
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../use-cases/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Architectural Patterns and Production Use Cases
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../structured/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Schema-driven decisions
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../hooks/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hooks
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2_3" id="__nav_2_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_3_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_2_3">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Hooks
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../hooks/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API reference
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../hooks/lifecycle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Lifecycle
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../hooks/errors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Error handling
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../hooks/patterns/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Patterns and anti-patterns
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../hooks/examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Examples
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../hooks/tracing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Tracing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../langchain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LangChain &amp; LangGraph Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../llamaindex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LlamaIndex Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../crewai/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CrewAI Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agno/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Agno Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Tool &amp; Function Selection
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Benchmarks and known limits
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli-mcp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Command line and MCP server
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../compile-and-fast-path/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  compile=True and the TileLang fast path: engineering notes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../evals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Evaluation harness
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../fast-backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fast backends
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guardrail-limitations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guardrail Limitations
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../http-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  HTTP API
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../questions-and-answers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Questions and answers
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Routing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../staged-adoption/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Staged adoption
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../typescript-sdk/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  TypeScript SDK design
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Deployment
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_3">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Deployment
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Docker quickstart
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../docker-platforms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  ARM64 and DGX Spark containers
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Checkpoint integrity
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_4">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Fine-tuning
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../finetune/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning Laya on your own decisions
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../finetune_browser_agent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning Laya as a browser-agent decision head
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reference
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+            <label class="md-nav__title" for="__nav_5">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Reference
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Agent
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../router/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Router
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Helpers
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Helpers
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#language-detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Language detection
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.lang.analyse" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        analyse
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.lang.detect_script" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        detect_script
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.lang.is_english" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        is_english
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#email" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Email
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.email.clean_email_body" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        clean_email_body
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.email.email_state" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        email_state
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#question-presets" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Question presets
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.presets.triage_questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        triage_questions
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.presets.email_questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        email_questions
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.presets.guard_questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        guard_questions
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.presets.moderation_questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        moderation_questions
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.presets.router_questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        router_questions
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pre-run-request-sizing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Pre-run request sizing
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.common.state_room" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        state_room
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.common.window_budget" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        window_budget
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.common.collapsed_options" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        collapsed_options
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#shortlisting" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Shortlisting
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.shortlist.shortlist_choice" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        shortlist_choice
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.shortlist.predict_shortlist" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        predict_shortlist
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.shortlist.predict_tournament" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        predict_tournament
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.shortlist.embed_fn_from_agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        embed_fn_from_agent
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.shortlist.cached_embed_fn" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        cached_embed_fn
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#abstention" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Abstention
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.confidence.check_min_confidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        check_min_confidence
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.confidence.check_min_confidence_map" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        check_min_confidence_map
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.confidence.resolve_min_confidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        resolve_min_confidence
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.confidence.flag_low_confidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        flag_low_confidence
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.confidence.apply_confidence_gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        apply_confidence_gate
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.confidence.GATE_STATES" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        GATE_STATES
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#calibration-and-training" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Calibration and training
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.common.answer_confidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        answer_confidence
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.common.confidence_from_probs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        confidence_from_probs
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.confidence.jev_confidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        jev_confidence
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.common.ece_score" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        ece_score
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.calibrate.fit_temperatures" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        fit_temperatures
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.calibrate.fit_one_temperature" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        fit_one_temperature
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.calibrate.fit_temperature_map" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        fit_temperature_map
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.calibrate.fit_abstention_thresholds" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        fit_abstention_thresholds
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.calibrate.fit_binning_map" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        fit_binning_map
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.calibrate.apply_binning_map" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        apply_binning_map
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.agent.Agent.fit_binning" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        fit_binning
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.common.render_options" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        render_options
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.common.proper_reward" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        proper_reward
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.common.td_lambda_targets" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        td_lambda_targets
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.common.QTYPES" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        QTYPES
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.common.QTYPE_NAMES" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        QTYPE_NAMES
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../train/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../langchain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LangChain components
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#language-detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Language detection
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.lang.analyse" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        analyse
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.lang.detect_script" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        detect_script
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.lang.is_english" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        is_english
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#email" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Email
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.email.clean_email_body" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        clean_email_body
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.email.email_state" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        email_state
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#question-presets" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Question presets
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.presets.triage_questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        triage_questions
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.presets.email_questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        email_questions
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.presets.guard_questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        guard_questions
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.presets.moderation_questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        moderation_questions
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.presets.router_questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        router_questions
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pre-run-request-sizing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Pre-run request sizing
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.common.state_room" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        state_room
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.common.window_budget" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        window_budget
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.common.collapsed_options" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        collapsed_options
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#shortlisting" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Shortlisting
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.shortlist.shortlist_choice" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        shortlist_choice
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.shortlist.predict_shortlist" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        predict_shortlist
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.shortlist.predict_tournament" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        predict_tournament
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.shortlist.embed_fn_from_agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        embed_fn_from_agent
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.shortlist.cached_embed_fn" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        cached_embed_fn
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#abstention" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Abstention
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.confidence.check_min_confidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        check_min_confidence
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.confidence.check_min_confidence_map" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        check_min_confidence_map
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.confidence.resolve_min_confidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        resolve_min_confidence
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.confidence.flag_low_confidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        flag_low_confidence
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.confidence.apply_confidence_gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        apply_confidence_gate
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.confidence.GATE_STATES" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        GATE_STATES
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#calibration-and-training" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Calibration and training
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.common.answer_confidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        answer_confidence
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.common.confidence_from_probs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        confidence_from_probs
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.confidence.jev_confidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        jev_confidence
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.common.ece_score" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        ece_score
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.calibrate.fit_temperatures" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        fit_temperatures
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.calibrate.fit_one_temperature" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        fit_one_temperature
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.calibrate.fit_temperature_map" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        fit_temperature_map
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.calibrate.fit_abstention_thresholds" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        fit_abstention_thresholds
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.calibrate.fit_binning_map" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        fit_binning_map
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.calibrate.apply_binning_map" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        apply_binning_map
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.agent.Agent.fit_binning" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        fit_binning
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.common.render_options" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        render_options
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.common.proper_reward" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        proper_reward
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.common.td_lambda_targets" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        td_lambda_targets
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.common.QTYPES" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        QTYPES
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya.common.QTYPE_NAMES" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        QTYPE_NAMES
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="helpers">Helpers<a class="headerlink" href="#helpers" title="Permanent link">&para;</a></h1>
+<h2 id="language-detection">Language detection<a class="headerlink" href="#language-detection" title="Permanent link">&para;</a></h2>
+<p><code>laya.detect_language</code> is <code>laya.lang.analyse</code>.</p>
+
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.lang.analyse" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">analyse</span>
+
+
+<a href="#laya.lang.analyse" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">analyse</span><span class="p">(</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">state</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">bytes</span><span class="p">,</span> <span class="n">Mapping</span><span class="p">,</span> <span class="nb">list</span><span class="p">,</span> <span class="kc">None</span><span class="p">],</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="o">*</span><span class="p">,</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">explain</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">object</span><span class="p">]</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Full detection result for a state.</p>
+<p>Returns <code>script</code>, <code>script_profile</code>, <code>language</code> (best effort, may be None),
+<code>is_english</code>, <code>non_latin_fraction</code> and <code>mixed_segment</code>. <code>mixed_segment</code> names the line or field
+the segment scan itself singled out, else None: a state flipped non-English by the per-value
+read below is reported with <code>mixed_segment</code> still None, because that read keeps the offending
+value in its own local and never writes it back.</p>
+<p>String values are what get read. When a state has several of them, one non-English value is
+enough: joining every value into one window let a long English note fill the 4000 characters,
+or outvote a short German message, and that message was then sent to the English checkpoint
+(#384). The segment scan still stops at 4000 characters, which is what keeps a huge field
+cheap; a value it did not reach is read on its own afterwards.</p>
+<p>With <code>explain=True</code>, adds <code>diagnostic</code>: the selected analysis stage, its reason and, for a
+segment or value override, the source leaf index, path and 1-based line. Paths retain string
+keys (up to 128 characters), integers (up to 63 bits) and sequence indices. Other keys make
+the path None; the leaf index remains available. No input text is added to the diagnostic.
+The original fields and detection rules are unchanged. These are heuristic reasons, not
+calibrated confidence or the router's final model choice.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.lang.detect_script" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">detect_script</span>
+
+
+<a href="#laya.lang.detect_script" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">detect_script</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Dominant script of <code>text</code>: 'latin', 'han', 'devanagari', ... or 'unknown' if there are no letters.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.lang.is_english" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">is_english</span>
+
+
+<a href="#laya.lang.is_english" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">is_english</span><span class="p">(</span><span class="n">state</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">bytes</span><span class="p">,</span> <span class="n">Mapping</span><span class="p">,</span> <span class="nb">list</span><span class="p">,</span> <span class="kc">None</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>True when the English checkpoint can be expected to read this state.</p>
+
+
+    </div>
+
+</div><h2 id="email">Email<a class="headerlink" href="#email" title="Permanent link">&para;</a></h2>
+
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.email.clean_email_body" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">clean_email_body</span>
+
+
+<a href="#laya.email.clean_email_body" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">clean_email_body</span><span class="p">(</span><span class="n">body</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">max_chars</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3000</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Remove quoted email history, signatures and disclaimers to keep input focused.</p>
+<p><code>max_chars</code> is the length the result is cut to, 3000 characters unless raised -- see
+<code>email_state</code>, which takes the same budget and passes it through.</p>
+<p>It is a slice budget, not a floor, and it is applied twice: as the <code>max_chars * 4</code> pre-cut
+that bounds the regex work below, and as the <code>text[:max_chars]</code> that returns the result. The
+pre-cut runs first, so the quote, signature and disclaimer rules see only the first
+<code>4 * max_chars</code> characters -- a footer that begins past that window is never recognized, and
+the paragraph holding it survives to the final cut. So <code>0</code> answers with the empty string, and a
+negative value trims from the end: its length test is against a negative number, so the pre-cut
+always fires and removes <code>4 * |max_chars|</code>, and the final slice removes <code>|max_chars|</code> more,
+which is <code>5 * |max_chars|</code> off the body and empty once that reaches the body's length. That is
+specified behaviour, recorded by the <code>budget-zero</code> and <code>budget-negative-*</code> cases of
+<code>laya-java/fixtures/email.json</code> that the Java and TypeScript ports are tested against, so "no
+limit" means a budget larger than the body -- never <code>0</code> and never negative.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.email.email_state" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">email_state</span>
+
+
+<a href="#laya.email.email_state" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">email_state</span><span class="p">(</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">subject</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">body</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">sender</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">clean</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">max_chars</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3000</span><span class="p">,</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="o">**</span><span class="n">extra</span><span class="p">,</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Construct a clean state dictionary for email classification.</p>
+<p><code>max_chars</code> is the budget <code>clean_email_body</code> cuts the body to, and it is worth raising for a
+long message: at the default the body stops after 3000 characters, so a request that arrives in
+the last paragraphs never reaches the model -- including through <code>predict_long</code>, which scans a
+state in windows precisely so it can read past one window's worth. Lowering it does the same
+thing more surely: it is a slice budget, so <code>0</code> gives the model a subject and an empty body, and
+a negative value cuts from the end, which is where that late request lives. <code>clean_email_body</code>
+states the arithmetic, and the <code>budget-zero</code> and <code>budget-negative-*</code> cases of
+<code>laya-java/fixtures/email.json</code> pin it for every port, so it is behaviour rather than an error --
+pass a budget larger than the body when the message is long, never <code>0</code> or a negative to mean "no
+limit". Ignored when <code>clean=False</code>, which passes the body through whole.</p>
+<p>Any other keyword becomes a field of the state, so it is read by the model; a typo here is an
+input mutation, not an error. The exception is a keyword whose value is exactly <code>None</code>: it is
+dropped rather than added, so <code>email_state(..., thread_id=None)</code> gives the same state as
+leaving the keyword out. The key is absent, not null -- and the distinction reaches the model,
+because <code>laya.common.serialize_state</code> turns the state into JSON before it is tokenized, so a
+retained <code>None</code> would put <code>"thread_id": null</code> in the prompt. <code>sender</code> is dropped on the
+same call by a different rule, falsiness rather than <code>None</code>, so <code>sender=""</code> leaves no
+<code>from</code> field either.</p>
+
+
+    </div>
+
+</div><h2 id="question-presets">Question presets<a class="headerlink" href="#question-presets" title="Permanent link">&para;</a></h2>
+
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.presets.triage_questions" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">triage_questions</span>
+
+
+<a href="#laya.presets.triage_questions" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">triage_questions</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">Dict</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Preset questions for customer support ticket triage.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.presets.email_questions" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">email_questions</span>
+
+
+<a href="#laya.presets.email_questions" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">email_questions</span><span class="p">(</span><span class="n">categories</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Preset questions for inbound email triage and threat filtering.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.presets.guard_questions" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">guard_questions</span>
+
+
+<a href="#laya.presets.guard_questions" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">guard_questions</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">Dict</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Preset questions for real-time LLM input guardrails.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.presets.moderation_questions" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">moderation_questions</span>
+
+
+<a href="#laya.presets.moderation_questions" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">moderation_questions</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">Dict</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Preset questions for content safety and moderation.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.presets.router_questions" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">router_questions</span>
+
+
+<a href="#laya.presets.router_questions" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">router_questions</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">Dict</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Preset questions for intelligent model routing.</p>
+
+
+    </div>
+
+</div><h2 id="pre-run-request-sizing">Pre-run request sizing<a class="headerlink" href="#pre-run-request-sizing" title="Permanent link">&para;</a></h2>
+<p>What a request will fit before any forward pass. These are the helpers <code>predict_long</code> itself
+reads, so a question can be measured without holding an Agent: <code>build_head</code> is the question half
+of a sequence, <code>state_room</code> is what is left for the state after it, and <code>build_sequence</code> reports
+what the head budget did to the options and to the state.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoTokenizer</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">laya.common</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_sequence</span><span class="p">,</span> <span class="n">collapsed_options</span><span class="p">,</span> <span class="n">state_room</span><span class="p">,</span> <span class="n">window_budget</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">tok</span> <span class="o">=</span> <span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">"convaiinnovations/laya"</span><span class="p">,</span> <span class="n">subfolder</span><span class="o">=</span><span class="s2">"tokenizer"</span><span class="p">)</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">max_len</span><span class="p">,</span> <span class="n">head_max_len</span> <span class="o">=</span> <span class="mi">512</span><span class="p">,</span> <span class="mi">192</span>      <span class="c1"># from the checkpoint's rl_agent_config.json</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">question</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"choice"</span><span class="p">,</span> <span class="s2">"instructions"</span><span class="p">:</span> <span class="s2">"What does the customer want?"</span><span class="p">,</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>            <span class="s2">"criteria"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"refund"</span><span class="p">:</span> <span class="s2">"money back"</span><span class="p">,</span> <span class="s2">"cancel"</span><span class="p">:</span> <span class="s2">"stop the service"</span><span class="p">}}</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="c1"># The short-key internal shape the sizing helpers read; inline the mapping as</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="c1"># questions-and-answers.md shows rather than reaching into Agent._to_internal.</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="n">q</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"t"</span><span class="p">:</span> <span class="n">question</span><span class="p">[</span><span class="s2">"type"</span><span class="p">],</span> <span class="s2">"ins"</span><span class="p">:</span> <span class="n">question</span><span class="p">[</span><span class="s2">"instructions"</span><span class="p">],</span> <span class="s2">"crit"</span><span class="p">:</span> <span class="n">question</span><span class="p">[</span><span class="s2">"criteria"</span><span class="p">]}</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="n">state</span> <span class="o">=</span> <span class="s2">"I was charged twice for the same invoice."</span>
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="n">state_room</span><span class="p">(</span><span class="n">tok</span><span class="p">,</span> <span class="n">q</span><span class="p">,</span> <span class="n">max_len</span><span class="p">,</span> <span class="n">head_max_len</span><span class="p">)</span>   <span class="c1"># state tokens this question leaves room for</span>
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="n">seq</span><span class="p">,</span> <span class="n">markers</span><span class="p">,</span> <span class="n">stats</span><span class="p">,</span> <span class="n">trunc</span> <span class="o">=</span> <span class="n">build_sequence</span><span class="p">(</span>
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    <span class="n">tok</span><span class="p">,</span> <span class="n">state</span><span class="p">,</span> <span class="n">q</span><span class="p">,</span> <span class="n">max_len</span><span class="p">,</span> <span class="n">head_max_len</span><span class="p">,</span> <span class="n">return_stats</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">return_truncation_stats</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="n">stats</span>       <span class="c1"># how many options the head budget kept distinct, and the cap it applied</span>
+</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="n">trunc</span>       <span class="c1"># state tokens, used, dropped, and whether the state was truncated</span>
+</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="n">collapsed_options</span><span class="p">([</span><span class="s2">"q"</span><span class="p">],</span> <span class="p">[{</span><span class="s2">"options"</span><span class="p">:</span> <span class="n">stats</span><span class="p">}])</span>   <span class="c1"># {} until an option loses its own span</span>
+</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="n">window_budget</span><span class="p">(</span><span class="n">tok</span><span class="p">,</span> <span class="p">[</span><span class="n">q</span><span class="p">],</span> <span class="n">max_len</span><span class="p">,</span> <span class="n">head_max_len</span><span class="p">)</span>   <span class="c1"># (window, stride, room) a scan may use</span>
+</span></code></pre></div>
+<p>The same numbers come back after a call in <code>usage</code>: <code>state_tokens</code>, <code>state_tokens_dropped</code>,
+<code>truncated</code>, <code>truncated_questions</code>, and <code>options</code> when an option lost its span. That block is
+the record of what a run did; the helpers above are how to find out before paying for one.
+<code>predict_long</code> hands a state straight to a single pass when its tokens fit the room its
+questions leave, and a scan window is capped at that room with a 50%-of-window stride -- a cap
+large enough to multiply the passes warns before the scan runs.</p>
+<p>None of this picks a strategy: tournament rounds come back as <code>tournament[qid]["rounds"]</code>
+after <code>predict_tournament</code>, and shortlist ranking quality stays with whatever embedder
+supplies it.</p>
+
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.common.state_room" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">state_room</span>
+
+
+<a href="#laya.common.state_room" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">state_room</span><span class="p">(</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">tok</span><span class="p">,</span> <span class="n">q</span><span class="p">:</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">max_len</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">512</span><span class="p">,</span> <span class="n">head_max_len</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">192</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>How many state tokens <code>q</code> leaves inside <code>max_len</code>, which is what <code>build_sequence</code> keeps.</p>
+<p>The head is the question's own -- its instructions plus one <code>[MASK]</code>-prefixed span per option --
+so a question with many options leaves less room for the state than one with two, and two
+questions in the same request do not have to leave the same amount. Anything past the return
+value is cut off (the start is kept, or the end for a conversation turn list).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.common.window_budget" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">window_budget</span>
+
+
+<a href="#laya.common.window_budget" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">window_budget</span><span class="p">(</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">tok</span><span class="p">,</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">questions</span><span class="p">,</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">max_len</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">512</span><span class="p">,</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">head_max_len</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">192</span><span class="p">,</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">window</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">stride</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="p">)</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Window size and stride for scanning a state that is longer than one sequence.</p>
+<p><code>predict_long</code> decodes each token window back to text and scores it as an ordinary state, so a
+window wider than the room the questions leave is re-truncated by <code>build_sequence</code> on the way
+in: the tail of every window reaches no model, while the reported span says it did. The window
+is therefore capped at <code>state_room</code>, and at the <em>smallest</em> room of <code>questions</code>, because the
+windows are one list of states scored for every question in shared forward passes -- a window
+sized for the roomiest question would be cut short for the tightest one, and the offsets
+reported on its answers would mean something different per question. With no questions there is
+nothing to fit, so the caller's window (or the checkpoint default) stands. That default is
+<code>max(64, max_len - head_max_len - 8)</code>: the state budget the config leaves, with a 64-token
+floor under it, so a widened <code>head_max_len</code> stops shrinking it there.</p>
+<p><code>questions</code> are internal question dicts, as <code>Agent._to_internal</code> returns them.</p>
+<p>An explicit <code>window</code> wider than the room is clamped to it with a <code>RuntimeWarning</code>, since a
+scan at the requested size cannot read what it claims to. A <code>stride</code> past the effective window
+is refused: the tokens between two windows would be read by neither, which is the failure
+<code>predict_long</code> exists to prevent. The default stride keeps its 50% overlap of the <em>effective</em>
+window, so a span near a boundary still lands whole inside some window; an explicit stride
+equal to the window still reads every token, with no overlap to catch a span that straddles a
+boundary.</p>
+<p>Returns <code>(window, stride, room)</code>.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.common.collapsed_options" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">collapsed_options</span>
+
+
+<a href="#laya.common.collapsed_options" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">collapsed_options</span><span class="p">(</span><span class="n">qids</span><span class="p">,</span> <span class="n">items</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]]]</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>The questions whose options no longer have a token span each, from per-item stats.</p>
+<p><code>total</code> is the number of options the question defines, not the number of markers that
+reached the sequence: a report counted from the markers would say "43/58" about a request
+where 28 options never made it into the input at all.</p>
+
+
+    </div>
+
+</div><h2 id="shortlisting">Shortlisting<a class="headerlink" href="#shortlisting" title="Permanent link">&para;</a></h2>
+
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.shortlist.shortlist_choice" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">shortlist_choice</span>
+
+
+<a href="#laya.shortlist.shortlist_choice" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">shortlist_choice</span><span class="p">(</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">state</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">criteria</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">embed_fn</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]],</span> <span class="n">Any</span><span class="p">],</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">DEFAULT_SHORTLIST_K</span><span class="p">,</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="o">*</span><span class="p">,</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">instructions</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="n">return_scores</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Return the top-<code>k</code> choice labels for <code>state</code>.</p>
+<p><code>embed_fn</code> maps a list of strings to an array of shape <code>(len(texts), dim)</code>.
+It is called once, with the query text first and then one string per option in
+criteria order. Option strings match <code>render_options</code> for a choice question.</p>
+<p>When <code>k</code> is at least the number of labels, every label is returned in its
+original order and <code>embed_fn</code> is not called.</p>
+<p>Ties keep the earlier label. Ranking is a signed cosine, not a similarity floor:
+a label that scores 0 -- no signal at all, or a non-finite vector treated as one
+-- does outrank an earlier label that scored negative, and <code>k</code> drops the
+negative labels first.</p>
+<p>With <code>return_scores=True</code> the return is the <code>(labels, scores)</code> pair, where
+<code>scores</code> holds the signed cosine per kept label in rank order -- the same
+values <code>predict_shortlist</code> reports in its <code>shortlist</code> metadata. <code>scores</code>
+is <code>None</code> when nothing was dropped, exactly as in that metadata.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.shortlist.predict_shortlist" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">predict_shortlist</span>
+
+
+<a href="#laya.shortlist.predict_shortlist" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">predict_shortlist</span><span class="p">(</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">agent</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">state</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">questions</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]],</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">embed_fn</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]],</span> <span class="n">Any</span><span class="p">],</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">DEFAULT_SHORTLIST_K</span><span class="p">,</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="o">**</span><span class="n">predict_kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Shortlist each choice question, then call <code>predict</code> or <code>system_one</code> once.</p>
+<p>Non-choice questions are forwarded unchanged. A choice whose label count is
+<code>&lt;= k</code> is forwarded unchanged and does not call <code>embed_fn</code>. The caller's
+<code>questions</code> dict is not mutated.</p>
+<p>A narrowed choice that carried an <code>option_order</code> has it dropped, with one
+<code>RuntimeWarning</code> naming the question: the order has one slot per option, so an
+order that fitted the caller's label set no longer fits the kept labels and the
+agent refuses the question. Remapping the order onto the kept labels would
+silently move options between slots, so it is dropped instead. A passthrough
+choice and non-choice questions keep theirs.</p>
+<p>The returned dict is the model result plus a <code>shortlist</code> entry. Probabilities
+on a shortlisted choice are over the kept labels only. <code>shortlist</code> has an entry
+for each choice question; a non-choice id is absent, because no ranking ran for it.
+Each entry holds <code>labels</code>, <code>scores</code>, <code>k</code>, <code>n</code>, and <code>passthrough</code>.
+<code>labels</code> is the rank order a shortlist produced, or the criteria order itself when
+<code>passthrough</code> is set and no ranking ran, and it always holds <code>min(k, n)</code> labels;
+<code>scores</code> is the signed cosine of each kept label in that order -- negative
+included, never clamped to 0 -- or <code>None</code> when nothing was dropped. Neither
+<code>k</code> nor <code>n</code> counts what <code>labels</code> kept: <code>k</code> is the cap the caller asked
+for, which a question with fewer labels than that does not reach, and <code>n</code> is
+the caller's label count before any narrowing.</p>
+<p>Extra keyword arguments are forwarded to <code>predict</code> / <code>system_one</code> (for
+example <code>model=</code> on a <code>Router</code>).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.shortlist.predict_tournament" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">predict_tournament</span>
+
+
+<a href="#laya.shortlist.predict_tournament" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">predict_tournament</span><span class="p">(</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">agent</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">state</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">questions</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]],</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">group_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">DEFAULT_TOURNAMENT_GROUP</span><span class="p">,</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="o">**</span><span class="n">predict_kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Narrow each large choice question by elimination, then call <code>predict</code> once more.</p>
+<p>A choice with more than <code>group_size</code> labels is cut, in criteria order, into groups of
+near-equal size and at most <code>group_size</code>. One <code>predict</code> call answers every group of
+every such question -- the groups go in as separate questions, so they share one forward
+pass -- and each group's answer goes through to the next round. Rounds repeat until no
+choice has more than <code>group_size</code> labels left; at the default 16, up to 256 labels take
+one round. Unlike <code>predict_shortlist</code> this needs no embedder, and each label is read
+with the option budget of a <code>group_size</code>-label question, not of the whole label set.</p>
+<p>The final call answers every question of the request, with each choice that went through
+a round cut to its finalists. Non-choice questions and choices of at most <code>group_size</code>
+labels go to it unchanged, so when nothing needs a round it is the only call. The
+caller's <code>questions</code> dict is not mutated.</p>
+<p>A choice that went through a round loses an <code>option_order</code> it carried, with one
+<code>RuntimeWarning</code> naming the question: the group and finalist questions hold fewer
+labels than the caller's, and an order no longer fits the kept labels. Remapping it
+onto them would silently move options between slots, so it is dropped instead. A
+choice that needed no round keeps its order.</p>
+<p>The returned dict is the final call's result plus a <code>tournament</code> entry. It has
+an entry for each choice question -- a non-choice id is absent, since such a
+question plays no round -- holding <code>labels</code> (the finalists, in criteria order),
+<code>n</code> and <code>rounds</code>. <code>n</code> is the caller's label count before the first round,
+the same meaning as in <code>predict_shortlist</code>'s metadata: it says how wide the
+field was, not how many finalists came out of it, so on a choice that played a
+round it is larger than <code>len(labels)</code>. Probabilities, confidences and <code>usage</code>
+come from the final call, so a tournament choice's probabilities are over its
+finalists only.</p>
+<p>Every call's reply is checked against the same shape, the elimination rounds included: a reply
+that is not a dict, and one whose <code>answers</code> is not a dict, each raise that contract by name
+instead of an indexing error or a bare <code>KeyError</code> from inside the module. What an answer holds
+is not checked: the final call's answers go to the caller as the agent wrote them.</p>
+<p>Extra keyword arguments are forwarded to every call (for example <code>model=</code> on a <code>Router</code>).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.shortlist.embed_fn_from_agent" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">embed_fn_from_agent</span>
+
+
+<a href="#laya.shortlist.embed_fn_from_agent" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">embed_fn_from_agent</span><span class="p">(</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">agent</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">max_length</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">512</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">32</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]],</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Mean-pool the checkpoint encoder already loaded on <code>agent</code>.</p>
+<p>The callable embeds a list of strings with <code>agent.tok</code> and <code>agent.model.encoder</code>.
+It does not run the decision head and does not download weights. A dedicated
+bi-encoder passed as <code>embed_fn</code> will usually shortlist better; this helper is
+for callers who only have the Laya checkpoint in memory.</p>
+<p>Padding positions are excluded from the mean. The encoder's train/eval flag is
+left as the caller set it (a loaded <code>Agent</code> is already in eval).
+Each call uses the current <code>agent.device</code>, including after CPU fallback.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.shortlist.cached_embed_fn" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">cached_embed_fn</span>
+
+
+<a href="#laya.shortlist.cached_embed_fn" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">cached_embed_fn</span><span class="p">(</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">embed_fn</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]],</span> <span class="n">Any</span><span class="p">],</span> <span class="n">maxsize</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4096</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]],</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Cache <code>embed_fn</code> output per input string, under an LRU bound.</p>
+<p><code>predict_shortlist</code> embeds the query plus every option text on each call. When the
+same option set is shortlisted on every request -- a fixed intent or label list, as
+in the README's BANKING77 example -- the option rows do not change between calls,
+yet they are re-embedded every time. Wrapping the embedder once::</p>
+<div class="language-text highlight"><pre><span></span><code>embed_fn = cached_embed_fn(embed_fn_from_agent(agent))
+</code></pre></div>
+<p>leaves the first call's embedder work unchanged and reduces each repeat call to
+embedding the new query alone.</p>
+<p>Lookups are exact string matches. Texts missing from the cache are deduplicated and
+embedded in a single <code>embed_fn</code> call, so a cold cache costs the same number of
+batched calls as the unwrapped function. Rows are stored as float32; the cache holds
+at most <code>maxsize</code> strings and then evicts the least recently used entry, bounding
+memory at about <code>maxsize * dim * 4</code> bytes. Nothing is cached when <code>embed_fn</code>
+raises or returns a bad shape. A non-finite value is not a bad shape: <code>NaN</code>,
+<code>inf</code> and <code>-inf</code> become <code>0.0</code> on the way in, the same replacement
+:func:<code>_embeddings</code> makes for an unwrapped embedder, and the repaired row is then
+<em>cached</em>. One transient <code>NaN</code> in an option's embedding therefore ranks that option
+as a zero vector on every later request until <code>cache_clear()</code>, while the unwrapped
+embedder would simply re-embed it -- shortlist membership can differ between the two
+on the second call. The float32 storage shows in the scores too: a wrapped first
+call can differ from the unwrapped one in its last digits.</p>
+<p>The wrapper is safe to share between threads: the lock covers only cache reads and
+writes, never the embedding call. The returned callable carries <code>cache_info()</code> --
+a dict with <code>size</code>, <code>maxsize</code>, <code>hits</code> and <code>misses</code> -- and <code>cache_clear()</code>.
+Clear the cache if the model or weights behind <code>embed_fn</code> change.</p>
+
+
+    </div>
+
+</div><h2 id="abstention">Abstention<a class="headerlink" href="#abstention" title="Permanent link">&para;</a></h2>
+
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.confidence.check_min_confidence" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">check_min_confidence</span>
+
+
+<a href="#laya.confidence.check_min_confidence" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">check_min_confidence</span><span class="p">(</span><span class="n">v</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Validate opt-in abstention threshold <code>min_confidence</code> (#361, #394).</p>
+<p>Either a real number in [0.0, 1.0] (one threshold for every answer; booleans rejected even
+though <code>isinstance(True, int)</code>), or a per-bucket mapping (see :func:<code>check_min_confidence_map</code>)
+so the threshold can differ by option count. Returns the value in its validated form -- a
+<code>float</code> for the scalar case, a <code>dict[str, float]</code> for the mapping case -- which the gate
+functions below both accept.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.confidence.check_min_confidence_map" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">check_min_confidence_map</span>
+
+
+<a href="#laya.confidence.check_min_confidence_map" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">check_min_confidence_map</span><span class="p">(</span><span class="n">m</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Validate a per-bucket abstention-threshold map (#394).</p>
+<p>Keys are the option-count buckets in <code>common.temp_bucket</code>'s spelling -- every
+:func:<code>bucket_keys</code> member (<code>"choice:2"</code>, <code>"choice:3-5"</code>, <code>"score:6-10"</code>, <code>"noul:2"</code>
+and so on) -- plus the optional <code>"default"</code> used for any bucket the map does not name.
+Anything else raises: a key no answer can produce is not an unused entry, it is a bucket the
+caller believes is gated and is not, because :func:<code>resolve_min_confidence</code> falls past it to
+<code>"default"</code> and then to 0.0 -- gate nothing. Values are floats in [0.0, 1.0]. One confidence
+threshold does not transfer across option counts (#394); this lets a caller gate each bucket
+at the level its calibration actually earns. Fit one with
+:func:<code>laya.calibrate.fit_abstention_thresholds</code>, whose keys are this vocabulary by
+construction.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.confidence.resolve_min_confidence" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">resolve_min_confidence</span>
+
+
+<a href="#laya.confidence.resolve_min_confidence" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">resolve_min_confidence</span><span class="p">(</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">answer</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">thresholds</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">],</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">default</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">,</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>The threshold this answer's option-count bucket is gated at, under a per-bucket map.</p>
+<p>Falls back to the map's <code>"default"</code> entry, then to <code>default</code> (0.0 -- gate nothing), for a
+bucket the map does not name, so an unconfigured bucket never abstains by surprise. A map that
+went through :func:<code>check_min_confidence_map</code> can only miss here by omitting a bucket: a key
+mis-spelled well enough that no answer produces it is refused at validation, because it would
+otherwise reach this fall-through and leave that bucket gated at nothing while its caller
+believes it is gated.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.confidence.flag_low_confidence" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">flag_low_confidence</span>
+
+
+<a href="#laya.confidence.flag_low_confidence" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">flag_low_confidence</span><span class="p">(</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">results</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]],</span> <span class="n">min_confidence</span><span class="p">:</span> <span class="nb">float</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Opt-in abstention marker (#361): flag answers whose confidence falls below <code>min_confidence</code>.</p>
+<p>Reads <code>answer_confidence</code> (<code>max(p)</code>, the quantity the calibration figures describe -- the
+<em>level</em> it reaches still moves with the option count, which is why <code>min_confidence</code> takes a
+per-bucket map), falling back to <code>confidence</code> if <code>answer_confidence</code> is absent.
+The raw answer and confidence stay intact; <code>low_confidence: True</code> is added when the answer
+falls below the threshold, and removed if a previously-flagged answer now clears it (e.g.
+when a result dict is reused or re-evaluated with a different threshold).</p>
+<p><code>min_confidence</code> is either a float (one threshold for every answer) or a per-bucket mapping
+(#394), in which case each answer is gated at the threshold of its own option-count bucket via
+:func:<code>resolve_min_confidence</code>.</p>
+<p>Exactly <code>0.0</code> runs this same loop rather than short-circuiting out of it. Nothing falls below
+it, so it marks no answer -- and the pass is what clears a marker an earlier, stricter threshold
+left on a reused payload, which is the state #910 was filed about.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.confidence.apply_confidence_gate" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">apply_confidence_gate</span>
+
+
+<a href="#laya.confidence.apply_confidence_gate" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">apply_confidence_gate</span><span class="p">(</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">results</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]],</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">min_confidence</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Report the confidence gate's state, on the answers a gate was actually applied to.</p>
+<p>A gate is a policy, and a policy whose application cannot be observed is not one. With
+<code>min_confidence</code> set, this writes <code>abstention</code> -- one of :data:<code>GATE_STATES</code> -- onto every
+answer, plus <code>abstention_threshold</code>, so a caller can answer three questions it otherwise
+cannot:</p>
+<ul>
+<li>what fraction of decisions abstained, rather than inferring it from whether
+  <code>low_confidence</code> happened to be set;</li>
+<li>how many answers the gate could not decide on, which a boolean cannot express at all;</li>
+<li>what threshold produced these results -- <code>flag_low_confidence</code> consumes the threshold and
+  drops it, so without this a batch run with per-class thresholds cannot be re-split.</li>
+</ul>
+<p><code>GATE_UNEVALUATED</code> is the case a boolean cannot express: the gate ran and the answer carried
+no usable confidence, so the gate could not decide. Reporting that as a pass is the same lie
+as reporting it as a flag.</p>
+<p><strong>With <code>min_confidence</code> unset, this writes nothing.</strong> No <code>abstention</code>, no
+<code>abstention_threshold</code>, no flag. That is the whole contract: an ungated call returns exactly
+the payload it returned before, and the presence of the field -- not a fourth value read out
+of it -- is what tells a caller the gate ran. Call it unconditionally, once per call, in place
+of an <code>if min_confidence is not None:</code> guard: that guard is what leaves a path reporting
+nothing at all, which is the state this function exists to distinguish.</p>
+<p>The flag itself stays :func:<code>flag_low_confidence</code>'s -- this delegates rather than
+re-implementing the rule, so the boolean and the reported state cannot drift apart.</p>
+<p>A <code>min_confidence</code> of exactly <code>0.0</code> <em>was</em> set, so states are reported. Nothing can fall below
+it, so :func:<code>flag_low_confidence</code> marks no answer at it and clears whatever a stricter threshold
+left on a reused payload. Every answer carrying a usable confidence therefore reads <code>passed</code>,
+and the threshold echo is what distinguishes that from a real pass at a real threshold.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h2 id="laya.confidence.GATE_STATES" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">GATE_STATES</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-module-attribute"><code>module-attribute</code></small>
+  </span>
+
+<a href="#laya.confidence.GATE_STATES" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">GATE_STATES</span> <span class="o">=</span> <span class="p">(</span><span class="n">GATE_PASSED</span><span class="p">,</span> <span class="n">GATE_ABSTAINED</span><span class="p">,</span> <span class="n">GATE_UNEVALUATED</span><span class="p">)</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+    </div>
+
+</div><h2 id="calibration-and-training">Calibration and training<a class="headerlink" href="#calibration-and-training" title="Permanent link">&para;</a></h2>
+
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.common.answer_confidence" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">answer_confidence</span>
+
+
+<a href="#laya.common.answer_confidence" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">answer_confidence</span><span class="p">(</span><span class="n">p</span><span class="p">:</span> <span class="n">ndarray</span><span class="p">,</span> <span class="n">k</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Probability mass on the answer being reported: max(p).</p>
+<p>This is the quantity temperature scaling fits, and the quantity every calibration figure in
+this repository is computed on -- both benchmark harnesses take <code>conf = max(probs)</code> before
+calling <code>ece_score</code>. The README's gating section relies on the property that goes with it:
+of the answers returned at confidence c, about c of them are right. That property is
+conditional, and the condition is not met by default -- it holds only after the temperatures
+have been fitted and validated on held-out data for this checkpoint and this option count.
+The shipped checkpoints are over-confident: <code>choice:11+</code> is fitted at 0.1006, a ~10x
+sharpener that would publish a genuine 0.24 top probability as 0.9999. <code>clamp_temperature</code>
+refuses it and applies <code>TEMP_MIN</code> (0.5) instead, which still sharpens 2x and publishes that
+same 0.24 as 0.4993 -- so a threshold applied to these numbers still selects below model
+accuracy (issue #394). The clamp bounds the damage; it does not calibrate anything.</p>
+<p><code>confidence_from_probs</code> below reports a different quantity on a different scale and carries
+no such guarantee, so the two must not be compared against the same threshold.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.common.confidence_from_probs" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">confidence_from_probs</span>
+
+
+<a href="#laya.common.confidence_from_probs" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">confidence_from_probs</span><span class="p">(</span><span class="n">p</span><span class="p">:</span> <span class="n">ndarray</span><span class="p">,</span> <span class="n">k</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Normalized Shannon entropy confidence: 1 - H(p) / log(k).</p>
+<p>How concentrated the whole distribution is. Useful, but not calibrated: it is not what
+temperature scaling fits and not what the reported ECE measures. See <code>answer_confidence</code>.</p>
+<p>The formula is reported only for <code>k &gt;= 2</code>: <code>log(1)</code> and <code>log(0)</code> are zero, so a
+distribution over fewer than two options has no entropy scale to divide by. Those inputs
+return <code>1.0</code>, the <em>maximum</em> score this function can produce, whatever <code>p</code> holds -- an
+empty or single-option question reads as perfectly concentrated, and a caller comparing the
+reported <code>confidence</code> against any threshold sees a pass. That is not the same as the
+abstention gate passing it: <code>laya.confidence</code> gates on <code>answer_confidence</code> first and reaches
+this number only when that field is absent. The gate does pass a real one-option answer, for
+a different reason -- a softmax over one logit is exactly <code>[1.0]</code>, so both numbers are
+<code>1.0</code>. <code>laya.structured</code> builds such an answer from <code>{"enum": ["solo"]}</code>, and the option
+count is bounded only above (<code>MAX_OPTIONS</code>).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.confidence.jev_confidence" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">jev_confidence</span>
+
+
+<a href="#laya.confidence.jev_confidence" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">jev_confidence</span><span class="p">(</span><span class="n">answer</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>The <code>confidence</code> Jev would report for this answer's <code>probabilities</code>, or None (#302).</p>
+<p>Laya's <code>confidence</code> is normalized entropy, and Jev's is a different formula, so a threshold
+carried over from Jev selects about twice as much on Laya. These are TypeSafe's own formulas
+(<code>system-one-adapter-python</code>, <code>_utils/confidence_metrics.py</code>):</p>
+<div class="language-text highlight"><pre><span></span><code>choice  (max(p) - 1/n) / (1 - 1/n)
+score   max(0, 1 - sum(p_i * |i - mode|) / D), D the same sum for a uniform distribution
+</code></pre></div>
+<p>Both are 1.0 for a single option, and a zero total is read as uniform, as the adapter does.
+A noul answer has no Jev <code>confidence</code>, and a malformed document -- a probability that does not
+read as a number, a boolean, a non-finite or a negative value -- gives None rather than a
+guess, so a caller filtering on this number never filters on a made-up one. Negatives are the
+case that needs naming: the division below normalises by the sum, so a mixed-sign document can
+divide by a near-zero or negative total and return a number outside [0, 1] for a distribution
+whose argmax is not the one it measured, while an all-negative document divides back into
+range and returns exactly what its positive counterpart returns. Refusing them is what makes
+the range a property: every number this returns lies in [0, 1].</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.common.ece_score" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">ece_score</span>
+
+
+<a href="#laya.common.ece_score" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">ece_score</span><span class="p">(</span><span class="n">conf</span><span class="p">:</span> <span class="n">ndarray</span><span class="p">,</span> <span class="n">correct</span><span class="p">:</span> <span class="n">ndarray</span><span class="p">,</span> <span class="n">bins</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">15</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Expected Calibration Error across confidence bins.</p>
+<p><code>bins</code> is the number of histogram buckets and must be an integer of at least 1. It is refused
+rather than misread because <code>np.linspace(0, 1, bins + 1)</code> yields no interior edge for <code>0</code> and
+<code>-1</code>: the loop body never runs and the function returns <code>0.0</code>, the best score ECE can report,
+for a distribution that is anything but well calibrated. A count that arrives from a config
+file as <code>0</code> therefore turns a calibration gate into one that always passes. <code>True</code> is refused
+with the same argument -- it would silently histogram into a single bucket. Any other
+<code>Integral</code> is accepted, a <code>numpy.int64</code> among them, since the arrays here are numpy's own.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h2 id="laya.calibrate.fit_temperatures" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">fit_temperatures</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-module-attribute"><code>module-attribute</code></small>
+  </span>
+
+<a href="#laya.calibrate.fit_temperatures" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">fit_temperatures</span> <span class="o">=</span> <span class="n">fit_temperature_map</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.calibrate.fit_one_temperature" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">fit_one_temperature</span>
+
+
+<a href="#laya.calibrate.fit_one_temperature" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">fit_one_temperature</span><span class="p">(</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">pairs</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">,</span> <span class="n">min_n</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Fit one scalar T by NLL + LBFGS on log T.</p>
+<p>The result is <code>clamp_temperature</code> of the optimised scale, so it lies in
+<code>[TEMP_MIN, TEMP_MAX]</code> (or is the neutral 1.0 when the value is not a number).
+The search is bounded to <code>LOG_T_MARGIN</code> e-folds outside that band, which covers any
+minimum the answer can use; past it the float32 scale drifts toward <code>exp()</code> underflow,
+where the objective divides by zero and every gradient becomes NaN, and
+<code>clamp_temperature</code> reads that NaN back as the neutral 1.0.
+Returns 1.0 when fewer than <code>min_n</code> pairs are given. <code>min_n</code> defaults to
+<code>MIN_BUCKET_N</code> (the per-bucket floor). Type-level fits pass <code>MIN_TYPE_N</code>, which
+is lower, so a dataset that fills no bucket still gets a scalar instead of
+staying at 1.0.</p>
+<p>A clamped result is indistinguishable from an optimum that really is a bound, because
+both are the bound. <code>fit_temperature_map</code>'s <code>temperature_clamped</code> is where the
+difference is reported; it carries the unclamped scale beside the value installed.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.calibrate.fit_temperature_map" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">fit_temperature_map</span>
+
+
+<a href="#laya.calibrate.fit_temperature_map" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">fit_temperature_map</span><span class="p">(</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">records</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">,</span> <span class="n">compute_ece</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">seed</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Fit type-level scalars and per-bucket temperatures.</p>
+<p><code>MIN_BUCKET_N</code> is the per-bucket floor: smaller buckets are omitted from
+<code>temperature_by_options</code> and the type-level scalar covers them. <code>MIN_TYPE_N</code> is
+the separate, lower floor for that scalar only.</p>
+<p><code>compute_ece=False</code> (the default, and the path <code>Agent.fit_temperatures</code> stores)
+fits on every record and returns no <code>report</code> key. <code>seed</code> is ignored on this path.</p>
+<p><code>compute_ece=True</code> holds out <code>ECE_HOLDOUT_FRAC</code> of each bucket, stratified by
+<code>temp_bucket</code>, using <code>seed</code> so the same records always split the same way. Temperatures
+are fit on the remainder only and ECE is scored only on the held-out records.
+<code>seed</code> is this module's own count rule -- an integer in <code>[0, 2**32-1]</code>, which is what
+<code>numpy.random.RandomState</code> can take -- so a <code>10.0</code>, a <code>"7"</code>, a <code>True</code> or an out-of-range
+value is a <code>ValueError</code> naming <code>seed</code> on either path, not numpy's cast error on one path
+and silence on the other. <code>seed=None</code> stays numpy's entropy seed: accepted, and the split
+is then not reproducible.
+<code>temperature_clamped</code> names every fit the clamp moved, on either path: a bucket key as
+<code>temperature_by_options</code> spells it, or a question-type name for one of the <code>temperature</code>
+scalars. Each entry carries <code>fitted</code> (the unclamped optimum), <code>applied</code> (the value in
+this result) and <code>bound</code>, <code>"min"</code> or <code>"max"</code>. It is empty when nothing was clamped, and
+it reports a fact a caller cannot otherwise recover: a value of exactly <code>TEMP_MIN</code> or
+<code>TEMP_MAX</code> is what both a clamped fit and a genuine fit on the bound look like, so
+without this an optimum of 0.387 installs as 0.5 and reads as a finished fit. The
+clamped value is still the one to install, because <code>load_calibration</code> applies the same
+bounds at checkpoint load; what the entry adds is that the data wanted to go further.</p>
+<p><code>report["n"]</code> is the number of records passed in; <code>report["n_eval"]</code> is the held-out
+count the ECE rests on. A bucket that would drop below <code>MIN_BUCKET_N</code> after the
+holdout is fit on all of its records, left out of the eval set, and named in
+<code>report["buckets_excluded_from_eval"]</code> instead of being dropped. <code>n_by_bucket</code>
+always counts the full input, including when the fit itself used a subset.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.calibrate.fit_abstention_thresholds" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">fit_abstention_thresholds</span>
+
+
+<a href="#laya.calibrate.fit_abstention_thresholds" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">fit_abstention_thresholds</span><span class="p">(</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">records</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">,</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">temperature</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">float</span><span class="p">],</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">temperature_by_options</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">],</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="o">*</span><span class="p">,</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">binning_map</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">target_error</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span><span class="p">,</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="n">min_bucket_n</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">MIN_ABSTAIN_BUCKET_N</span><span class="p">,</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="n">conservative</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Fit a per-<code>temp_bucket</code> abstention threshold so a gate keeps a target error in each fitted bucket.</p>
+<p>A single <code>min_confidence</code> does not transfer across option counts (#394): the calibrated
+confidence of a 2-option and a 12-option answer live on different scales, so one cut over- or
+under-abstains depending on the question. This fits one cut per bucket instead, keyed exactly
+like <code>temperature_by_options</code> (<code>common.temp_bucket</code>, e.g. <code>"choice:3-5"</code>), and the result is a
+<code>min_confidence</code> map that :func:<code>laya.confidence.check_min_confidence</code> /
+:func:<code>laya.confidence.apply_confidence_gate</code> accept directly -- with one exception to keep:
+every bucket below <code>min_bucket_n</code> is omitted, so a calibration set too small to fill a single
+bucket returns <code>{}</code>, and the validator refuses an empty map ("must be a non-empty dict"). Pass
+no gate in that case rather than passing what came back; <code>laya.train</code> writes the map into a
+checkpoint only <code>if abstention_thresholds:</code>.</p>
+<p><code>records</code> are the same <code>(qtype, logits, target[, k])</code> tuples <code>fit_temperature_map</code> consumes
+(<code>records_from_labeled</code> builds them). Confidence is the <strong>calibrated</strong> <code>max(p)</code> -- the logits are
+scaled by the fitted <code>temperature</code> / <code>temperature_by_options</code> first, so thresholds and the
+numbers the runtime reports are on the same scale. <code>target_error</code> is the tolerated error among
+accepted answers; <code>min_bucket_n</code> omits buckets too small to fit, and <code>conservative</code> adds a
+one-sample margin. An omitted bucket is not caught by a fallback: the map lookup falls to its own
+<code>"default"</code> entry and then to 0.0, which gates nothing, so a <code>min_bucket_n</code> that excludes a
+bucket leaves that bucket ungated unless the map names a <code>"default"</code>. The thresholds are
+empirical cuts on the calibration set, not a formal coverage guarantee -- validate on held-out
+data (<code>fit_temperature_map(..., compute_ece=True)</code> gives a held-out split) for a production gate.</p>
+<p>Pass <code>binning_map</code> when the agent that will serve these thresholds has one installed -- by
+<code>Agent.fit_binning</code>, or by a calibration payload that carries <code>binning_map</code> -- because the
+runtime recalibrates <code>answer_confidence</code> through that map before anything reads it, so a cut
+fitted without it is a cut on a scale the gate never sees. The thresholds are then on the binned
+scale, and the order the two were fitted in stops mattering. Measured on 1,200 synthetic
+12-option records at <code>target_error=0.10</code>: the cut fitted without a map holds 9.8% error over 50%
+coverage on un-binned confidences, and admits 94.5% of answers at 25.6% error once the same
+number is compared against binned ones.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.calibrate.fit_binning_map" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">fit_binning_map</span>
+
+
+<a href="#laya.calibrate.fit_binning_map" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">fit_binning_map</span><span class="p">(</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">records</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">,</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">temperature</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">float</span><span class="p">],</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">temperature_by_options</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">],</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="o">*</span><span class="p">,</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">bins</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">15</span><span class="p">,</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">min_bucket_n</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">MIN_BINNING_BUCKET_N</span><span class="p">,</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Fit a per-<code>temp_bucket</code> histogram-binning recalibration map for <code>answer_confidence</code>.</p>
+<p>Temperature scaling applies one scalar per bucket; it cannot fix a bucket whose reliability
+curve is not a simple sharpening/softening (the pathological <code>choice:11+</code> the shipped English
+checkpoint carries is one). Histogram binning is the non-parametric alternative: split the
+calibrated confidences of a bucket into <code>bins</code> equal-width bins over [0, 1], and map every
+confidence that lands in a bin to that bin's empirical accuracy. It needs no monotonicity
+assumption and no extra dependency (NumPy only; isotonic regression would pull in scikit-learn).</p>
+<p><code>records</code> are the same <code>(qtype, logits, target[, k])</code> tuples <code>fit_temperature_map</code> consumes;
+confidence is the calibrated <code>max(p)</code> (logits scaled by the fitted <code>temperature</code> /
+<code>temperature_by_options</code> first), so a binning map composes on top of a temperature map rather
+than replacing it. Returns <code>{bucket: {"bins": N, "values": [recalibrated confidence per bin]}}</code>;
+buckets below <code>min_bucket_n</code> are omitted. Apply it with :func:<code>apply_binning_map</code>. An empty bin
+(a confidence range the calibration set never produced) maps to that bin's centre, a point
+inside the region the value came from: the value is still rewritten, and moves by at most half a
+bin width. What the centre buys is that an unseen confidence is never recalibrated to a
+fabricated 0, not that it passes through -- only a bucket the map has no entry for does that
+(:func:<code>apply_binning_map</code>).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.calibrate.apply_binning_map" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">apply_binning_map</span>
+
+
+<a href="#laya.calibrate.apply_binning_map" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">apply_binning_map</span><span class="p">(</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">confidence</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">bucket</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">binning_map</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]],</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Recalibrate one <code>answer_confidence</code> for its option-count <code>bucket</code> (<code>common.temp_bucket</code>).</p>
+<p>Returns the confidence unchanged when the map has no entry for the bucket, so a bucket the map
+was not fit for passes through rather than being forced to a wrong value.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.agent.Agent.fit_binning" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">fit_binning</span>
+
+
+<a href="#laya.agent.Agent.fit_binning" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">fit_binning</span><span class="p">(</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">records</span><span class="p">,</span> <span class="n">min_bucket_n</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">MIN_BINNING_BUCKET_N</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Fit a histogram-binning map on top of this agent's fitted temperatures and store it.</p>
+<p><code>records</code> are the same <code>(qtype, logits, target[, k])</code> tuples as <code>fit_temperatures</code>
+consumed. The map is keyed exactly like <code>temperature_by_options</code>, composes on top of
+the current temperatures, and is written out by <code>save_calibration</code> as <code>binning_map</code>.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.common.render_options" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">render_options</span>
+
+
+<a href="#laya.common.render_options" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">render_options</span><span class="p">(</span><span class="n">q</span><span class="p">:</span> <span class="n">Dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Render option texts in label-index order. Noul semantic order is always [false, true].</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.common.proper_reward" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">proper_reward</span>
+
+
+<a href="#laya.common.proper_reward" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">proper_reward</span><span class="p">(</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">q</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">target</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">qtype</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">mask</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">w_sph</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span><span class="p">,</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">w_rps</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">,</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="n">log_floor</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="o">-</span><span class="mf">9.21</span><span class="p">,</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Strictly proper scoring rule reward: log score + spherical score + ranked probability score.</p>
+<p>q: [..., N, K] reported distributions
+target: [N, K] (one-hot or soft target distributions)</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="laya.common.td_lambda_targets" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">td_lambda_targets</span>
+
+
+<a href="#laya.common.td_lambda_targets" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">td_lambda_targets</span><span class="p">(</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">p_true</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span> <span class="n">batch</span><span class="p">:</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">lam</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>TD(lambda) targets for multi-turn conversation trajectories.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h2 id="laya.common.QTYPES" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">QTYPES</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-module-attribute"><code>module-attribute</code></small>
+  </span>
+
+<a href="#laya.common.QTYPES" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">QTYPES</span> <span class="o">=</span> <span class="p">{</span><span class="s1">'choice'</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span> <span class="s1">'score'</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="s1">'noul'</span><span class="p">:</span> <span class="mi">2</span><span class="p">}</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h2 id="laya.common.QTYPE_NAMES" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">QTYPE_NAMES</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-module-attribute"><code>module-attribute</code></small>
+  </span>
+
+<a href="#laya.common.QTYPE_NAMES" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">QTYPE_NAMES</span> <span class="o">=</span> <span class="p">{</span><span class="n">v</span><span class="p">:</span> <span class="n">k</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">QTYPES</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+
+    </div>
+
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../router/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Router">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Router
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../train/" class="md-footer__link md-footer__link--next" aria-label="Next: Fine-tuning">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Fine-tuning
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Apache 2.0. Developed by Convai Innovations.
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["content.code.copy","navigation.footer","navigation.indexes"],"redirect":null,"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.c04ba553.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,2355 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Multilingual, non-autoregressive System 1 decision engine">
+      
+      
+      
+        <link rel="canonical" href="https://thread3d.github.io/laya/security/">
+      
+      
+        <link rel="prev" href="../docker-platforms/">
+      
+      
+        <link rel="next" href="../finetune/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="https://raw.githubusercontent.com/NandhaKishorM/laya/main/assets/logo-mark.svg">
+      <meta name="generator" content="zensical-0.0.65">
+    
+    
+      
+        <title>Checkpoint integrity - Laya</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.40d3fdbb.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../assets/stylesheets/modern/palette.812a03bb.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#checkpoint-integrity" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="Laya" class="md-header__button md-logo" aria-label="Laya" data-md-component="logo">
+      
+  <img src="https://raw.githubusercontent.com/NandhaKishorM/laya/main/assets/logo-mark.svg" alt="Laya">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Laya
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Checkpoint integrity
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/NandhaKishorM/laya" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    NandhaKishorM/laya
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="Laya" class="md-nav__button md-logo" aria-label="Laya" data-md-component="logo">
+      
+  <img src="https://raw.githubusercontent.com/NandhaKishorM/laya/main/assets/logo-mark.svg" alt="Laya">
+
+    </a>
+    Laya
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/NandhaKishorM/laya" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    NandhaKishorM/laya
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Laya
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guides
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_2">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Guides
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../use-cases/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Architectural Patterns and Production Use Cases
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../structured/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Schema-driven decisions
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../hooks/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hooks
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2_3" id="__nav_2_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_3_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_2_3">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Hooks
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API reference
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/lifecycle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Lifecycle
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/errors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Error handling
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/patterns/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Patterns and anti-patterns
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Examples
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/tracing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Tracing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../langchain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LangChain &amp; LangGraph Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llamaindex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LlamaIndex Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crewai/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CrewAI Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agno/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Agno Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Tool &amp; Function Selection
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Benchmarks and known limits
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli-mcp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Command line and MCP server
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../compile-and-fast-path/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  compile=True and the TileLang fast path: engineering notes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../evals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Evaluation harness
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fast-backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fast backends
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guardrail-limitations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guardrail Limitations
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../http-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  HTTP API
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../questions-and-answers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Questions and answers
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Routing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../staged-adoption/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Staged adoption
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../typescript-sdk/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  TypeScript SDK design
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Deployment
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+            <label class="md-nav__title" for="__nav_3">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Deployment
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Docker quickstart
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../docker-platforms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  ARM64 and DGX Spark containers
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Checkpoint integrity
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Checkpoint integrity
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#pin-a-revision" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Pin a revision
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Pin a revision">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-pinning-is-not-the-default" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Why pinning is not the default
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verify-artifact-digests" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Verify artifact digests
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Verify artifact digests">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#do-you-need-both" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Do you need both?
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#generate-the-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Generate the map
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#use-the-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Use the map
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#without-touching-the-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Without touching the code
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-a-mismatch-looks-like-in-the-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What a mismatch looks like in the server
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pinning-a-revision-in-the-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Pinning a revision in the server
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-a-checkpoint-is-updated" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        When a checkpoint is updated
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#confirm-what-actually-loaded" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Confirm what actually loaded
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya-ts" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        laya-ts
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-this-does-and-does-not-protect" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What this does and does not protect
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_4">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Fine-tuning
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../finetune/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning Laya on your own decisions
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../finetune_browser_agent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning Laya as a browser-agent decision head
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reference
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_5">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Reference
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/agent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Agent
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/router/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Router
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/helpers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Helpers
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/train/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/langchain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LangChain components
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#pin-a-revision" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Pin a revision
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Pin a revision">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-pinning-is-not-the-default" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Why pinning is not the default
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verify-artifact-digests" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Verify artifact digests
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Verify artifact digests">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#do-you-need-both" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Do you need both?
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#generate-the-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Generate the map
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#use-the-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Use the map
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#without-touching-the-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Without touching the code
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-a-mismatch-looks-like-in-the-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What a mismatch looks like in the server
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pinning-a-revision-in-the-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Pinning a revision in the server
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-a-checkpoint-is-updated" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        When a checkpoint is updated
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#confirm-what-actually-loaded" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Confirm what actually loaded
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#laya-ts" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        laya-ts
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-this-does-and-does-not-protect" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What this does and does not protect
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="checkpoint-integrity">Checkpoint integrity<a class="headerlink" href="#checkpoint-integrity" title="Permanent link">&para;</a></h1>
+<p>Laya downloads model weights from the Hugging Face Hub at load time. By default it takes whatever
+the repository's default revision points at, which is convenient and is what an offline cache
+already holds. If you would rather pin a reviewed commit, or refuse to load a checkpoint whose
+bytes have changed, both are available and both are opt-in.</p>
+<p>Nothing here changes what Laya loads until you ask for it, so adding these options to an existing
+deployment is safe. Both are library-level: digests reach the HTTP server through an environment
+variable, and revision pinning through <code>LAYA_REVISION</code> — see <a href="#pinning-a-revision-in-the-server">Pinning a revision in the server</a>.</p>
+<p>Related: <a href="../docker/">Docker</a> for deployment variables, <a href="../reference/agent/"><code>laya.load</code> and <code>Agent</code></a>,
+and <a href="../reference/router/"><code>Router</code></a>.</p>
+<h2 id="pin-a-revision">Pin a revision<a class="headerlink" href="#pin-a-revision" title="Permanent link">&para;</a></h2>
+<p>Pass <code>revision</code> to any loader. It accepts a commit SHA, a branch, or a tag, and is forwarded to the
+Hub.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">laya</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">laya</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"convaiinnovations/laya"</span><span class="p">,</span> <span class="n">revision</span><span class="o">=</span><span class="s2">"&lt;commit sha, branch, or tag&gt;"</span><span class="p">)</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="nb">print</span><span class="p">(</span><span class="n">agent</span><span class="o">.</span><span class="n">revision</span><span class="p">)</span>   <span class="c1"># what the download resolved to</span>
+</span></code></pre></div>
+<p>Prefer the reviewed SHAs that ship with Laya over a literal of your own: they are updated with the
+checkpoints, so this form cannot go stale.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">laya</span><span class="w"> </span><span class="kn">import</span> <span class="n">PINNED_REVISIONS</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">laya</span><span class="o">.</span><span class="n">load</span><span class="p">(</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="s2">"convaiinnovations/laya"</span><span class="p">,</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="n">revision</span><span class="o">=</span><span class="n">PINNED_REVISIONS</span><span class="p">[</span><span class="s2">"convaiinnovations/laya"</span><span class="p">],</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="p">)</span>
+</span></code></pre></div>
+<p><code>Router</code> takes the same <code>revision</code>, and <code>revisions</code> to pin each checkpoint separately. The keys of
+<code>PINNED_REVISIONS</code> are the three <em>standalone</em> repositories, so pin a <code>Router</code> with
+<code>standalone_repos=True</code>:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">router</span> <span class="o">=</span> <span class="n">laya</span><span class="o">.</span><span class="n">Router</span><span class="p">(</span><span class="n">standalone_repos</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">revisions</span><span class="o">=</span><span class="p">{</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="s2">"english"</span><span class="p">:</span> <span class="n">PINNED_REVISIONS</span><span class="p">[</span><span class="s2">"convaiinnovations/laya"</span><span class="p">],</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="s2">"multilingual"</span><span class="p">:</span> <span class="n">PINNED_REVISIONS</span><span class="p">[</span><span class="s2">"convaiinnovations/laya-multilingual"</span><span class="p">],</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="s2">"typed-decisions"</span><span class="p">:</span> <span class="n">PINNED_REVISIONS</span><span class="p">[</span><span class="s2">"convaiinnovations/laya-typed-decisions"</span><span class="p">],</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="p">})</span>
+</span></code></pre></div>
+<p>This matters because a default <code>Router</code> loads all three checkpoints from the one bundle repository
+(<code>convaiinnovations/laya</code>, with <code>multilingual/</code> and <code>typed-decisions/</code> as subfolders), and a commit
+SHA from <code>laya-multilingual</code> does not exist in the bundle repository. Without <code>standalone_repos</code>
+the pin is not merely ignored — the load fails. If you would rather stay on the bundle repository,
+pin it with one <code>revision=</code> for all three instead of per-model <code>revisions=</code>.</p>
+<p>Pin all three even if you only serve two. A <code>Router</code> offers every checkpoint it knows about
+regardless of what you preload, so an unpinned entry is one routing decision away from loading
+unpinned.</p>
+<h3 id="why-pinning-is-not-the-default">Why pinning is not the default<a class="headerlink" href="#why-pinning-is-not-the-default" title="Permanent link">&para;</a></h3>
+<p>Pinning by default would break loading from an older cached snapshot, which matters for on-device
+and air-gapped deployments: <code>HF_HUB_OFFLINE=1</code> with a cache that predates the pin would stop
+working. Laya therefore keeps the Hub default unless you pass a revision, and makes the reviewed
+SHAs available for when you want them.</p>
+<h2 id="verify-artifact-digests">Verify artifact digests<a class="headerlink" href="#verify-artifact-digests" title="Permanent link">&para;</a></h2>
+<p>A pinned revision says <em>which</em> commit to fetch. A digest says <em>which bytes</em> you expect. Every file
+you list is hashed before any of them is parsed and before weights reach the runtime. The map is
+<code>{path relative to the checkpoint: sha256 hex}</code> — generate it first, then pass it.</p>
+<h3 id="do-you-need-both">Do you need both?<a class="headerlink" href="#do-you-need-both" title="Permanent link">&para;</a></h3>
+<p>A pinned revision already fixes the content: the Hub is git, so the commit determines the tree, and
+large files are addressed by their own SHA-256. If you pin and the download succeeds, you have the
+bytes that commit names. So the digest is not there to repeat that check — it differs in <strong>what it
+trusts</strong>.</p>
+<p>A revision asks the Hub for a commit and believes the answer. A digest is a record <em>you</em> made and
+<em>you</em> keep, compared on every load. That buys three things pinning does not:</p>
+<ul>
+<li><strong>Cover for the common case, which is unpinned.</strong> Pinning is opt-in and off by default, so most
+  deployments follow a moving branch. A digest is then the only thing that notices a change.</li>
+<li><strong>A check on your own disk.</strong> After download, the checkpoint is ordinary files in a cache that
+  anything on the box can edit. Nothing re-verifies them at load time — except a digest.</li>
+<li><strong>Independence from the source.</strong> If a mirror, proxy or the Hub itself served different bytes,
+  the digest is the only control not asking the thing under test to vouch for itself.</li>
+</ul>
+<p>That independence is also why generating the map is a manual step: a fingerprint stops being an
+independent record the moment the thing it checks produces it for you.</p>
+<h3 id="generate-the-map">Generate the map<a class="headerlink" href="#generate-the-map" title="Permanent link">&para;</a></h3>
+<p>Generate it from a checkpoint you have reviewed rather than copying digests from anywhere,
+including this page. There is deliberately no command that produces this for you: a map computed
+from the copy Laya just downloaded would hash those bytes and then verify them against themselves.
+The check is worth something only because a person decided the bytes were the ones they wanted, so
+generating the map is the step where that decision gets recorded. <strong>A map belongs to exactly one checkpoint</strong>: the bundle repository holds a
+different <code>rl_agent_config.json</code> in its root (the english checkpoint) than in <code>multilingual/</code>, so a
+map generated from one will fail against the other.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span><span class="o">,</span><span class="w"> </span><span class="nn">json</span><span class="o">,</span><span class="w"> </span><span class="nn">os</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">CHECKPOINT</span> <span class="o">=</span> <span class="s2">"/path/to/checkpoint"</span>   <span class="c1"># the directory a load actually reads</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">FILES</span> <span class="o">=</span> <span class="p">[</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="s2">"rl_agent_config.json"</span><span class="p">,</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="s2">"tokenizer/tokenizer.json"</span><span class="p">,</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="s2">"encoder/config.json"</span><span class="p">,</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="s2">"model.safetensors"</span><span class="p">,</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="p">]</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="k">def</span><span class="w"> </span><span class="nf">sha256</span><span class="p">(</span><span class="n">path</span><span class="p">):</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>    <span class="n">h</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">()</span>
+</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="s2">"rb"</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+</span><span id="__span-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>        <span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="nb">iter</span><span class="p">(</span><span class="k">lambda</span><span class="p">:</span> <span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">20</span><span class="p">),</span> <span class="sa">b</span><span class="s2">""</span><span class="p">):</span>
+</span><span id="__span-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>            <span class="n">h</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">chunk</span><span class="p">)</span>
+</span><span id="__span-3-16"><a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>    <span class="k">return</span> <span class="n">h</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+</span><span id="__span-3-17"><a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a>
+</span><span id="__span-3-18"><a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="n">digests</span> <span class="o">=</span> <span class="p">{</span><span class="n">rel</span><span class="p">:</span> <span class="n">sha256</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">CHECKPOINT</span><span class="p">,</span> <span class="n">rel</span><span class="p">))</span> <span class="k">for</span> <span class="n">rel</span> <span class="ow">in</span> <span class="n">FILES</span><span class="p">}</span>
+</span><span id="__span-3-19"><a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">"digests.json"</span><span class="p">,</span> <span class="s2">"w"</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+</span><span id="__span-3-20"><a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a>    <span class="n">json</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">digests</span><span class="p">,</span> <span class="n">f</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+</span></code></pre></div>
+<p>A torch <code>Agent</code> load parses five files, and those are four of them. (<code>ONNXAgent</code> reads a different
+set and additionally accepts the keys <code>onnx</code> and <code>onnx_path</code> to digest the graph itself.) The fifth,
+<code>tokenizer/tokenizer_config.json</code>, is deliberately left out: Laya may normalise it <em>after</em>
+verification and write it back, in which case pinning it makes the <strong>next</strong> load fail. That rewrite
+is conditional — it fires only when the file declares no <code>tokenizer_class</code>, or declares
+<code>TokenizersBackend</code>, or carries <code>extra_special_tokens</code> as a list — so on some checkpoints it never
+happens and pinning the file would appear to work. Leaving it out is the portable choice, and it
+means one parsed file is unverified. See
+<a href="#what-this-does-and-does-not-protect">What this does and does not protect</a>.</p>
+<h3 id="use-the-map">Use the map<a class="headerlink" href="#use-the-map" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">laya</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">"digests.json"</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="n">agent</span> <span class="o">=</span> <span class="n">laya</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"convaiinnovations/laya"</span><span class="p">,</span> <span class="n">expected_sha256</span><span class="o">=</span><span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">))</span>
+</span></code></pre></div>
+<p>Keys are paths relative to the checkpoint directory. A mismatch raises <code>ValueError</code>, and a listed
+file that is absent raises <code>FileNotFoundError</code>. Files you do not list are not checked at all, so
+the map is also the definition of what you are protecting. This works on a local directory as well
+as a Hub download.</p>
+<h3 id="without-touching-the-code">Without touching the code<a class="headerlink" href="#without-touching-the-code" title="Permanent link">&para;</a></h3>
+<p><code>LAYA_SHA256_DIGESTS</code> holds the same map as JSON and applies whenever a loader is called without an
+explicit <code>expected_sha256</code>:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">LAYA_SHA256_DIGESTS</span><span class="o">=</span><span class="s2">"</span><span class="k">$(</span>cat<span class="w"> </span>digests.json<span class="k">)</span><span class="s2">"</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>laya-serve
+</span></code></pre></div>
+<p>Nothing generates this for you: the value is your own map, from a checkpoint you reviewed. Under
+Docker it has to be in the environment <em>before</em> compose starts, either exported as above or in the
+<code>.env</code> file compose reads — the service passes <code>${LAYA_SHA256_DIGESTS:-}</code> through, so an unset
+variable silently means no verification:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nb">echo</span><span class="w"> </span><span class="s2">"LAYA_SHA256_DIGESTS=</span><span class="k">$(</span>cat<span class="w"> </span>digests.json<span class="k">)</span><span class="s2">"</span><span class="w"> </span>&gt;&gt;<span class="w"> </span>.env
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>compose.yaml<span class="w"> </span>-f<span class="w"> </span>compose.http.yaml<span class="w"> </span>up<span class="w"> </span>laya-serve
+</span></code></pre></div>
+<p>There is no <code>_FILE</code> variant of this variable: that indirection exists for secrets, and a digest map
+is not one.</p>
+<p><strong>Name each checkpoint when a process loads more than one.</strong> The variable takes two shapes, and the
+value types say which:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># one set of files, checked on every checkpoint the process loads</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="nv">LAYA_SHA256_DIGESTS</span><span class="o">=</span><span class="s1">'{"rl_agent_config.json": "&lt;sha256&gt;"}'</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="c1"># a map per checkpoint, which is what a router serving several needs</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="nv">LAYA_SHA256_DIGESTS</span><span class="o">=</span><span class="s1">'{"english": {"rl_agent_config.json": "&lt;sha256&gt;"},</span>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="s1">                      "multilingual": {"rl_agent_config.json": "&lt;sha256&gt;"}}'</span>
+</span></code></pre></div>
+<p>The flat form is <code>verify_digests</code>'s own reading and applies the same paths to everything, so on a
+router it can only ever match one checkpoint and refuses the rest. The bundled repository ships a
+separate <code>model.safetensors</code> and <code>rl_agent_config.json</code> per checkpoint, so name them:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>flat map generated from the english checkpoint
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>  load english        ok
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>  load multilingual   ValueError: laya: SHA-256 mismatch for rl_agent_config.json
+</span></code></pre></div>
+<p>A checkpoint the nested map does not name is deliberately unpinned rather than an error, and a model
+name the router does not know raises instead of leaving that checkpoint unverified. <code>en</code> resolves to
+<code>english</code>, the same normalisation <code>Router(sha256_digests=...)</code> applies.</p>
+<p>The two routes differ on that last point, which is easy to trip over if you use both. A checkpoint
+the <em>environment's</em> nested map omits is pinned to an empty map, so a flat map cannot leak into it. A
+checkpoint omitted from <code>Router(sha256_digests=...)</code> in code has no entry at all, so it still falls
+back to whatever the environment says. Name every checkpoint you mean to pin in whichever one you
+use.</p>
+<p>An unset or empty variable means no verification, so this is safe to leave out of environments that
+do not need it. Malformed JSON raises rather than silently skipping the check, and mixing the two
+shapes in one object is refused by name.</p>
+<h3 id="what-a-mismatch-looks-like-in-the-server">What a mismatch looks like in the server<a class="headerlink" href="#what-a-mismatch-looks-like-in-the-server" title="Permanent link">&para;</a></h3>
+<p>How it surfaces depends on preloading. Bare <code>laya-serve</code> preloads by default (<code>LAYA_PRELOAD=1</code>), so a
+mismatch fails at <strong>startup</strong> — loud and deterministic. The containers in this repository set
+<code>LAYA_PRELOAD=0</code> (<code>compose.http.yaml</code>, and <a href="../docker/">Docker</a> documents the override), so there the
+first load happens on a request and nothing is verified until then. A mismatch is then a <strong>422</strong> on
+whichever ticket routes to that checkpoint: <code>laya/serve.py</code> maps the <code>ValueError</code> to
+<code>HTTPException(422)</code> and returns the digest text to the caller. A <em>listed but absent</em> file raises
+<code>FileNotFoundError</code> instead, which falls through to a generic <strong>500 "inference failed"</strong> with the
+reason only in the container log.</p>
+<p>Plan for the 422. It sorts as a client error in logs, dashboards and alert rules, so the default
+place an operator looks for a broken deployment is the one place this will not appear.</p>
+<h3 id="pinning-a-revision-in-the-server">Pinning a revision in the server<a class="headerlink" href="#pinning-a-revision-in-the-server" title="Permanent link">&para;</a></h3>
+<p><code>LAYA_REVISION</code> holds a commit, branch or tag applied to every checkpoint download, or the word
+<code>reviewed</code>, which looks each repository up in <code>PINNED_REVISIONS</code> and uses its own SHA:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nv">LAYA_REVISION</span><span class="o">=</span>reviewed<span class="w"> </span>laya-serve
+</span></code></pre></div>
+<p><code>reviewed</code> for a repository the table has no entry for <strong>raises</strong> rather than loading it unpinned —
+a pin that quietly resolves to nothing is the failure this control exists to prevent. An explicit
+<code>revision=</code> argument still wins over the variable, and unset or blank means "not asked for", so an
+<code>HF_HUB_OFFLINE=1</code> cache keeps loading exactly as before.</p>
+<p>In code, <code>Router</code> takes both per model:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">router</span> <span class="o">=</span> <span class="n">laya</span><span class="o">.</span><span class="n">Router</span><span class="p">(</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>    <span class="n">revisions</span><span class="o">=</span><span class="p">{</span><span class="s2">"english"</span><span class="p">:</span> <span class="n">PINNED_REVISIONS</span><span class="p">[</span><span class="s2">"convaiinnovations/laya"</span><span class="p">]},</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    <span class="n">sha256_digests</span><span class="o">=</span><span class="p">{</span><span class="s2">"english"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"rl_agent_config.json"</span><span class="p">:</span> <span class="s2">"&lt;sha256&gt;"</span><span class="p">}},</span>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>Digests are always per model — there is no router-wide equivalent of <code>revision</code>, because a commit SHA
+can be shared across checkpoints and a digest cannot. See <a href="../docker/">Docker</a> for the deployment
+variables and <a href="../reference/router/">Router</a> for the full constructor.</p>
+<h2 id="when-a-checkpoint-is-updated">When a checkpoint is updated<a class="headerlink" href="#when-a-checkpoint-is-updated" title="Permanent link">&para;</a></h2>
+<p>The two controls behave differently, and only one of them needs anything from you.</p>
+<p><strong>A pinned revision keeps you where you are.</strong> A new checkpoint does not reach a pinned
+deployment until you change the pin, which is the point of pinning. <code>PINNED_REVISIONS</code> moves with
+the library, so taking a newer reviewed commit means upgrading Laya, not editing a SHA.</p>
+<p><strong>Digests stop the load, on purpose.</strong> Your map was generated from bytes you reviewed. Different
+bytes raise <code>ValueError</code> before anything is parsed:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>ValueError: laya: SHA-256 mismatch for rl_agent_config.json: expected ae287b56…, got 25061739…
+</span></code></pre></div>
+<p>That is the feature working, not a bug to route around. The order matters:</p>
+<ol>
+<li>Find out why the bytes changed — an intended release, or something you did not expect.</li>
+<li>Review the new checkpoint.</li>
+<li>Regenerate the map from the reviewed copy.</li>
+<li>Deploy the new map.</li>
+</ol>
+<p><strong>Do not skip to step 3.</strong> Re-running the generator against whatever just arrived makes the check
+pass and verifies nothing — it records the new bytes as trusted because they are present, which is
+precisely the state the digest existed to detect.</p>
+<p>Two details. A new map delivered through <code>LAYA_SHA256_DIGESTS</code> needs the process restarted, because
+a running server keeps the environment it started with. And this sequence only applies to a
+deployment that is <em>not</em> revision-pinned: with both controls on, the new bytes never arrive until
+you move the pin.</p>
+<h2 id="confirm-what-actually-loaded">Confirm what actually loaded<a class="headerlink" href="#confirm-what-actually-loaded" title="Permanent link">&para;</a></h2>
+<p>Every agent records the commit it came from, <code>None</code> for a local directory:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">agent</span><span class="o">.</span><span class="n">revision</span>                 <span class="c1"># Agent and ONNXAgent</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="n">router</span><span class="o">.</span><span class="n">loaded_revisions</span>        <span class="c1"># {"english": "55cf4c4e…", …} for each resident agent</span>
+</span></code></pre></div>
+<p><code>agent.revision</code> reports the snapshot the download resolved to, falling back to whatever you passed,
+so pinning by branch or tag echoes that name rather than a SHA — pin by SHA if you want this field
+to be one. Loading from a local directory reports <code>None</code>, and <code>revision</code> is ignored there, because
+there is no Hub snapshot to resolve.</p>
+<p>The server reports the same thing, which is the quickest way to confirm a deployment is running
+the checkpoint you think it is:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>curl<span class="w"> </span>-s<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$LAYA_API_KEY</span><span class="s2">"</span><span class="w"> </span>localhost:8000/health<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span><span class="s1">'.revisions'</span>
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="c1"># {"english": "55cf4c4e…"}</span>
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>
+</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="c1"># The same request with no header, on a deployment that set LAYA_API_KEY: still 200, no revision.</span>
+</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>curl<span class="w"> </span>-s<span class="w"> </span>localhost:8000/health<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span><span class="s1">'.revisions'</span>
+</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="c1"># null</span>
+</span></code></pre></div>
+<p>The header is the part that is easy to lose. Liveness is deliberately open, because every shipped
+probe reads <code>/health</code> without a credential — including <code>compose.http.yaml</code>'s healthcheck — so on a
+deployment that set <code>LAYA_API_KEY</code> an unauthenticated request answers <code>{"status": "ok"}</code> and nothing
+else. Then the second arm above prints <code>null</code> and exits 0: a check that confirms nothing, in the one
+deployment where the checkpoint really needed confirming. A wrong key gives the same body, so <code>null</code>
+says the header did not carry the deployment's key — which is easy, since <code>LAYA_API_KEY</code> usually
+lives in the container's environment or the <code>.env</code> file compose reads rather than in the operator's
+shell. With no key set the header is ignored, so always sending it is safe.</p>
+<p><code>{}</code> is also a correct answer, and the more common one. <code>revisions</code> has an entry only for a
+<em>resident</em> checkpoint, and the containers here run <code>LAYA_PRELOAD=0</code>, so a freshly started server
+reports none until a request routes one in. Post an inference first.</p>
+<p><code>/health</code> has seven top-level fields, or nine with <code>LAYA_IDLE_UNLOAD_SECONDS</code> set, which adds
+<code>idle_unload_seconds</code> and <code>idle_seconds</code>. All of them are documented in
+<a href="../http-api/">the HTTP API page</a>; this section filters to the one it is about.</p>
+<h2 id="laya-ts">laya-ts<a class="headerlink" href="#laya-ts" title="Permanent link">&para;</a></h2>
+<p>The TypeScript package mirrors the pinning and digest parts — <code>revision</code>, <code>expectedSha256</code>, and
+reading the revision back. It has no <code>LAYA_SHA256_DIGESTS</code> equivalent and no server, so the two
+sections above do not apply to it:</p>
+<div class="language-ts highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="k">import</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">loadNodeBundle</span><span class="p">,</span><span class="w"> </span><span class="nx">PINNED_REVISIONS</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s2">"laya-ts"</span><span class="p">;</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="kd">const</span><span class="w"> </span><span class="nx">bundle</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">loadNodeBundle</span><span class="p">(</span><span class="s2">"convaiinnovations/laya"</span><span class="p">,</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w">  </span><span class="nx">revision</span><span class="o">:</span><span class="w"> </span><span class="kt">PINNED_REVISIONS</span><span class="p">[</span><span class="s2">"convaiinnovations/laya"</span><span class="p">],</span>
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="w">  </span><span class="nx">expectedSha256</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="s2">"rl_agent_config.json"</span><span class="o">:</span><span class="w"> </span><span class="s2">"&lt;sha256 of that file&gt;"</span><span class="w"> </span><span class="p">},</span>
+</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="p">});</span>
+</span></code></pre></div>
+<p>An explicit revision joins the on-disk cache path under <code>~/.cache/laya-ts/</code>, so differently-pinned
+artifacts never collide. In the browser the revision travels in the request URL instead, which
+keys <code>CacheStorage</code> the same way. <code>createNodeProvider</code> accepts <code>expectedSha256</code> for the ONNX graphs
+it loads.</p>
+<h2 id="what-this-does-and-does-not-protect">What this does and does not protect<a class="headerlink" href="#what-this-does-and-does-not-protect" title="Permanent link">&para;</a></h2>
+<p>It detects a checkpoint whose contents changed from what you reviewed — an upstream repository
+edit, a compromised mirror, a corrupted download, or a modified local copy.</p>
+<p>It does not make an unreviewed checkpoint safe. A digest only says the bytes match what you
+recorded; deciding that those bytes are trustworthy is still yours.</p>
+<p>Three limits worth knowing before you rely on it:</p>
+<ul>
+<li><strong>Only listed files are checked.</strong> There is no "verify everything" mode and no way to reject a
+  file you did not list, so an artifact missing from your map is loaded unverified. The map is the
+  boundary of the guarantee.</li>
+<li><strong>One parsed file is therefore outside it.</strong> <code>tokenizer/tokenizer_config.json</code> is parsed, but Laya
+  may normalise it and write it back immediately after the digest check, so pinning it can succeed
+  on the first load and fail on the next. The recommended map leaves it out for that reason, which
+  means its bytes are not verified. The rewrite is conditional on what the file declares, so
+  whether it happens depends on the checkpoint.</li>
+<li><strong>Verification happens at load time only.</strong> Nothing re-checks a file afterwards, whether it is
+  replaced by an attacker or by the process itself.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../docker-platforms/" class="md-footer__link md-footer__link--prev" aria-label="Previous: ARM64 and DGX Spark containers">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                ARM64 and DGX Spark containers
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../finetune/" class="md-footer__link md-footer__link--next" aria-label="Next: Fine-tuning Laya on your own decisions">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Fine-tuning Laya on your own decisions
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Apache 2.0. Developed by Convai Innovations.
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":["content.code.copy","navigation.footer","navigation.indexes"],"redirect":null,"search":"../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.c04ba553.min.js"></script>
+      
+    
+  </body>
+</html>

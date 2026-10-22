@@ -1,0 +1,2287 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Multilingual, non-autoregressive System 1 decision engine">
+      
+      
+      
+        <link rel="canonical" href="https://thread3d.github.io/laya/structured/">
+      
+      
+        <link rel="prev" href="../use-cases/">
+      
+      
+        <link rel="next" href="../hooks/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="https://raw.githubusercontent.com/NandhaKishorM/laya/main/assets/logo-mark.svg">
+      <meta name="generator" content="zensical-0.0.65">
+    
+    
+      
+        <title>Schema-driven decisions - Laya</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.40d3fdbb.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../assets/stylesheets/modern/palette.812a03bb.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#schema-driven-decisions" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="Laya" class="md-header__button md-logo" aria-label="Laya" data-md-component="logo">
+      
+  <img src="https://raw.githubusercontent.com/NandhaKishorM/laya/main/assets/logo-mark.svg" alt="Laya">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Laya
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Schema-driven decisions
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/NandhaKishorM/laya" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    NandhaKishorM/laya
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="Laya" class="md-nav__button md-logo" aria-label="Laya" data-md-component="logo">
+      
+  <img src="https://raw.githubusercontent.com/NandhaKishorM/laya/main/assets/logo-mark.svg" alt="Laya">
+
+    </a>
+    Laya
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/NandhaKishorM/laya" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    NandhaKishorM/laya
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Laya
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guides
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+            <label class="md-nav__title" for="__nav_2">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Guides
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../use-cases/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Architectural Patterns and Production Use Cases
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Schema-driven decisions
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Schema-driven decisions
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-supported-subset" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The supported subset
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rejections" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Rejections
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The API
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scoring-many-states" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Scoring many states
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#confidence-and-probabilities" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Confidence and probabilities
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-it-maps-internally" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        How it maps internally
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        See also
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../hooks/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hooks
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2_3" id="__nav_2_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_3_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_2_3">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Hooks
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API reference
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/lifecycle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Lifecycle
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/errors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Error handling
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/patterns/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Patterns and anti-patterns
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Examples
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/tracing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Tracing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../langchain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LangChain &amp; LangGraph Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llamaindex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LlamaIndex Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crewai/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CrewAI Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agno/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Agno Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Tool &amp; Function Selection
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Benchmarks and known limits
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli-mcp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Command line and MCP server
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../compile-and-fast-path/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  compile=True and the TileLang fast path: engineering notes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../evals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Evaluation harness
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fast-backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fast backends
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guardrail-limitations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guardrail Limitations
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../http-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  HTTP API
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../questions-and-answers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Questions and answers
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Routing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../staged-adoption/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Staged adoption
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../typescript-sdk/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  TypeScript SDK design
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Deployment
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_3">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Deployment
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Docker quickstart
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../docker-platforms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  ARM64 and DGX Spark containers
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Checkpoint integrity
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_4">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Fine-tuning
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../finetune/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning Laya on your own decisions
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../finetune_browser_agent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning Laya as a browser-agent decision head
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reference
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_5">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Reference
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/agent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Agent
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/router/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Router
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/helpers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Helpers
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/train/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/langchain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LangChain components
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-supported-subset" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The supported subset
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rejections" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Rejections
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The API
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scoring-many-states" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Scoring many states
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#confidence-and-probabilities" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Confidence and probabilities
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-it-maps-internally" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        How it maps internally
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        See also
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="schema-driven-decisions">Schema-driven decisions<a class="headerlink" href="#schema-driven-decisions" title="Permanent link">&para;</a></h1>
+<p>Turn a JSON schema, or a pydantic model, into Laya questions, and get back typed values with
+calibrated confidence. This is the bridge that makes Laya a structured-output engine: you describe
+the shape you want, Laya answers it in one forward pass.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">laya</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">schema</span> <span class="o">=</span> <span class="p">{</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="s2">"type"</span><span class="p">:</span> <span class="s2">"object"</span><span class="p">,</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="s2">"properties"</span><span class="p">:</span> <span class="p">{</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>        <span class="s2">"department"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"string"</span><span class="p">,</span> <span class="s2">"enum"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"billing"</span><span class="p">,</span> <span class="s2">"support"</span><span class="p">,</span> <span class="s2">"sales"</span><span class="p">],</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>                       <span class="s2">"description"</span><span class="p">:</span> <span class="s2">"Which team should handle this?"</span><span class="p">},</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>        <span class="s2">"urgency"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"integer"</span><span class="p">,</span> <span class="s2">"minimum"</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">"maximum"</span><span class="p">:</span> <span class="mi">2</span><span class="p">},</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>        <span class="s2">"needs_human"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"boolean"</span><span class="p">},</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    <span class="p">},</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="p">}</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">laya</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"convaiinnovations/laya"</span><span class="p">)</span>
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="n">values</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">decide</span><span class="p">(</span><span class="s2">"I was charged twice, refund me."</span><span class="p">,</span> <span class="n">schema</span><span class="o">=</span><span class="n">schema</span><span class="p">)</span>
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="c1"># {"department": "billing", "urgency": 2, "needs_human": True}</span>
+</span></code></pre></div>
+<p>With pydantic (install <code>laya[structured]</code>):</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Literal</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="k">class</span><span class="w"> </span><span class="nc">Ticket</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="n">department</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">"billing"</span><span class="p">,</span> <span class="s2">"support"</span><span class="p">,</span> <span class="s2">"sales"</span><span class="p">]</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="n">urgency</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    <span class="n">needs_human</span><span class="p">:</span> <span class="nb">bool</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="n">ticket</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">decide</span><span class="p">(</span><span class="s2">"I was charged twice, refund me."</span><span class="p">,</span> <span class="n">schema</span><span class="o">=</span><span class="n">Ticket</span><span class="p">)</span>
+</span></code></pre></div>
+<h2 id="the-supported-subset">The supported subset<a class="headerlink" href="#the-supported-subset" title="Permanent link">&para;</a></h2>
+<p>The top level must be an object with <code>properties</code>. Each property becomes one question.</p>
+<p>Every row below is a real schema: <code>tests/test_structured_docs.py</code> compiles the first column and
+asserts the question the compiler actually produces, so this table cannot drift from the code. A cell
+is either a property schema on its own, a whole schema when the row needs its <code>$defs</code> (the field is
+named <code>field</code>), or a call to an entry point.</p>
+<table>
+<thead>
+<tr>
+<th>JSON schema</th>
+<th>Laya question</th>
+<th>Returned value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>{"enum": ["billing", "support"]}</code></td>
+<td><code>choice</code></td>
+<td>the chosen value, with its original type</td>
+</tr>
+<tr>
+<td><code>{"const": "billing"}</code></td>
+<td><code>choice</code></td>
+<td>that one value</td>
+</tr>
+<tr>
+<td><code>{"type": "boolean"}</code></td>
+<td><code>noul</code></td>
+<td><code>true</code> / <code>false</code></td>
+</tr>
+<tr>
+<td><code>{"type": "integer", "minimum": 0, "maximum": 5}</code></td>
+<td><code>score</code></td>
+<td>the highest-probability level, as an integer</td>
+</tr>
+<tr>
+<td><code>{"type": "number", "minimum": 0, "maximum": 5}</code></td>
+<td><code>score</code></td>
+<td>the level, as an integer</td>
+</tr>
+<tr>
+<td><code>{"type": "string", "enum": ["low", "high"], "description": "How urgent?"}</code></td>
+<td><code>choice</code></td>
+<td><code>How urgent?</code> is the question wording</td>
+</tr>
+<tr>
+<td><code>{"anyOf": [{"enum": ["x", "y"]}, {"type": "null"}]}</code></td>
+<td><code>choice</code></td>
+<td>as the plain <code>enum</code> row; no answer leaves the key out</td>
+</tr>
+<tr>
+<td><code>{"oneOf": [{"type": "boolean"}, {"type": "null"}]}</code></td>
+<td><code>noul</code></td>
+<td>as the plain <code>boolean</code> row</td>
+</tr>
+<tr>
+<td><code>{"type": ["integer", "null"], "minimum": 1, "maximum": 3}</code></td>
+<td><code>score</code></td>
+<td>as the plain bounded-integer row</td>
+</tr>
+<tr>
+<td><code>{"properties": {"field": {"$ref": "#/$defs/Dept"}}, "$defs": {"Dept": {"enum": ["billing", "support"]}}}</code></td>
+<td><code>choice</code></td>
+<td>as the plain <code>enum</code> row; a local <code>$ref</code> is planned as the definition it names</td>
+</tr>
+<tr>
+<td><code>{"allOf": [{"enum": ["x", "y"]}]}</code></td>
+<td><code>choice</code></td>
+<td>as the plain <code>enum</code> row; the one-item wrapper pydantic v1 puts around a described <code>$ref</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>Literal[...]</code> and <code>Optional[...]</code> are the pydantic spellings of the <code>enum</code> and <code>anyOf</code> rows:
+<code>questions_from_pydantic</code> renders them to those shapes and the same rows apply. An <code>Enum</code> field
+(<code>str</code>/<code>int</code> mixins and <code>IntEnum</code> included) is the <code>$ref</code> row, which needs the whole schema to show:
+pydantic puts the members in <code>$defs</code> and points the property at them, so <code>Optional[Dept]</code> is an
+<code>anyOf</code> around that <code>$ref</code>.</p>
+<p><code>title</code> is <strong>not</strong> read. pydantic puts one on every field of <code>model_json_schema()</code> whether you asked
+for it or not, and a per-property name cannot label the per-option choices a question is built from,
+so the wording lever is <code>description</code> — see <em>How it maps internally</em> below.</p>
+<p>Projection is exact: an <code>enum: [1, 2, 3]</code> returns <code>2</code>, not <code>"2"</code>; a bounded integer returns a
+level between <code>minimum</code> and <code>maximum</code>; a boolean is <code>noul &gt;= 0.5</code>.</p>
+<h2 id="rejections">Rejections<a class="headerlink" href="#rejections" title="Permanent link">&para;</a></h2>
+<p>A schema that cannot be answered from a fixed option set raises <code>laya.structured.SchemaError</code>
+(a <code>ValueError</code>) naming the exact path. Each row is executed too, with the field named <code>name</code>:</p>
+<table>
+<thead>
+<tr>
+<th>property schema</th>
+<th>message</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>{"type": "string"}</code></td>
+<td><code>properties.name: a free string cannot be a fixed option set; use 'enum' or a boolean</code></td>
+</tr>
+<tr>
+<td><code>{"type": "array", "items": {"type": "string"}}</code></td>
+<td><code>properties.name: arrays are not supported; ask one field per element</code></td>
+</tr>
+<tr>
+<td><code>{"type": "object", "properties": {"inner": {"type": "boolean"}}}</code></td>
+<td><code>properties.name: nested objects are not supported; flatten the schema</code></td>
+</tr>
+<tr>
+<td><code>{"$ref": "#/definitions/node"}</code></td>
+<td><code>properties.name: $ref '#/definitions/node' does not resolve to an entry of this schema's '$defs' or 'definitions'</code></td>
+</tr>
+<tr>
+<td><code>{"enum": [1, "1"]}</code></td>
+<td><code>properties.name: enum values produce duplicate choice labels</code></td>
+</tr>
+<tr>
+<td><code>{"enum": []}</code></td>
+<td><code>properties.name: 'enum' must not be empty</code></td>
+</tr>
+<tr>
+<td><code>{"enum": "abc"}</code></td>
+<td><code>properties.name: 'enum' must be an array of values, got str</code></td>
+</tr>
+<tr>
+<td><code>{"type": "number"}</code></td>
+<td><code>properties.name: a numeric field needs integer 'minimum' and 'maximum' to become a score</code></td>
+</tr>
+<tr>
+<td><code>{"type": "integer", "minimum": 5, "maximum": 2}</code></td>
+<td><code>properties.name: 'maximum' 2 is below 'minimum' 5</code></td>
+</tr>
+<tr>
+<td><code>{"type": "integer", "minimum": 0, "maximum": 10}</code></td>
+<td><code>properties.name: 11 levels exceeds MAX_SCORE_LEVELS=10; narrow the range or use an enum</code></td>
+</tr>
+<tr>
+<td><code>{"anyOf": [{"type": "string"}, {"type": "integer"}]}</code></td>
+<td><code>properties.name: only 'Optional[...]' unions (one non-null branch) are supported, got 2</code></td>
+</tr>
+<tr>
+<td><code>{"type": ["string", "integer"]}</code></td>
+<td><code>properties.name: 'type' has multiple non-null types; unions are not supported</code></td>
+</tr>
+<tr>
+<td><code>{"format": "date"}</code></td>
+<td><code>properties.name: unsupported schema {'format': 'date'}</code></td>
+</tr>
+<tr>
+<td><code>"boolean"</code></td>
+<td><code>properties.name: property must be an object, got str</code></td>
+</tr>
+</tbody>
+</table>
+<p>The entry points themselves reject these; the last row needs a whole schema, because a <code>$ref</code> cycle
+runs through its <code>$defs</code>:</p>
+<table>
+<thead>
+<tr>
+<th>call</th>
+<th>message</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>plan_from_json_schema("not a schema")</code></td>
+<td><code>expected a JSON schema object, got str</code></td>
+</tr>
+<tr>
+<td><code>plan_from_json_schema({"type": "object"})</code></td>
+<td><code>the top level must be an object with 'properties'</code></td>
+</tr>
+<tr>
+<td><code>plan_from_json_schema({"type": "object", "properties": {}})</code></td>
+<td><code>'properties' must be a non-empty object</code></td>
+</tr>
+<tr>
+<td><code>plan_from_json_schema({"type": "object", "properties": {"p%d" % i: {"type": "boolean"} for i in range(33)}})</code></td>
+<td><code>33 properties exceeds MAX_PROPERTIES=32</code></td>
+</tr>
+<tr>
+<td><code>plan_from_json_schema({"type": "object", "properties": {"name": {"enum": ["v%d" % i for i in range(33)]}}})</code></td>
+<td><code>properties.name: 33 options exceeds MAX_OPTIONS=32</code></td>
+</tr>
+<tr>
+<td><code>decide(None, "I was charged twice.", schema=42)</code></td>
+<td><code>expected a JSON schema dict or a pydantic model, got int</code></td>
+</tr>
+<tr>
+<td><code>plan_from_json_schema({"type": "object", "properties": {"name": {"$ref": "#/$defs/Loop"}}, "$defs": {"Loop": {"$ref": "#/$defs/Loop"}}})</code></td>
+<td><code>properties.name: $ref '#/$defs/Loop' is recursive; flatten the schema</code></td>
+</tr>
+</tbody>
+</table>
+<p>Limits: <code>MAX_PROPERTIES = 32</code>, <code>MAX_OPTIONS = 32</code>, <code>MAX_SCORE_LEVELS = 10</code>.</p>
+<h2 id="the-api">The API<a class="headerlink" href="#the-api" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>function</th>
+<th>purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>laya.decide(runner, state, schema=..., *, questions=..., return_details=..., min_confidence=..., **predict_kwargs)</code></td>
+<td>the free function, works for <code>Agent</code> and <code>Router</code></td>
+</tr>
+<tr>
+<td><code>agent.decide(state, schema=..., ...)</code> / <code>router.decide(state, schema=..., ...)</code></td>
+<td>convenience methods</td>
+</tr>
+<tr>
+<td><code>laya.decide_batch(runner, states, schema=..., ...)</code> / <code>agent.decide_batch(...)</code> / <code>router.decide_batch(...)</code></td>
+<td>the same over many states, one batched call</td>
+</tr>
+<tr>
+<td><code>questions_from_json_schema(schema)</code></td>
+<td>schema to Laya questions</td>
+</tr>
+<tr>
+<td><code>questions_from_pydantic(model)</code></td>
+<td>pydantic model to questions (requires pydantic)</td>
+</tr>
+<tr>
+<td><code>answers_to_json(answers, schema)</code></td>
+<td>project raw answers onto schema values</td>
+</tr>
+<tr>
+<td><code>answer_to_pydantic(model, answers)</code></td>
+<td>project raw answers into a pydantic instance</td>
+</tr>
+<tr>
+<td><code>plan_from_json_schema(schema)</code></td>
+<td>the validated field plan (advanced)</td>
+</tr>
+</tbody>
+</table>
+<p>Pass exactly one of <code>schema</code> or <code>questions</code>. With <code>questions</code>, <code>decide</code> returns the raw answers
+instead of projecting. Extra keyword arguments are forwarded to <code>predict</code>, so hooks, <code>model=</code>,
+<code>task=</code> and the token budget all work:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">router</span><span class="o">.</span><span class="n">decide</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">schema</span><span class="o">=</span><span class="n">Ticket</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="s2">"multilingual"</span><span class="p">,</span> <span class="n">hooks</span><span class="o">=</span><span class="p">[</span><span class="n">Metrics</span><span class="p">()])</span>
+</span></code></pre></div>
+<h2 id="scoring-many-states">Scoring many states<a class="headerlink" href="#scoring-many-states" title="Permanent link">&para;</a></h2>
+<p><code>decide_batch</code> is the throughput form: the schema is planned once and its questions run over every
+state through <code>predict_batch</code>, so states share forward passes instead of one per call. Results come
+back in input order, projected exactly as <code>decide</code> projects, and <code>return_details=True</code> gives one
+<code>DecisionResult</code> per state:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">values</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">decide_batch</span><span class="p">(</span><span class="n">ticket_texts</span><span class="p">,</span> <span class="n">schema</span><span class="o">=</span><span class="n">Ticket</span><span class="p">)</span>          <span class="c1"># values[i] matches ticket_texts[i]</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">router</span><span class="o">.</span><span class="n">decide_batch</span><span class="p">(</span><span class="n">states</span><span class="p">,</span> <span class="n">schema</span><span class="o">=</span><span class="n">Ticket</span><span class="p">,</span> <span class="n">return_details</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">64</span><span class="p">)</span>
+</span></code></pre></div>
+<p>On a <code>Router</code> each state is still routed on its own, so one call can span checkpoints. Which
+keywords reach <code>predict_batch</code> depends on who reads them. The call-level ones — <code>batch_size=</code>,
+<code>hooks=</code>, <code>sort_by_length=</code> — are passed as keywords to <code>predict_batch</code>. The routing pins and the
+token budget — <code>model=</code>, <code>task=</code>, <code>lang=</code>, <code>lang_guess=</code>, <code>max_len=</code>, <code>head_max_len=</code>, the tuple
+<code>laya/structured.py::_ROUTER_REQUEST_KEYS</code> names — are read off every <em>request</em> by a <code>Router</code>, whose
+<code>predict_batch</code> declares none of them, so <code>decide_batch</code> copies them onto each request instead; that
+is why <code>decide_batch(states, schema=..., model="multilingual")</code> pins a checkpoint the way <code>decide</code>
+does. On an <code>Agent</code>-like runner the split is visible: its <code>predict_batch</code> declares <code>batch_size=</code>,
+<code>hooks=</code> and <code>lang=</code> but no <code>model=</code> and swallows nothing, so <code>model=</code> there is a <code>TypeError</code>, not a
+silent extra keyword. <code>Agent</code>, <code>ONNXAgent</code> and <code>Router</code> all have it; a runner without <code>predict_batch</code> raises
+<code>TypeError</code> rather than silently falling back to a loop — call <code>decide</code> per state there. Batching can shift borderline argmaxes the
+same way <code>predict_batch</code> does; the README records the measured speedups for both devices.</p>
+<h2 id="confidence-and-probabilities">Confidence and probabilities<a class="headerlink" href="#confidence-and-probabilities" title="Permanent link">&para;</a></h2>
+<p>By default <code>decide</code> returns only the values. Pass <code>return_details=True</code> for a <code>DecisionResult</code>
+with per-field confidence, probabilities, the raw answers, and the usage and routing of the call:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">result</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">decide</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">schema</span><span class="o">=</span><span class="n">Ticket</span><span class="p">,</span> <span class="n">return_details</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">result</span><span class="o">.</span><span class="n">values</span><span class="p">[</span><span class="s2">"department"</span><span class="p">]</span>            <span class="c1"># "billing"</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">result</span><span class="o">.</span><span class="n">answer_confidence</span><span class="p">[</span><span class="s2">"department"</span><span class="p">]</span> <span class="c1"># 0.94  max(p): the quantity min_confidence gates on</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">result</span><span class="o">.</span><span class="n">confidence</span><span class="p">[</span><span class="s2">"department"</span><span class="p">]</span>        <span class="c1"># 0.79  1 - H(p)/log(k) on this 3-option `choice` field</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="n">result</span><span class="o">.</span><span class="n">probabilities</span><span class="p">[</span><span class="s2">"department"</span><span class="p">]</span>     <span class="c1"># {"billing": 0.94, "support": 0.06, "sales": 0.0}</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="n">result</span><span class="o">.</span><span class="n">usage</span>                           <span class="c1"># {"input_tokens": ..., "output_tokens": 0,</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>                                       <span class="c1">#  "state_tokens": ..., "state_tokens_dropped": ...,</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>                                       <span class="c1">#  "truncated": ..., "truncated_questions": [...]}</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="n">result</span><span class="o">.</span><span class="n">routing</span>                         <span class="c1"># the Router decision, when a Router answered</span>
+</span></code></pre></div>
+<p><code>usage</code> is the block <code>predict()</code> built, forwarded whole: <code>input_tokens</code> sums the state over one
+row per question and <code>output_tokens</code> is always 0 because nothing is generated, while the other
+four keys are the truncation report (#174) -- <code>state_tokens</code> is what the whole serialized state
+needs, <code>state_tokens_dropped</code> the most of it any one question's head gave up, and <code>truncated</code> /
+<code>truncated_questions</code> say which. A seventh key, <code>options</code>, is present only when the head budget
+left some question's options sharing a token span (#538); <code>docs/http-api.md</code> documents both this
+block and that field as response keys, and <code>tests/test_structured_docs.py</code> holds this page's list
+to the code that builds it.</p>
+<p><code>confidence</code> and <code>answer_confidence</code> are different quantities, and the names follow the definitions.
+<code>answer_confidence</code> is <code>max(p)</code>, the probability mass on the answer being reported. It is what
+temperature scaling fits, what every calibration figure in this repository is computed on, and what
+<code>min_confidence</code> is compared against — which is the reason to gate on it rather than on
+<code>confidence</code>. <code>confidence</code> is not one formula. On a <code>choice</code> or a <code>score</code> it is normalized entropy,
+<code>1 - H(p) / log(k)</code>, whose scale moves with the number of options the question had. On a <code>noul</code> it is
+<code>max(p_true, 1 - p_true)</code>, the probability of the side being reported, which over two options is
+<code>max(p)</code>. <code>tests/test_confidence.py</code> pins a two-option distribution as 0.90 on a <code>noul</code> against 0.53
+on an equivalent <code>choice</code>; 0.53 is what entropy gives at <code>k = 2</code>, so the 0.90 is the second formula and
+not the first at a smaller option count. The schema above mixes both — <code>department</code> is a <code>choice</code>,
+<code>needs_human</code> a <code>noul</code> — so one <code>DecisionResult.confidence</code> dict can hold two scales at once, which is
+why neither reading compares against a threshold you have not measured per type. A field that reported
+no usable <code>answer_confidence</code> maps to <code>None</code>, which is not the same as a reported <code>0.0</code>.</p>
+<p>Gate on the same quantity the gate uses:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">answer_confidence</span><span class="p">[</span><span class="s2">"department"</span><span class="p">]</span> <span class="o">&lt;</span> <span class="mf">0.6</span><span class="p">:</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="n">result</span><span class="o">.</span><span class="n">values</span><span class="p">[</span><span class="s2">"department"</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"human-review"</span>
+</span></code></pre></div>
+<p><code>answer_confidence</code> being the right number to <em>filter</em> on is not the same as it being a trustworthy
+probability. Reading it as "about c of the answers returned at c are correct" holds only after
+temperatures have been fitted and validated on held-out data for that checkpoint and question shape.
+The shipped checkpoints are over-confident as shipped and <code>laya-multilingual</code> ships with no fitted
+temperatures at all — see the README's
+<a href="https://github.com/NandhaKishorM/laya#calibration">Calibration</a> and
+<a href="https://github.com/NandhaKishorM/laya#honest-limits">Honest limits</a> sections, and the
+<a href="https://github.com/NandhaKishorM/laya/blob/main/notebooks/laya_finetune_typed_decisions_2xT4_kaggle.ipynb">fine-tuning notebook</a>
+for the fitting loop. Fit before you rely on the level; report it because it is the quantity the
+gate and the eval harness both use.</p>
+<h2 id="how-it-maps-internally">How it maps internally<a class="headerlink" href="#how-it-maps-internally" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Enum and <code>Literal</code> become <code>choice</code> questions with the values as string labels; the label is
+  mapped back to the original value on the way out, so integers stay integers.</li>
+<li>A bounded integer becomes a <code>score</code> question with one level per value; the returned value is
+  <code>minimum + argmax</code>.</li>
+<li>A boolean becomes a <code>noul</code> question; the value is <code>noul &gt;= 0.5</code>.</li>
+<li>A <code>description</code> becomes the question instructions, so a good description is what makes the
+  decision accurate. This follows the same rule as the <a href="../hooks/">hooks guide</a>: be explicit
+  about what each option means.</li>
+<li>A local <code>$ref</code> (<code>#/$defs/...</code> or <code>#/definitions/...</code>) is replaced by the definition it names
+  before the field is planned, so a pydantic <code>Enum</code> asks exactly the question the matching <code>Literal</code>
+  asks and projects to the member's value, which <code>answer_to_pydantic</code> turns back into the member.
+  The property's own keys sit on top and the definition's <code>description</code> is dropped: pydantic fills
+  it from the enum's docstring (pydantic v1 with "An enumeration." when there is none), which
+  describes the type rather than the question, so the wording is still the field's <code>description</code>.
+  A ref to another document, a missing entry or a cycle raises, and a ref to a model is a nested
+  object.</li>
+<li>A <code>null</code> branch is dropped before the field is planned, so <code>Optional[X]</code> asks exactly the question
+  <code>X</code> asks. The field's key is simply absent from the values when there is no answer for it, which is
+  what makes it safe to declare a field optional without changing what the model sees.</li>
+</ul>
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../hooks/">Prediction hooks</a>: observe, shape, cache or gate the decisions this produces.</li>
+<li><a href="../">Decision primitives</a>: <code>choice</code>, <code>score</code> and <code>noul</code> in depth.</li>
+<li><a href="../langchain/">LangChain and LangGraph</a>: <code>LayaDecision</code> is this call as a runnable in a chain.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../use-cases/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Architectural Patterns and Production Use Cases">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Architectural Patterns and Production Use Cases
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../hooks/" class="md-footer__link md-footer__link--next" aria-label="Next: Prediction Hooks">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Prediction Hooks
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Apache 2.0. Developed by Convai Innovations.
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":["content.code.copy","navigation.footer","navigation.indexes"],"redirect":null,"search":"../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.c04ba553.min.js"></script>
+      
+    
+  </body>
+</html>

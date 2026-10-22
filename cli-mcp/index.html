@@ -1,0 +1,2475 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Multilingual, non-autoregressive System 1 decision engine">
+      
+      
+      
+        <link rel="canonical" href="https://thread3d.github.io/laya/cli-mcp/">
+      
+      
+        <link rel="prev" href="../benchmarks/">
+      
+      
+        <link rel="next" href="../compile-and-fast-path/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="https://raw.githubusercontent.com/NandhaKishorM/laya/main/assets/logo-mark.svg">
+      <meta name="generator" content="zensical-0.0.65">
+    
+    
+      
+        <title>Command line and MCP server - Laya</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.40d3fdbb.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../assets/stylesheets/modern/palette.812a03bb.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#command-line-and-mcp-server" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="Laya" class="md-header__button md-logo" aria-label="Laya" data-md-component="logo">
+      
+  <img src="https://raw.githubusercontent.com/NandhaKishorM/laya/main/assets/logo-mark.svg" alt="Laya">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Laya
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Command line and MCP server
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/NandhaKishorM/laya" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    NandhaKishorM/laya
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="Laya" class="md-nav__button md-logo" aria-label="Laya" data-md-component="logo">
+      
+  <img src="https://raw.githubusercontent.com/NandhaKishorM/laya/main/assets/logo-mark.svg" alt="Laya">
+
+    </a>
+    Laya
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/NandhaKishorM/laya" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    NandhaKishorM/laya
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Laya
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guides
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+            <label class="md-nav__title" for="__nav_2">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Guides
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../use-cases/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Architectural Patterns and Production Use Cases
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../structured/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Schema-driven decisions
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../hooks/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hooks
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2_3" id="__nav_2_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_3_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_2_3">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Hooks
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API reference
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/lifecycle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Lifecycle
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/errors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Error handling
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/patterns/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Patterns and anti-patterns
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Examples
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/tracing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Tracing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../langchain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LangChain &amp; LangGraph Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llamaindex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LlamaIndex Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crewai/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CrewAI Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agno/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Agno Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Tool &amp; Function Selection
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Benchmarks and known limits
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Command line and MCP server
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Command line and MCP server
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-command-line" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        1. Command line
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Command line">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#evaluation-cli" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Evaluation CLI
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#training-cli" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Training CLI
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#route-without-loading-a-checkpoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Route without loading a checkpoint
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#run-a-prediction" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Run a prediction
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#use-a-built-in-preset" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Use a built-in preset
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#explore-interactively" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Explore interactively
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#failures-are-visible" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Failures are visible
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-built-in-mcp-stdio-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        2. Built-in MCP stdio server
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Built-in MCP stdio server">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#available-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Available tools
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#startup-and-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Startup and environment
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#share-one-model-server-across-mcp-sessions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Share one model server across MCP sessions
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-shared-boundaries-and-related-guides" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        3. Shared boundaries and related guides
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../compile-and-fast-path/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  compile=True and the TileLang fast path: engineering notes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../evals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Evaluation harness
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fast-backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fast backends
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guardrail-limitations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guardrail Limitations
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../http-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  HTTP API
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../questions-and-answers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Questions and answers
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Routing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../staged-adoption/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Staged adoption
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../typescript-sdk/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  TypeScript SDK design
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Deployment
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_3">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Deployment
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Docker quickstart
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../docker-platforms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  ARM64 and DGX Spark containers
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Checkpoint integrity
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_4">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Fine-tuning
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../finetune/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning Laya on your own decisions
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../finetune_browser_agent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning Laya as a browser-agent decision head
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reference
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_5">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Reference
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/agent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Agent
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/router/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Router
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/helpers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Helpers
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/train/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/langchain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LangChain components
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-command-line" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        1. Command line
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Command line">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#evaluation-cli" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Evaluation CLI
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#training-cli" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Training CLI
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#route-without-loading-a-checkpoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Route without loading a checkpoint
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#run-a-prediction" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Run a prediction
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#use-a-built-in-preset" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Use a built-in preset
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#explore-interactively" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Explore interactively
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#failures-are-visible" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Failures are visible
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-built-in-mcp-stdio-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        2. Built-in MCP stdio server
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Built-in MCP stdio server">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#available-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Available tools
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#startup-and-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Startup and environment
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#share-one-model-server-across-mcp-sessions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Share one model server across MCP sessions
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-shared-boundaries-and-related-guides" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        3. Shared boundaries and related guides
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="command-line-and-mcp-server">Command line and MCP server<a class="headerlink" href="#command-line-and-mcp-server" title="Permanent link">&para;</a></h1>
+<p>Laya has two local interfaces for trying the same structured-decision engine:</p>
+<table>
+<thead>
+<tr>
+<th>Interface</th>
+<th>Use it for</th>
+<th>Transport</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>laya</code></td>
+<td>quick checks and interactive exploration from a terminal</td>
+<td>command line</td>
+</tr>
+<tr>
+<td><code>laya-mcp-server</code></td>
+<td>connecting an MCP client or agent to Laya's built-in tools</td>
+<td>MCP over stdio</td>
+</tr>
+</tbody>
+</table>
+<p>Choose the CLI when you are the person reading the result. Choose MCP when another process needs
+a stable tool interface. Both use Laya's <code>Router</code> to select a checkpoint and return typed
+<code>choice</code>, <code>score</code>, and <code>noul</code> decisions; neither is an open-ended question-answering or text
+generation interface.</p>
+<p>For the routing decision and typed-question examples, see the README's <a href="https://github.com/NandhaKishorM/laya#quickstart-route-mode-recommended">Route Mode quickstart</a>.
+For confidence and built-in workflows, see the README's <a href="https://github.com/NandhaKishorM/laya#automated-confidence-gating">confidence gating</a> and <a href="https://github.com/NandhaKishorM/laya#built-in-workflow-presets">workflow presets</a>.</p>
+<h2 id="1-command-line">1. Command line<a class="headerlink" href="#1-command-line" title="Permanent link">&para;</a></h2>
+<p>Installing the package installs the <code>laya</code> entry point. Run <code>laya --help</code> for the complete
+option list.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>laya
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>laya<span class="w"> </span>--help
+</span></code></pre></div>
+<h3 id="evaluation-cli">Evaluation CLI<a class="headerlink" href="#evaluation-cli" title="Permanent link">&para;</a></h3>
+<p>The package also installs <code>laya-evals</code>. The main CLI exposes the same evaluation commands
+through <code>laya eval</code>:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>laya<span class="w"> </span><span class="nb">eval</span><span class="w"> </span>--help
+</span></code></pre></div>
+<p>See the <a href="../evals/">Evaluation harness</a> guide for datasets, metrics, and baseline gates.</p>
+<h3 id="training-cli">Training CLI<a class="headerlink" href="#training-cli" title="Permanent link">&para;</a></h3>
+<p><code>laya-train</code>, also reachable as <code>laya train</code>, fine-tunes a checkpoint from a CSV or JSONL of labelled
+decisions. See <a href="../finetune/#fine-tune-with-laya-train">Fine-tune with <code>laya-train</code></a>.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>laya-train<span class="w"> </span>--help
+</span></code></pre></div>
+<h3 id="route-without-loading-a-checkpoint">Route without loading a checkpoint<a class="headerlink" href="#route-without-loading-a-checkpoint" title="Permanent link">&para;</a></h3>
+<p>With text and no prediction flag, the CLI calls <code>Router.route</code>:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>laya<span class="w"> </span><span class="s2">"I was charged twice, please refund it"</span>
+</span></code></pre></div>
+<p>The output names the selected checkpoint, explains why it was selected, and shows detected
+language information when available. Routing alone does not download or build a checkpoint, so
+it is a quick offline check of the routing decision.</p>
+<p>Use <code>--json</code> when another local script should consume the decision:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>laya<span class="w"> </span><span class="s2">"I was charged twice, please refund it"</span><span class="w"> </span>--json
+</span></code></pre></div>
+<h3 id="run-a-prediction">Run a prediction<a class="headerlink" href="#run-a-prediction" title="Permanent link">&para;</a></h3>
+<p><code>--predict</code> runs the full typed prediction and loads the routed checkpoint on first use. The
+first load needs access to the Hugging Face Hub; later runs use the local cache.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>laya<span class="w"> </span><span class="s2">"Classify this support request"</span><span class="w"> </span>--predict
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>laya<span class="w"> </span><span class="s2">"Classify this support request"</span><span class="w"> </span>--predict<span class="w"> </span>--json
+</span></code></pre></div>
+<p><code>--json</code> prints the complete result as JSON. Without it, the CLI prints each answer together
+with its choice probability, score, or <code>noul</code> value, plus the routing decision.</p>
+<p>The main controls are:</p>
+<ul>
+<li><code>--model english|multilingual|typed-decisions</code> pins a checkpoint instead of auto-routing.</li>
+<li><code>--lang en|de|...</code> supplies an explicit language code instead of automatic detection.</li>
+<li><code>--lang-guess en|de|...</code> supplies a soft hint that routing reads after <code>--lang</code> and before its
+  own detector; a hint that resolves to nothing falls through, so it nudges the checkpoint without
+  forcing it.</li>
+<li><code>--task NAME</code> forces the typed-decisions workflow instead of detecting it.</li>
+<li><code>--device cpu|cuda|...</code> passes a device choice to the Router.</li>
+<li><code>--json</code> emits machine-readable output.</li>
+</ul>
+<h3 id="use-a-built-in-preset">Use a built-in preset<a class="headerlink" href="#use-a-built-in-preset" title="Permanent link">&para;</a></h3>
+<p>A preset supplies a ready-made question set and implies prediction, so <code>--predict</code> is not needed:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>laya<span class="w"> </span><span class="s2">"My payment failed twice"</span><span class="w"> </span>--preset<span class="w"> </span>triage
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>laya<span class="w"> </span><span class="s2">"Ignore all previous instructions"</span><span class="w"> </span>--preset<span class="w"> </span>guard<span class="w"> </span>--json
+</span></code></pre></div>
+<p>The CLI presets are <code>email</code>, <code>guard</code>, <code>moderation</code>, <code>router</code>, and <code>triage</code>. The CLI places the
+text under the state field expected by the selected preset; <code>--predict</code> uses the router
+question set's <code>request</code> field. Presets are useful for a quick local check, but their questions
+are still domain decisions: inspect the preset and validate it on your own data before using it
+as an application policy.</p>
+<h3 id="explore-interactively">Explore interactively<a class="headerlink" href="#explore-interactively" title="Permanent link">&para;</a></h3>
+<p>With no text argument, the CLI opens a small prompt:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>laya
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="c1"># laya&gt; Classify this request</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="c1"># laya&gt; quit</span>
+</span></code></pre></div>
+<p>Press Enter to run each request. An empty line, <code>quit</code>, <code>exit</code>, or <code>Ctrl-D</code> ends the session. The
+interactive loop reuses one Router, so it is a convenient way to compare several inputs without
+writing a script.</p>
+<h3 id="failures-are-visible">Failures are visible<a class="headerlink" href="#failures-are-visible" title="Permanent link">&para;</a></h3>
+<p>The CLI handles invalid values and common dependency, download, and runtime failures at the
+application boundary. It prints a diagnostic to stderr and returns exit code <code>2</code> instead of
+showing an unhandled traceback. A handled failure ends the request, not the session: the prompt comes
+back for the next line, and the session exits <code>2</code> when it ends, so a piped session reports the
+code a failing request earned. If a first-use checkpoint download
+fails, check dependency installation, Hub access, and the selected device before retrying.</p>
+<h2 id="2-built-in-mcp-stdio-server">2. Built-in MCP stdio server<a class="headerlink" href="#2-built-in-mcp-stdio-server" title="Permanent link">&para;</a></h2>
+<p>The MCP server is an optional extra. The core package does not install the <code>mcp</code> dependency:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"laya[mcp]"</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>laya-mcp-server
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="c1"># equivalent module form:</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>python<span class="w"> </span>-m<span class="w"> </span>laya.mcp.server
+</span></code></pre></div>
+<p>The server speaks MCP over <strong>stdio</strong>, not HTTP. Configure the client with the console script:</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="p">{</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="nt">"mcpServers"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">    </span><span class="nt">"laya"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">      </span><span class="nt">"command"</span><span class="p">:</span><span class="w"> </span><span class="s2">"laya-mcp-server"</span><span class="p">,</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">      </span><span class="nt">"env"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">        </span><span class="nt">"LAYA_DEVICE"</span><span class="p">:</span><span class="w"> </span><span class="s2">"cpu"</span>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="w">      </span><span class="p">}</span>
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="w">    </span><span class="p">}</span>
+</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="w">  </span><span class="p">}</span>
+</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="p">}</span>
+</span></code></pre></div>
+<p>If the client configuration supports a Python executable and arguments, use
+<code>python -m laya.mcp.server</code> as the equivalent launch form. The client owns the server process;
+Laya does not open a network port.</p>
+<h3 id="available-tools">Available tools<a class="headerlink" href="#available-tools" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>What it does</th>
+<th>Main inputs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>laya_status</code></td>
+<td>Reports the device per loaded checkpoint (<code>checkpoint_devices</code>), the configured or actual device, CUDA availability, loaded checkpoints, preload state, readiness, and package versions.</td>
+<td>none</td>
+</tr>
+<tr>
+<td><code>laya_route</code></td>
+<td>Selects a checkpoint and returns its model, repository, and reason without running a forward pass.</td>
+<td><code>state</code>, <code>questions</code>, optional <code>model</code>, <code>task</code>, <code>lang</code>, <code>lang_guess</code></td>
+</tr>
+<tr>
+<td><code>laya_predict</code></td>
+<td>Runs typed questions and returns answers, routing metadata, latency, and the answering device when readable.</td>
+<td><code>state</code>, <code>questions</code>, optional <code>model</code> (<code>auto</code>, <code>english</code>, <code>multilingual</code>, or <code>typed-decisions</code>), <code>task</code>, <code>lang</code>, <code>lang_guess</code>, <code>max_len</code>, <code>head_max_len</code>, <code>min_confidence</code></td>
+</tr>
+<tr>
+<td><code>laya_shortlist</code></td>
+<td>Shortlists a many-option choice question, then answers it and returns the shortlist metadata.</td>
+<td><code>state</code>, <code>questions</code>, optional <code>model</code>, <code>k</code> (default <code>20</code>), <code>task</code>, <code>lang</code>, <code>lang_guess</code>, <code>max_len</code>, <code>head_max_len</code>, <code>min_confidence</code></td>
+</tr>
+<tr>
+<td><code>laya_tournament</code></td>
+<td>Narrows large choices in balanced rounds using the decision model, then answers the complete request. In-process only.</td>
+<td><code>state</code>, <code>questions</code>, optional <code>model</code>, <code>group_size</code> (default <code>16</code>), <code>task</code>, <code>lang</code>, <code>lang_guess</code>, <code>max_len</code>, <code>head_max_len</code>, <code>min_confidence</code></td>
+</tr>
+<tr>
+<td><code>laya_preset</code></td>
+<td>Runs a built-in workflow using its built-in question set.</td>
+<td><code>preset</code>, <code>state</code>, optional <code>task</code>, <code>lang</code>, <code>lang_guess</code>, <code>max_len</code>, <code>head_max_len</code>, <code>min_confidence</code></td>
+</tr>
+<tr>
+<td><code>laya_predict_batch</code></td>
+<td>Answers many requests in one call. Requests are routed first and grouped by checkpoint, so matching question schemas share forward passes; answers come back in input order.</td>
+<td><code>requests</code>, each <code>{state, questions, model?, task?, lang?, lang_guess?, max_len?, head_max_len?}</code>, optional <code>batch_size</code>, <code>hooks_timeout</code>, <code>min_confidence</code>, <code>sort_by_length</code></td>
+</tr>
+<tr>
+<td><code>laya_route_batch</code></td>
+<td>Decides which checkpoint would answer each request, with no forward pass and no checkpoint load.</td>
+<td><code>requests</code>, each <code>{state, questions, model?, task?, lang?, lang_guess?}</code>, optional <code>hooks_timeout</code></td>
+</tr>
+<tr>
+<td><code>laya_decide</code></td>
+<td>Answers a JSON-schema-shaped decision in one forward pass and returns the decided values with per-field confidence, instead of an answer map to parse. Schema properties may be enum choices, booleans, or integers with a minimum and maximum; free strings, arrays, and nested objects are rejected by path.</td>
+<td><code>state</code>, <code>schema</code>, optional <code>model</code>, <code>min_confidence</code></td>
+</tr>
+<tr>
+<td><code>laya_predict_long</code></td>
+<td>Scans a state longer than the context window in overlapping windows, then answers with per-answer window attribution and the window count.</td>
+<td><code>state</code>, <code>questions</code>, optional <code>model</code>, <code>window</code>, <code>stride</code>, <code>task</code>, <code>lang</code></td>
+</tr>
+</tbody>
+</table>
+<p>On <code>laya_route</code>, <code>laya_predict</code>, <code>laya_shortlist</code>, <code>laya_tournament</code>, and <code>laya_decide</code>, <code>model</code> may be omitted or set to <code>null</code>; either form resolves to <code>auto</code>.</p>
+<p>The three batch and schema tools exist because the same operations are available on the SDK and
+<code>laya-serve</code>: handling many requests, or serving a caller that already knows the answer shape,
+does not require dropping to Python. For the schema-driven form in more depth, see
+<a href="../structured/">Schema-driven decisions</a>.</p>
+<p>The shared guardrail says to narrow choice questions with more than 20 options using
+<code>laya_shortlist</code> or <code>laya_tournament</code>. <code>laya_shortlist</code> keeps the <code>k</code> most likely labels before the forward pass; its
+default is <code>k=20</code>. It uses mean-pooled embeddings from the answering checkpoint's own encoder,
+so it does not download a second model, and returns the kept labels, cosine scores, <code>k</code>,
+option count, and whether the question passed through unshortlisted for each shortlisted
+question. A question with <code>k</code> at or past its option count is passed through unchanged, so
+its cosine scores come back <code>null</code> rather than empty. A question that narrows cannot keep
+a caller-supplied <code>option_order</code>: the order covers every option while the answer covers the
+kept labels only, and remapping it onto them would move options between slots, so the order
+is dropped and the question is named under <code>option_order_dropped</code> with its old and kept
+option counts.</p>
+<p><code>laya_tournament</code> uses the decision model itself to narrow choices, without an embedding pass.
+With the default <code>group_size=16</code>, 40 labels form balanced groups of 13, 13 and 14. One forward
+pass answers all three groups; their winners meet in a final pass that also answers the rest
+of the request. Larger sets can take more elimination rounds. The checkpoint is selected from
+the original request and pinned for every round, keeping routing controls and detected-language
+calibration consistent. Token budgets and <code>min_confidence</code> reach every pass.
+A missing or out-of-group winner returns <code>internal_error</code> before another pass, so a broken
+round cannot silently advance a label the model did not select from that group.</p>
+<p>The result has the usual <code>answers</code>, <code>routing</code>, <code>latency_ms</code> and readable <code>device</code>, plus
+<code>tournament</code> metadata for each choice: <code>labels</code> are the finalists in criteria order, <code>n</code> is the
+original option count, and <code>rounds</code> counts elimination rounds before the final pass. A choice
+that fits <code>group_size</code> reports <code>rounds: 0</code>; non-choice questions have no tournament entry.
+Probabilities and confidence come from the final pass over the finalists only, so a threshold
+fitted on the full label set needs to be measured again. <code>latency_ms</code> covers routing and all
+passes. Narrowing reports a discarded <code>option_order</code> under <code>option_order_dropped</code> with <code>n</code> and
+<code>kept</code> counts, just as shortlisting does; passthrough questions keep their order.</p>
+<p>For a small example, call <code>laya_tournament</code> with these arguments. <code>group_size=2</code> forces one
+elimination round here; keep the default 16 for a larger catalog unless you have measured another size.</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="p">{</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span><span class="nt">"state"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"body"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Please refund the duplicate charge."</span><span class="p">},</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">  </span><span class="nt">"questions"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">    </span><span class="nt">"department"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">      </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"choice"</span><span class="p">,</span>
+</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="w">      </span><span class="nt">"instructions"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Which team should handle the `body`?"</span><span class="p">,</span>
+</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">      </span><span class="nt">"criteria"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="w">        </span><span class="nt">"billing"</span><span class="p">:</span><span class="w"> </span><span class="s2">"payments, invoices, refunds"</span><span class="p">,</span>
+</span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="w">        </span><span class="nt">"technical"</span><span class="p">:</span><span class="w"> </span><span class="s2">"bugs, outages, integrations"</span><span class="p">,</span>
+</span><span id="__span-10-10"><a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="w">        </span><span class="nt">"account"</span><span class="p">:</span><span class="w"> </span><span class="s2">"login, passwords, profile settings"</span><span class="p">,</span>
+</span><span id="__span-10-11"><a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="w">        </span><span class="nt">"sales"</span><span class="p">:</span><span class="w"> </span><span class="s2">"pricing, upgrades, product enquiries"</span>
+</span><span id="__span-10-12"><a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="w">      </span><span class="p">}</span>
+</span><span id="__span-10-13"><a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a><span class="w">    </span><span class="p">}</span>
+</span><span id="__span-10-14"><a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a><span class="w">  </span><span class="p">},</span>
+</span><span id="__span-10-15"><a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a><span class="w">  </span><span class="nt">"group_size"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span>
+</span><span id="__span-10-16"><a id="__codelineno-10-16" name="__codelineno-10-16" href="#__codelineno-10-16"></a><span class="p">}</span>
+</span></code></pre></div>
+<p>This makes two prediction calls and returns two finalists with <code>n: 4</code> and <code>rounds: 1</code>.
+<code>group_size</code> must be an integer of at least 2; invalid values return <code>invalid_group_size</code>.
+The tool is available only when the MCP server loads checkpoints in-process.</p>
+<p>When the state itself does not fit one window, <code>laya_predict</code> answers from its first window and
+never reads the rest. <code>laya_predict_long</code> tokenizes the state once, scores it in overlapping
+windows sized by <code>window</code> (default: the checkpoint budget) stepped by <code>stride</code> (default: half
+the window), and aggregates per question -- strongest window for <code>noul</code>, most-confident window
+for <code>choice</code>/<code>score</code>. Each answer names its deciding window, and the result counts the windows
+scored. There is no <code>min_confidence</code> here and no <code>max_len</code>/<code>head_max_len</code>: core's scan takes
+neither.</p>
+<p><code>state</code> must be a non-empty JSON object. <code>questions</code> must be a non-empty object whose values use
+Laya's typed question schema. <code>laya_preset</code> accepts the same five presets the CLI does: <code>email</code>,
+<code>guard</code>, <code>moderation</code>, <code>triage</code>, and the router workflow, whose canonical name on this surface is
+<code>model_router</code>. <code>router</code> is accepted as an alias and names the same preset, so the CLI spelling
+works here too; the canonical key is the one that comes back in the result. Given a state of
+exactly one string, <code>laya_preset</code> places it under the field that preset's questions name, the
+same placement the CLI does, so a caller does not have to guess the key. Anything richer than one
+string is the caller's own shape and is passed through untouched.</p>
+<p>Every single-request tool takes the same per-call routing controls the batch requests do. Alongside
+<code>model</code>, a request may set <code>task</code> (name a checkpoint by the work), <code>lang</code> (force a language code),
+and <code>lang_guess</code> (a soft language hint that sits below <code>lang</code> and above the built-in detector, so a
+probable-but-uncertain code can nudge which checkpoint is chosen without forcing it the way <code>lang</code>
+does). <code>lang_guess</code> only participates in routing, so like <code>task</code> it is refused on a call that pins
+<code>model</code> -- a pinned checkpoint has nothing left to route. <code>laya_predict</code>, <code>laya_shortlist</code>, and <code>laya_tournament</code> also
+take <code>max_len</code>/<code>head_max_len</code> for the answering token budget and <code>min_confidence</code> for the abstention
+gate.</p>
+<p>A prediction call has the same shape as the SDK's typed call:</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="p">{</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span><span class="nt">"state"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">    </span><span class="nt">"body"</span><span class="p">:</span><span class="w"> </span><span class="s2">"I was billed twice for the same plan. Please reverse the duplicate charge."</span>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">  </span><span class="p">},</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">  </span><span class="nt">"questions"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="w">    </span><span class="nt">"department"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="w">      </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"choice"</span><span class="p">,</span>
+</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="w">      </span><span class="nt">"instructions"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Which team should handle this request?"</span><span class="p">,</span>
+</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="w">      </span><span class="nt">"criteria"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="w">        </span><span class="nt">"billing"</span><span class="p">:</span><span class="w"> </span><span class="s2">"payments, invoices, refunds, duplicate charges"</span><span class="p">,</span>
+</span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="w">        </span><span class="nt">"technical"</span><span class="p">:</span><span class="w"> </span><span class="s2">"bugs, outages, integration problems"</span>
+</span><span id="__span-11-12"><a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a><span class="w">      </span><span class="p">}</span>
+</span><span id="__span-11-13"><a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a><span class="w">    </span><span class="p">},</span>
+</span><span id="__span-11-14"><a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a><span class="w">    </span><span class="nt">"urgent"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-11-15"><a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a><span class="w">      </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"noul"</span><span class="p">,</span>
+</span><span id="__span-11-16"><a id="__codelineno-11-16" name="__codelineno-11-16" href="#__codelineno-11-16"></a><span class="w">      </span><span class="nt">"instructions"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Does the user need immediate help?"</span>
+</span><span id="__span-11-17"><a id="__codelineno-11-17" name="__codelineno-11-17" href="#__codelineno-11-17"></a><span class="w">    </span><span class="p">}</span>
+</span><span id="__span-11-18"><a id="__codelineno-11-18" name="__codelineno-11-18" href="#__codelineno-11-18"></a><span class="w">  </span><span class="p">}</span>
+</span><span id="__span-11-19"><a id="__codelineno-11-19" name="__codelineno-11-19" href="#__codelineno-11-19"></a><span class="p">}</span>
+</span></code></pre></div>
+<p>The tool response is JSON containing the typed <code>answers</code>, the <code>routing</code> decision, and timing
+information. Do not treat a high-confidence answer as permission to perform an external action;
+the application or agent remains responsible for policy, review, and side effects.</p>
+<h3 id="startup-and-environment">Startup and environment<a class="headerlink" href="#startup-and-environment" title="Permanent link">&para;</a></h3>
+<p>The MCP server keeps a resident Router and serializes first-time construction. By default it
+preloads <code>english</code> and <code>multilingual</code>; <code>typed-decisions</code> stays lazy. A preload failure is
+reported at startup and retried on the next tool call, so inspect <code>laya_status</code> before assuming
+the server is ready.</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>LAYA_DEVICE</code></td>
+<td>automatic</td>
+<td>The device checkpoints are asked to build on, such as <code>cpu</code> or <code>cuda</code>. Not the value verbatim: <code>laya.mcp.device.env_device</code> strips and lower-cases it, so <code>CUDA:0</code> works, and a string PyTorch cannot parse is refused with an error naming this variable. So is a string PyTorch parses into a <em>different</em> device: an index it cannot keep is read back as another one (<code>cuda:258</code> builds GPU 2), and the same refusal names both the value and what PyTorch would have used. Because there is no startup to refuse, that comes back as a <code>router construction failed</code> tool error. It is a preference, not a guarantee: a GPU that cannot be had falls back to CPU silently, and <code>laya_status</code> reports the loaded checkpoint's real device.</td>
+</tr>
+<tr>
+<td><code>LAYA_PRELOAD</code></td>
+<td><code>1</code></td>
+<td>Build the configured checkpoints at startup. Set to <code>0</code> for lazy loading.</td>
+</tr>
+<tr>
+<td><code>LAYA_MODELS</code></td>
+<td><code>english,multilingual</code></td>
+<td>Comma-separated checkpoints to preload. An empty value keeps the MCP default rather than preloading every checkpoint.</td>
+</tr>
+<tr>
+<td><code>LAYA_THREADS</code></td>
+<td>PyTorch default</td>
+<td>Caps Torch intra-op threads for CPU inference; keep it at or below the physical core count.</td>
+</tr>
+<tr>
+<td><code>LAYA_AUTO_TASK</code></td>
+<td><code>0</code></td>
+<td>Set to <code>1</code> to let a request auto-route to the <code>typed-decisions</code> checkpoint. Same meaning as in <code>laya.serve</code>; it does not preload that checkpoint, so <code>LAYA_MODELS</code> still decides what is built at startup.</td>
+</tr>
+<tr>
+<td><code>LAYA_DEFAULT_MODEL</code></td>
+<td><code>multilingual</code></td>
+<td>The checkpoint a state with no language evidence falls back to, same meaning as in <code>laya.serve</code>. Unlike <code>laya.serve</code>, an unresolvable name does not stop the server: it comes back as a <code>router construction failed</code> tool error on the next call, because a stdio server has no startup to refuse.</td>
+</tr>
+<tr>
+<td><code>LAYA_BASE_URL</code></td>
+<td>unset</td>
+<td>Send predictions to a <code>laya-serve</code> on your own hardware instead of loading checkpoints in each MCP process. A bare <code>host:port</code> is read as HTTP.</td>
+</tr>
+<tr>
+<td><code>LAYA_REMOTE_TIMEOUT</code></td>
+<td><code>300</code></td>
+<td>HTTP timeout in seconds when <code>LAYA_BASE_URL</code> is set, including the server's cold load. Invalid or non-positive values use the default.</td>
+</tr>
+<tr>
+<td><code>LAYA_API_KEY</code></td>
+<td>unset</td>
+<td>Bearer token sent with every remote request when <code>LAYA_BASE_URL</code> is set. Required by a <code>laya-serve</code> that set its own <code>LAYA_API_KEY</code>; ignored in local mode.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="share-one-model-server-across-mcp-sessions">Share one model server across MCP sessions<a class="headerlink" href="#share-one-model-server-across-mcp-sessions" title="Permanent link">&para;</a></h3>
+<p>Run one local HTTP server and point each MCP client's environment at it:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nv">LAYA_HOST</span><span class="o">=</span><span class="m">127</span>.0.0.1<span class="w"> </span><span class="nv">LAYA_PRELOAD</span><span class="o">=</span><span class="m">0</span><span class="w"> </span><span class="nv">LAYA_IDLE_UNLOAD_SECONDS</span><span class="o">=</span><span class="m">300</span><span class="w"> </span>laya-serve
+</span></code></pre></div>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="p">{</span>
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span><span class="nt">"mcpServers"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">    </span><span class="nt">"laya"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">      </span><span class="nt">"command"</span><span class="p">:</span><span class="w"> </span><span class="s2">"laya-mcp-server"</span><span class="p">,</span>
+</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">      </span><span class="nt">"env"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"LAYA_BASE_URL"</span><span class="p">:</span><span class="w"> </span><span class="s2">"http://127.0.0.1:8000"</span><span class="p">}</span>
+</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="w">    </span><span class="p">}</span>
+</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="w">  </span><span class="p">}</span>
+</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="p">}</span>
+</span></code></pre></div>
+<p>Install <code>laya[serve]</code> where the HTTP server runs. MCP still uses stdio with the editor; its
+prediction tools use HTTP to reach your server. <code>laya_predict</code>, <code>laya_predict_batch</code>, <code>laya_decide</code>
+and <code>laya_preset</code> use the server's original state, instructions and option descriptions.
+<code>laya_predict_batch</code> sends one <code>/v1/systemone</code> request per item -- every batch, not only a
+heterogeneous one -- preserving input order; <code>batch_size</code> and <code>sort_by_length</code> are accepted and
+ignored, so they do not change the server's execution. <code>laya_status</code> reports the
+server's <code>/health</code>; <code>laya_route</code> and <code>laya_route_batch</code> stay local and need no model or HTTP request.
+The MCP process imports no torch and loads no checkpoint, including when <code>LAYA_THREADS</code> or
+<code>LAYA_PRELOAD</code> is set.</p>
+<p>Set the same <code>LAYA_API_KEY</code> in both processes when the server requires a bearer token. Keep
+<code>LAYA_DEFAULT_MODEL</code> and <code>LAYA_AUTO_TASK</code> aligned so local routing previews match the server's
+actual routing. Device and preload settings belong to the HTTP server. The first call after an
+idle unload waits for a cold load; raise <code>LAYA_REMOTE_TIMEOUT</code> if that takes longer than 300 seconds.
+<code>laya_shortlist</code>, <code>laya_tournament</code>, and prediction hook overrides return <code>unsupported_remote</code>, since these
+paths run in the model process. For shared-server tournament selection, enable
+<a href="../http-api/#large-choices-laya_tournament_group"><code>LAYA_TOURNAMENT_GROUP</code> on the HTTP server</a> and call
+<code>laya_predict</code>: HTTP keeps probabilities for every original label (zero for eliminated labels),
+reports <code>x_tournament</code>, and counts usage across rounds. The in-process <code>laya_tournament</code> returns
+finalist-only probabilities and core's <code>tournament</code> metadata. HTTP errors retain the server's detail text as MCP tool errors. With
+<code>LAYA_BASE_URL</code> unset, the MCP server keeps loading checkpoints in its own process.</p>
+<p>The stock <code>laya-mcp-server</code> launcher creates its Router without installing hooks. Install prediction
+hooks in the process that runs inference: the MCP process in local mode, or the HTTP server in
+shared-server mode. A custom launcher can use <code>laya.hooks.set_default_hooks</code> before building its Router. The environment variables
+above configure model lifecycle, not hook registration. The client still decides when to call a
+tool and what to do with the returned decision.</p>
+<h2 id="3-shared-boundaries-and-related-guides">3. Shared boundaries and related guides<a class="headerlink" href="#3-shared-boundaries-and-related-guides" title="Permanent link">&para;</a></h2>
+<p>The CLI and MCP server are interfaces to the same typed decision engine:</p>
+<ul>
+<li>Use <code>choice</code> for a finite label set, <code>score</code> for an ordered rubric, and <code>noul</code> for the
+  probability of true.</li>
+<li>Validate thresholds and presets on representative data; there is no universal adoption
+  threshold.</li>
+<li>Keep irreversible or high-cost actions behind the application's review and fallback policy.</li>
+<li>The MCP server calls <code>Router.predict</code>, so hooks fire when a custom launcher installs them. See
+  <a href="../hooks/">Prediction hooks</a>, <a href="../hooks/lifecycle/">hook lifecycle</a>, and
+  <a href="../hooks/tracing/">Tracing</a> for observability and <code>run_id</code> correlation.</li>
+</ul>
+<p>This guide covers the local CLI and the built-in MCP stdio server. It does not document the
+HTTP API, community wrappers, or an MCP protocol redesign.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../benchmarks/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Benchmarks and known limits">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Benchmarks and known limits
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../compile-and-fast-path/" class="md-footer__link md-footer__link--next" aria-label="Next: compile=True and the TileLang fast path: engineering notes">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                compile=True and the TileLang fast path: engineering notes
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Apache 2.0. Developed by Convai Innovations.
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":["content.code.copy","navigation.footer","navigation.indexes"],"redirect":null,"search":"../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.c04ba553.min.js"></script>
+      
+    
+  </body>
+</html>

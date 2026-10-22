@@ -1,0 +1,2898 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Multilingual, non-autoregressive System 1 decision engine">
+      
+      
+      
+        <link rel="canonical" href="https://thread3d.github.io/laya/evals/">
+      
+      
+        <link rel="prev" href="../compile-and-fast-path/">
+      
+      
+        <link rel="next" href="../fast-backends/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="https://raw.githubusercontent.com/NandhaKishorM/laya/main/assets/logo-mark.svg">
+      <meta name="generator" content="zensical-0.0.65">
+    
+    
+      
+        <title>Evaluation harness - Laya</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.40d3fdbb.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../assets/stylesheets/modern/palette.812a03bb.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#evaluation-harness" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="Laya" class="md-header__button md-logo" aria-label="Laya" data-md-component="logo">
+      
+  <img src="https://raw.githubusercontent.com/NandhaKishorM/laya/main/assets/logo-mark.svg" alt="Laya">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Laya
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Evaluation harness
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/NandhaKishorM/laya" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    NandhaKishorM/laya
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="Laya" class="md-nav__button md-logo" aria-label="Laya" data-md-component="logo">
+      
+  <img src="https://raw.githubusercontent.com/NandhaKishorM/laya/main/assets/logo-mark.svg" alt="Laya">
+
+    </a>
+    Laya
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/NandhaKishorM/laya" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    NandhaKishorM/laya
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Laya
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guides
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+            <label class="md-nav__title" for="__nav_2">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Guides
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../use-cases/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Architectural Patterns and Production Use Cases
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../structured/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Schema-driven decisions
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../hooks/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hooks
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2_3" id="__nav_2_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_3_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_2_3">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Hooks
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API reference
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/lifecycle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Lifecycle
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/errors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Error handling
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/patterns/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Patterns and anti-patterns
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Examples
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/tracing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Tracing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../langchain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LangChain &amp; LangGraph Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llamaindex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LlamaIndex Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crewai/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CrewAI Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agno/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Agno Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Tool &amp; Function Selection
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Benchmarks and known limits
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli-mcp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Command line and MCP server
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../compile-and-fast-path/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  compile=True and the TileLang fast path: engineering notes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Evaluation harness
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Evaluation harness
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#quickstart" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Quickstart
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#comparing-a-student-with-repeated-teacher-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Comparing a student with repeated teacher decisions
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#attributing-shortlist-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Attributing shortlist errors
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#attributing-tournament-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Attributing tournament errors
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evaluating-an-onnx-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Evaluating an ONNX export
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dataset-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Dataset format
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Metrics
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Metrics">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#which-confidence-a-metric-reads" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Which confidence a metric reads
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#coverage-cuts-and-ties" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Coverage cuts and ties
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#batching-and-timing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Batching and timing
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Batching and timing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#grouping-the-rows-inside-a-batch" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Grouping the rows inside a batch
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-abstention-gate-at-a-threshold" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The abstention gate at a threshold
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slices" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Slices
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Slices">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#opt-in-slice-gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Opt-in slice gates
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Run identity
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#baseline-and-ci-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Baseline and CI gate
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#adding-the-real-labelled-set" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Adding the real labelled set
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evidence-inspection" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Evidence inspection
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fast-backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fast backends
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guardrail-limitations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guardrail Limitations
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../http-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  HTTP API
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../questions-and-answers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Questions and answers
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Routing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../staged-adoption/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Staged adoption
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../typescript-sdk/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  TypeScript SDK design
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Deployment
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_3">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Deployment
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Docker quickstart
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../docker-platforms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  ARM64 and DGX Spark containers
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Checkpoint integrity
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_4">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Fine-tuning
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../finetune/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning Laya on your own decisions
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../finetune_browser_agent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning Laya as a browser-agent decision head
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reference
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_5">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Reference
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/agent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Agent
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/router/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Router
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/helpers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Helpers
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/train/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/langchain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LangChain components
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#quickstart" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Quickstart
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#comparing-a-student-with-repeated-teacher-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Comparing a student with repeated teacher decisions
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#attributing-shortlist-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Attributing shortlist errors
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#attributing-tournament-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Attributing tournament errors
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evaluating-an-onnx-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Evaluating an ONNX export
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dataset-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Dataset format
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Metrics
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Metrics">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#which-confidence-a-metric-reads" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Which confidence a metric reads
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#coverage-cuts-and-ties" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Coverage cuts and ties
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#batching-and-timing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Batching and timing
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Batching and timing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#grouping-the-rows-inside-a-batch" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Grouping the rows inside a batch
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-abstention-gate-at-a-threshold" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The abstention gate at a threshold
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slices" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Slices
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Slices">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#opt-in-slice-gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Opt-in slice gates
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Run identity
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#baseline-and-ci-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Baseline and CI gate
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#adding-the-real-labelled-set" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Adding the real labelled set
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evidence-inspection" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Evidence inspection
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="evaluation-harness">Evaluation harness<a class="headerlink" href="#evaluation-harness" title="Permanent link">&para;</a></h1>
+<p><code>laya.evals</code> turns a labelled dataset into a repeatable score, and a baseline into a
+pass/fail gate, so a quality change is a reviewable diff instead of a hand-check.</p>
+<p>The metric math and the dataset parser are pure Python plus numpy and never import torch, so
+they run with no weights. Running a dataset against a checkpoint needs the checkpoint and
+takes its normal load time.</p>
+<h2 id="quickstart">Quickstart<a class="headerlink" href="#quickstart" title="Permanent link">&para;</a></h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># check the format without a model</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>laya-evals<span class="w"> </span>validate<span class="w"> </span>research/evals/fixture.jsonl
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># score a labelled set on one checkpoint, with thresholds and a baseline</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>laya-evals<span class="w"> </span>run<span class="w"> </span>data.jsonl<span class="w"> </span>--model<span class="w"> </span>english<span class="w"> </span>--device<span class="w"> </span>cpu<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">    </span>--min-accuracy<span class="w"> </span><span class="m">0</span>.8<span class="w"> </span>--max-ece<span class="w"> </span><span class="m">0</span>.05<span class="w"> </span>--score-within<span class="w"> </span><span class="m">0</span>.25<span class="w"> </span>--slice<span class="w"> </span>language<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">    </span>--json<span class="w"> </span>report.json<span class="w"> </span>--markdown<span class="w"> </span>report.md
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="c1"># compare a saved report to a baseline</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>laya-evals<span class="w"> </span>compare<span class="w"> </span>report.json<span class="w"> </span>--baseline<span class="w"> </span>baseline.json<span class="w"> </span>--tolerance<span class="w"> </span><span class="nv">choice_accuracy</span><span class="o">=</span><span class="m">0</span>.02
+</span></code></pre></div>
+<p><code>laya eval ...</code> is the same thing through the main CLI, so <code>laya eval validate data.jsonl</code>
+works too.</p>
+<p>Exit codes: <code>0</code> on success, <code>1</code> when a threshold or a baseline tolerance fails, <code>2</code> on a
+usage error. <code>run</code> prints the overall metrics and any requested slices to stdout, and writes
+the full report and a Markdown summary when <code>--json</code> / <code>--markdown</code> are given.</p>
+<h2 id="comparing-a-student-with-repeated-teacher-decisions">Comparing a student with repeated teacher decisions<a class="headerlink" href="#comparing-a-student-with-repeated-teacher-decisions" title="Permanent link">&para;</a></h2>
+<p>When a teacher gives different answers to the same input, a single saved answer
+does not describe its repeatability. <code>compare_agreement</code> compares a student and
+an independent teacher repeat against one fixed reference teacher observation.
+It takes three saved runs and needs no model weights or teacher service:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>laya-evals<span class="w"> </span>agreement<span class="w"> </span>reference.json<span class="w"> </span>repeat.json<span class="w"> </span>student.json<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">    </span>--bootstrap-samples<span class="w"> </span><span class="m">2000</span><span class="w"> </span>--seed<span class="w"> </span><span class="m">0</span><span class="w"> </span>--json<span class="w"> </span>agreement.json
+</span></code></pre></div>
+<p>Without <code>--json</code>, the command writes the report to stdout. <code>--seed</code> controls only
+the bootstrap, not model generation. Success exits <code>0</code>; malformed or misaligned
+runs exit <code>2</code>. This command does not apply a replacement or quality gate.</p>
+<p>Each input is a JSON object with the following shape:</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">"schema"</span><span class="p">:</span><span class="w"> </span><span class="s2">"laya-agreement-run/1"</span><span class="p">,</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">"run_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"teacher-reference"</span><span class="p">,</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span><span class="nt">"provenance"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">    </span><span class="nt">"model"</span><span class="p">:</span><span class="w"> </span><span class="s2">"teacher-checkpoint"</span><span class="p">,</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">    </span><span class="nt">"revision"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">    </span><span class="nt">"settings"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"temperature"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.7</span><span class="p">,</span><span class="w"> </span><span class="nt">"prompt_template"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Choose one label."</span><span class="p">},</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">    </span><span class="nt">"seed"</span><span class="p">:</span><span class="w"> </span><span class="mi">42</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">  </span><span class="p">},</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">  </span><span class="nt">"cases"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">    </span><span class="nt">"id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ticket-001"</span><span class="p">,</span>
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">    </span><span class="nt">"state"</span><span class="p">:</span><span class="w"> </span><span class="s2">"I was charged twice."</span><span class="p">,</span>
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">    </span><span class="nt">"questions"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"route"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="w">      </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"choice"</span><span class="p">,</span>
+</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="w">      </span><span class="nt">"instructions"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Select the team responsible for this request."</span><span class="p">,</span>
+</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="w">      </span><span class="nt">"criteria"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"billing"</span><span class="p">,</span><span class="w"> </span><span class="s2">"support"</span><span class="p">]</span>
+</span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="w">    </span><span class="p">}},</span>
+</span><span id="__span-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="w">    </span><span class="nt">"answers"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"route"</span><span class="p">:</span><span class="w"> </span><span class="s2">"billing"</span><span class="p">},</span>
+</span><span id="__span-2-19"><a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a><span class="w">    </span><span class="nt">"language"</span><span class="p">:</span><span class="w"> </span><span class="s2">"en"</span><span class="p">,</span>
+</span><span id="__span-2-20"><a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a><span class="w">    </span><span class="nt">"tags"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"duplicate-charge"</span><span class="p">]</span>
+</span><span id="__span-2-21"><a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="w">  </span><span class="p">}]</span>
+</span><span id="__span-2-22"><a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a><span class="p">}</span>
+</span></code></pre></div>
+<p>Use a distinct <code>run_id</code> for each observation run. All three runs must contain
+exactly the same unique case IDs, states, question definitions, language and tags;
+row order may differ. A state must be non-null JSON. Question definitions preserve option order and accept
+non-empty criteria dictionaries or lists of distinct string labels. Answers must
+cover every question. A student answer may be <code>null</code> for abstention; teacher
+answers must be labels. Missing cases, unknown labels, non-finite JSON values and
+duplicate JSON object keys in CLI inputs are errors, rather than omitted samples.</p>
+<p>The two teacher runs must declare identical model, revision and settings. Put
+sampling parameters and the prompt template in <code>settings</code>, and repetition seeds
+outside it. Other metadata, such as the dataset revision and generation script,
+is preserved. Record immutable model revisions when available; explicitly use
+<code>null</code> when unknown. The report flags unknown revisions but cannot verify that
+the recorded provenance is accurate or that the teacher calls were independent.
+Input object order is significant, matching Laya's serialization of structured
+states and questions; keep it identical across the runs.</p>
+<p>To run a local student after validating the teacher records:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">laya</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">laya.evals</span><span class="w"> </span><span class="kn">import</span> <span class="n">evaluate_agreement</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">"reference.json"</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">"utf-8"</span><span class="p">)</span> <span class="k">as</span> <span class="n">handle</span><span class="p">:</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">reference</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">handle</span><span class="p">)</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">"repeat.json"</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">"utf-8"</span><span class="p">)</span> <span class="k">as</span> <span class="n">handle</span><span class="p">:</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="n">repeat</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">handle</span><span class="p">)</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="n">revision</span> <span class="o">=</span> <span class="s2">"YOUR_CHECKPOINT_COMMIT"</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="k">with</span> <span class="n">laya</span><span class="o">.</span><span class="n">Router</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">,</span> <span class="n">revision</span><span class="o">=</span><span class="n">revision</span><span class="p">)</span> <span class="k">as</span> <span class="n">runner</span><span class="p">:</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>    <span class="n">report</span> <span class="o">=</span> <span class="n">evaluate_agreement</span><span class="p">(</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>        <span class="n">runner</span><span class="p">,</span> <span class="n">reference</span><span class="p">,</span> <span class="n">repeat</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="s2">"english"</span><span class="p">,</span>
+</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>        <span class="n">student_provenance</span><span class="o">=</span><span class="p">{</span>
+</span><span id="__span-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>            <span class="s2">"model"</span><span class="p">:</span> <span class="s2">"convaiinnovations/laya"</span><span class="p">,</span> <span class="s2">"revision"</span><span class="p">:</span> <span class="n">revision</span><span class="p">,</span>
+</span><span id="__span-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>            <span class="s2">"settings"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"device"</span><span class="p">:</span> <span class="s2">"cpu"</span><span class="p">},</span>
+</span><span id="__span-3-16"><a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>        <span class="p">},</span>
+</span><span id="__span-3-17"><a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a>    <span class="p">)</span>
+</span><span id="__span-3-18"><a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="nb">print</span><span class="p">(</span><span class="n">report</span><span class="p">[</span><span class="s2">"overall"</span><span class="p">])</span>
+</span></code></pre></div>
+<p>The runner uses the same <code>predict(state, questions, model=...)</code> protocol as the
+labelled harness (for example, <code>laya.Router</code>). Inputs are
+copied before inference. Runner failures propagate; invalid or incomplete outputs
+raise <code>EvalError</code>. A choice flagged <code>abstention="abstained"</code> becomes a null
+observation, while its underlying choice must still be a valid label.</p>
+<p>The separate <code>laya-agreement-report/1</code> report records provenance, input hashes,
+individual paired decisions and rates sliced by question ID, language and tag.
+For every decision, teacher repeat agreement is <code>repeat == reference</code>, student
+agreement is <code>student == reference</code>, and the paired delta is their difference.
+All rates use the full decision count: abstentions contribute zero agreement and
+reduce <code>student_coverage</code>. The 95% percentile interval resamples whole case IDs,
+keeping their questions together, and recomputes the ratio of decision sums. It
+is deterministic for fixed inputs, seed and bootstrap count (100–100000). With
+fewer than two cases the interval is <code>null</code>. Slice rates have no intervals.</p>
+<p>Agreement is not accuracy, and teacher repeatability is not a theoretical ceiling.
+Both models can agree on a wrong answer. The interval describes variation across
+the supplied cases with their saved observations; it does not capture additional
+teacher generations. An interval containing zero does not establish equivalence.
+Inspect slices and individual decisions for label skew, and use labelled evals
+for correctness or calibration claims.</p>
+<p><a href="https://github.com/NandhaKishorM/laya/blob/main/examples/evals/teacher_agreement.py"><code>examples/evals/teacher_agreement.py</code></a>
+replays two published teacher observations from a pinned public dataset against
+a local Laya checkpoint, saving the three runs and their report. Its small fixed
+sample demonstrates the workflow, not deployment readiness.</p>
+<h2 id="attributing-shortlist-errors">Attributing shortlist errors<a class="headerlink" href="#attributing-shortlist-errors" title="Permanent link">&para;</a></h2>
+<p>For a labelled high-cardinality choice set, <code>laya.evals_shortlist.evaluate_shortlist</code>
+uses the existing <code>predict_shortlist</code> path and the regular evaluation harness. It
+answers two separate questions: did retrieval keep the gold label, and did Laya
+choose it when it was present? This is an opt-in Python API for choice labels;
+ordinary <code>laya-evals run</code> reports are unchanged.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">laya</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">laya.evals</span><span class="w"> </span><span class="kn">import</span> <span class="n">Dataset</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">laya.evals_shortlist</span><span class="w"> </span><span class="kn">import</span> <span class="n">evaluate_shortlist</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">laya.shortlist</span><span class="w"> </span><span class="kn">import</span> <span class="n">embed_fn_from_agent</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">laya</span><span class="o">.</span><span class="n">load</span><span class="p">()</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="n">dataset_path</span> <span class="o">=</span> <span class="s2">"intents.jsonl"</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">Dataset</span><span class="o">.</span><span class="n">from_jsonl</span><span class="p">(</span><span class="n">dataset_path</span><span class="p">)</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="n">report</span> <span class="o">=</span> <span class="n">evaluate_shortlist</span><span class="p">(</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>    <span class="n">agent</span><span class="p">,</span> <span class="n">dataset</span><span class="p">,</span> <span class="n">embed_fn_from_agent</span><span class="p">(</span><span class="n">agent</span><span class="p">),</span> <span class="n">k</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span>
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    <span class="n">checkpoint_id</span><span class="o">=</span><span class="s2">"my-checkpoint@revision"</span><span class="p">,</span> <span class="n">embedder_id</span><span class="o">=</span><span class="s2">"my-encoder@revision"</span><span class="p">,</span>
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>    <span class="n">dataset_path</span><span class="o">=</span><span class="n">dataset_path</span><span class="p">,</span>
+</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="p">)</span>
+</span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="nb">print</span><span class="p">(</span><span class="n">report</span><span class="o">.</span><span class="n">overall</span><span class="p">)</span>
+</span><span id="__span-4-15"><a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="nb">print</span><span class="p">(</span><span class="n">report</span><span class="o">.</span><span class="n">cases</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"shortlist_status"</span><span class="p">])</span>
+</span></code></pre></div>
+<p>Use the same embedding function and checkpoint as the deployment being measured.
+The two identifiers are supplied by the caller and should name immutable revisions;
+the report cannot infer the weights behind an arbitrary callable. <code>dataset_path</code>
+records the file's SHA256 alongside the existing question fingerprint. Each case
+keeps the actual shortlist labels and one of <code>correct</code>, <code>retrieval_miss</code>, or
+<code>decision_miss</code>. <code>shortlist_recall_at_k</code> is the fraction of gold labels retained.
+<code>shortlist_accuracy_on_recalled</code> is correct decisions divided by retained cases;
+it is omitted when none were retained. The existing <code>choice_accuracy</code> remains
+end-to-end accuracy over all cases, including retrieval misses. The shortlist
+metrics appear in the same language, model, question and tag slices. Request
+latency includes embedding and the decision call; the report does not isolate
+stage timings. With <code>k &gt;= n</code>, the original question passes through and retrieval
+recall is 1 without calling the embedder.</p>
+<p>This does not reproduce the BANKING77 results in <a href="https://github.com/NandhaKishorM/laya/issues/102">issue #102</a>:
+those numbers depend on its dataset, checkpoint and bi-encoder. This API makes the
+same kind of diagnosis repeatable on a caller's own labelled set.</p>
+<h2 id="attributing-tournament-errors">Attributing tournament errors<a class="headerlink" href="#attributing-tournament-errors" title="Permanent link">&para;</a></h2>
+<p>For a labelled many-option choice set, <code>laya.evals_tournament.evaluate_tournament</code>
+runs the existing <code>predict_tournament</code> path and keeps its finalist metadata in the
+regular evaluation report:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">laya</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">laya.evals</span><span class="w"> </span><span class="kn">import</span> <span class="n">Dataset</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">laya.evals_tournament</span><span class="w"> </span><span class="kn">import</span> <span class="n">evaluate_tournament</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">laya</span><span class="o">.</span><span class="n">load</span><span class="p">()</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="n">dataset_path</span> <span class="o">=</span> <span class="s2">"intents.jsonl"</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="n">report</span> <span class="o">=</span> <span class="n">evaluate_tournament</span><span class="p">(</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>    <span class="n">agent</span><span class="p">,</span> <span class="n">Dataset</span><span class="o">.</span><span class="n">from_jsonl</span><span class="p">(</span><span class="n">dataset_path</span><span class="p">),</span> <span class="n">group_size</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>    <span class="n">checkpoint_id</span><span class="o">=</span><span class="s2">"my-checkpoint@revision"</span><span class="p">,</span> <span class="n">dataset_path</span><span class="o">=</span><span class="n">dataset_path</span><span class="p">,</span>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="p">)</span>
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="nb">print</span><span class="p">(</span><span class="n">report</span><span class="o">.</span><span class="n">overall</span><span class="p">)</span>
+</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="nb">print</span><span class="p">(</span><span class="n">report</span><span class="o">.</span><span class="n">cases</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"tournament_status"</span><span class="p">])</span>
+</span></code></pre></div>
+<p>Each choice case records its finalists and number of elimination rounds, and is
+classified as <code>correct</code>, <code>elimination_miss</code> (the gold label did not reach the
+final call), or <code>final_choice_miss</code> (it survived, but the final call chose another
+label). <code>tournament_survival_rate</code> is the fraction of all choices whose gold label
+reached the final call; choices needing no elimination are included. Conditional
+<code>tournament_accuracy_on_survivors</code> is omitted when none survived. Ordinary
+<code>choice_accuracy</code> remains end-to-end accuracy, and all three metrics appear in the
+existing language, model, question and tag slices. Request latency includes every
+tournament round; the report does not time rounds separately.</p>
+<p>Use the checkpoint and group size you intend to deploy. The caller supplies the
+checkpoint identifier, ideally an immutable revision; the report cannot inspect
+the weights. Passing <code>dataset_path</code> records a SHA256 of the JSONL bytes. The
+<code>laya-tournament-evals-report/1</code> schema and group size prevent a baseline gate
+from comparing different strategies as though they were the same measurement.
+Compare group sizes side by side on development data, then evaluate the chosen
+size once on held-out data. The runtime's final probabilities and confidence are
+over finalists, not over the original labels. The metadata identifies whether
+elimination lost the gold label, but not which round lost it.</p>
+<h2 id="evaluating-an-onnx-export">Evaluating an ONNX export<a class="headerlink" href="#evaluating-an-onnx-export" title="Permanent link">&para;</a></h2>
+<p><code>run --onnx PATH</code> scores an exported ONNX model through <code>ONNXAgent</code> instead of the torch
+Router, so an ONNX deployment (including an INT8 copy from <code>scripts/export_onnx.py --quantize</code>)
+gets gated by the same thresholds and baselines as the torch path:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>python<span class="w"> </span>scripts/export_onnx.py<span class="w"> </span>--model<span class="w"> </span>convaiinnovations/laya<span class="w"> </span>--output<span class="w"> </span>laya.onnx<span class="w"> </span>--quantize
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>laya-evals<span class="w"> </span>run<span class="w"> </span>data.jsonl<span class="w"> </span>--onnx<span class="w"> </span>laya.int8.onnx<span class="w"> </span>--max-ece<span class="w"> </span><span class="m">0</span>.05
+</span></code></pre></div>
+<p>The export <strong>verifies itself before it exits</strong>: it runs the graph it just wrote in ONNX Runtime at
+batch 1, 2 and 3 and compares against PyTorch, and <code>scripts/export_onnx.py --quantize</code> does the same
+for the INT8 copy at a looser tolerance. A graph that cannot serve more than one question fails the
+export instead of being written and deployed. That needs <code>onnxruntime</code> (<code>pip install laya[onnx]</code>);
+<code>scripts/export_onnx.py --no-verify</code> skips it if you only have the exporter installed.</p>
+<p>Marker width is dynamic in the exported graph for two or more markers (a graph traced at 2 runs at
+3, 4, 5 and 8), but exactly one marker is baked out by a Python branch in the model, so a
+one-criterion <code>score</code> question is not servable from ONNX when every question in the batch has one
+criterion; use the torch path for those. There is no need to re-export per criteria count.</p>
+<p><code>--model</code> names the checkpoint the export came from — a Hub id or local path, not a Router
+short name like <code>english</code>, since there is no Router on this path (default
+<code>convaiinnovations/laya</code>). Its config and tokenizer are loaded from there. The agent serves one checkpoint, so a dataset row
+whose <code>model</code> field names a different one fails with a clear error rather than being silently
+answered by the wrong model; <code>--device</code> does not apply. <code>--batch-size</code> uses the agent's batch
+API when it has one and falls back to one call per state otherwise; <code>--sort-by-length</code> is forwarded
+to that batch API; the per-state fallback has no group to reorder. Pass <code>--calibration PATH</code>
+to load a fitted calibration map onto <code>ONNXAgent</code>, so calibration gates such as <code>--max-ece</code>
+evaluate against calibrated probabilities. The report's <code>config</code> block records the <code>onnx</code> path
+and <code>calibration</code> path (when set).</p>
+<p>Measured on <code>research/evals/fixture.jsonl</code> (12 labelled rows, English checkpoint, CPU):</p>
+<table>
+<thead>
+<tr>
+<th>runner</th>
+<th>choice_acc</th>
+<th>noul_acc</th>
+<th>score_mae</th>
+<th>ece</th>
+<th>mean_conf</th>
+<th>p50 ms</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>torch Router</td>
+<td>0.75</td>
+<td>1.00</td>
+<td>1.3418</td>
+<td>0.1596</td>
+<td>0.7304</td>
+<td>116.8</td>
+</tr>
+<tr>
+<td><code>--onnx</code> fp32</td>
+<td>0.75</td>
+<td>1.00</td>
+<td>1.3418</td>
+<td>0.1596</td>
+<td>0.7304</td>
+<td>66.3</td>
+</tr>
+<tr>
+<td><code>--onnx</code> int8</td>
+<td>0.75</td>
+<td>1.00</td>
+<td>1.3512</td>
+<td>0.1658</td>
+<td>0.7304</td>
+<td>46.3</td>
+</tr>
+</tbody>
+</table>
+<p>The fp32 export reproduces the torch numbers exactly, and the quantized copy moves <code>score_mae</code>
+by 0.009 and <code>ece</code> by 0.006 — the kind of drift <code>compare --tolerance</code> is meant to gate.</p>
+<h2 id="dataset-format">Dataset format<a class="headerlink" href="#dataset-format" title="Permanent link">&para;</a></h2>
+<p>One JSON object per line (JSONL). Blank lines and lines starting with <code>#</code> are ignored.</p>
+<table>
+<thead>
+<tr>
+<th>field</th>
+<th>required</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>state</code></td>
+<td>yes</td>
+<td>text, email, ticket or JSON document to decide on</td>
+</tr>
+<tr>
+<td><code>questions</code></td>
+<td>yes</td>
+<td>a Laya question dict, exactly as <code>Router.predict</code> accepts</td>
+</tr>
+<tr>
+<td><code>expected</code></td>
+<td>yes</td>
+<td>ground truth keyed by question id: a label for <code>choice</code>, a number for <code>score</code>, <code>true</code>/<code>false</code> for <code>noul</code></td>
+</tr>
+<tr>
+<td><code>tags</code></td>
+<td>no</td>
+<td>strings to slice by</td>
+</tr>
+<tr>
+<td><code>language</code></td>
+<td>no</td>
+<td>a code to slice by</td>
+</tr>
+<tr>
+<td><code>model</code></td>
+<td>no</td>
+<td>force a checkpoint for this row; <code>--model</code> overrides it. A row that forces nothing is labelled with whatever checkpoint the <code>Router</code> answered with</td>
+</tr>
+</tbody>
+</table>
+<p><code>research/evals/dataset.template.jsonl</code> has a commented example.</p>
+<p>A row built in Python with <code>Example(...)</code> is held to the same three rules as a JSONL row: <code>Dataset</code>
+refuses one whose <code>questions</code> or <code>expected</code> is not an object, or whose <code>expected</code> names a question
+<code>questions</code> does not carry, and quotes the row's index in the message. Both routes fail as
+<code>EvalError</code> before the first model call, so a mistake in a dataset never arrives as a verdict about
+the runner.</p>
+<h2 id="metrics">Metrics<a class="headerlink" href="#metrics" title="Permanent link">&para;</a></h2>
+<p>Each metric is computed per answer where it applies and aggregated over the dataset:</p>
+<table>
+<thead>
+<tr>
+<th>metric</th>
+<th>applies to</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>choice_accuracy</code></td>
+<td><code>choice</code></td>
+<td>fraction whose chosen label matches</td>
+</tr>
+<tr>
+<td><code>noul_accuracy</code></td>
+<td><code>noul</code></td>
+<td>fraction whose boolean (probability &gt;= 0.5) matches</td>
+</tr>
+<tr>
+<td><code>score_mae</code></td>
+<td><code>score</code></td>
+<td>mean absolute error</td>
+</tr>
+<tr>
+<td><code>score_within_&lt;tol&gt;</code></td>
+<td><code>score</code></td>
+<td>fraction within an absolute tolerance</td>
+</tr>
+<tr>
+<td><code>ece</code></td>
+<td>any answer with a confidence and a known label</td>
+<td>expected calibration error, 15 bins, computed on the column <code>laya.evals._answer_confidence</code> reads -- <code>answer["answer_confidence"]</code> where the answer carries it, and a fallback where it does not; see <a href="#which-confidence-a-metric-reads">which confidence a metric reads</a></td>
+</tr>
+<tr>
+<td><code>brier</code></td>
+<td>any answer with a confidence and a known label</td>
+<td>Brier score of confidence as P(correct), <code>mean((confidence - correct)**2)</code>; lower is better</td>
+</tr>
+<tr>
+<td><code>aurc</code></td>
+<td>any answer with a confidence and a known label</td>
+<td>area under the risk--coverage curve: one risk value per distinct confidence level, each weighted by the answers that level spans; lower is better, and rewards a confidence that <em>ranks</em> right from wrong rather than just being calibrated</td>
+</tr>
+<tr>
+<td><code>selective_accuracy@50</code>, <code>selective_accuracy@80</code></td>
+<td>any answer with a confidence and a known label</td>
+<td>accuracy over the answers a confidence threshold at the 50% / 80% coverage point accepts -- what abstaining on the least-confident tail buys. A threshold cannot split a group of equal confidences, so this can cover more than the named fraction; see <a href="#coverage-cuts-and-ties">coverage cuts</a></td>
+</tr>
+<tr>
+<td><code>mean_confidence</code></td>
+<td>any answer with a confidence</td>
+<td>mean of the same column -- <code>answer["answer_confidence"]</code> where the answer carries it</td>
+</tr>
+<tr>
+<td><code>latency_p50_ms</code>, <code>latency_p95_ms</code></td>
+<td>per request</td>
+<td>wall time each request waited, informational -- see <a href="#batching-and-timing">batching</a></td>
+</tr>
+<tr>
+<td><code>cost_per_decision_p50_ms</code>, <code>cost_per_decision_p95_ms</code></td>
+<td>per decision</td>
+<td>a call's wall time divided by the rows it carried, informational</td>
+</tr>
+</tbody>
+</table>
+<p>A "known label" is one <code>_correct</code> can judge: a <code>choice</code> answer against a string label, or a <code>noul</code>
+answer against a boolean. A <code>score</code> answer has no <code>correct</code> value at any tolerance, so it is left out
+of all five of those metrics -- <code>ece</code> included, because <code>ece</code>, <code>brier</code>, <code>aurc</code> and both
+<code>selective_accuracy@*</code> read one and the same <code>(confidence, correct)</code> column. A <code>score</code>-only dataset
+therefore publishes no <code>ece</code> however confident its answers are, and <code>--max-ece</code> over it fails with
+<code>metric 'ece' is not in the report</code> rather than passing on a number that was never computed.</p>
+<h3 id="which-confidence-a-metric-reads">Which confidence a metric reads<a class="headerlink" href="#which-confidence-a-metric-reads" title="Permanent link">&para;</a></h3>
+<p>Every row above that takes a confidence (<code>ece</code>, <code>brier</code>, <code>aurc</code>, both <code>selective_accuracy@*</code>,
+<code>mean_confidence</code>) gets its column from <code>laya.evals._answer_confidence</code>, which prefers
+<code>answer["answer_confidence"]</code> -- the probability of the answer being reported, the quantity temperature
+scaling fits. It is not a claim that the number is right as shipped: both base checkpoints are
+over-confident and <code>laya-multilingual</code> ships no fitted temperatures at all -- see the README's
+<a href="https://github.com/NandhaKishorM/laya#calibration">Calibration</a> -- which is what <code>ece</code> measures
+rather than assumes.</p>
+<p>An answer that carries no <code>answer_confidence</code> falls through, in order, to <code>confidence</code>, then
+<code>max(p, 1 - p)</code> for a <code>noul</code>, then <code>max(probabilities)</code>. Those are different quantities. On <code>choice</code>
+and <code>score</code> the <code>confidence</code> field is normalized entropy, which moves with the option count (#394)
+rather than with how right the answer is; <code>max(probabilities)</code> is the mass on the top option, equal to
+the reported answer's probability only when the reported answer is the argmax.</p>
+<p>The shape that actually arrives without the field is the strict Jev wire contract: <code>LAYA_JEV_STRICT</code>
+drops <code>answer_confidence</code> from every answer (<code>laya/serve.py::_project_jev_strict</code>, and the flag's row
+in <a href="../http-api/">the HTTP API page</a>), so a report run over recorded strict responses calibrates the
+entropy number. Measured on three labelled rows -- <code>choice</code> carrying <code>answer_confidence</code> 0.95 against
+an entropy <code>confidence</code> of 0.7887, <code>score</code> 0.90 against 0.6410, <code>noul</code> 0.87 -- the same dataset scores
+<code>mean_confidence</code> 0.9067 and <code>ece</code> 0.0900 over the full payloads and 0.7666 and 0.1707 over the strict
+projection. Two reports are comparable only when their answers carry the same field;
+<code>tests/test_evals.py</code> pins both paths so a change to that fallback order has to be made deliberately.</p>
+<h3 id="coverage-cuts-and-ties">Coverage cuts and ties<a class="headerlink" href="#coverage-cuts-and-ties" title="Permanent link">&para;</a></h3>
+<p>Both coverage metrics cut on a confidence <strong>threshold</strong>, and a threshold accepts every answer at its
+own confidence. So a cut never splits a group of answers that share one: when <code>coverage * n</code> falls
+inside such a group, every member of the group is accepted. The number of answers behind the figure
+is therefore the group's upper edge rather than the named fraction -- <code>selective_accuracy@50</code> over a
+slice whose confidences are all equal is that slice's own accuracy, not the better half of it. The
+count the gate prints (<code>n=</code> in a rule's failure message) is the slice's size, not the accepted size,
+so a very wide group is not visible from the message alone.</p>
+<p>Ties are the normal case rather than a corner: a fitted temperature can leave a bucket reporting a
+point mass, which <code>laya.common.answer_confidence</code> records of the shipped <code>choice:11+</code>, and a real
+checkpoint produced a six-row group at exactly 1.0 out of twelve answers. Cutting at a row index
+instead made both metrics depend on the order the dataset arrived in -- the same rows, shuffled,
+moved <code>selective_accuracy@50</code> between 0.000 and 1.000.</p>
+<p><code>aurc</code> integrates one risk value per distinct level, weighted by the answers that level spans, so it
+remains an area under the risk--coverage curve rather than an average of unevenly sized points.</p>
+<p>Two consequences worth planning for:</p>
+<ul>
+<li><strong>A number can move in either direction, by more than a reordering could.</strong> Where a group
+  straddles the cut, the threshold reading differs from every row-index reading of the same data:
+  measured over 400,001 tie-shaped datasets, up to 0.500 for <code>selective_accuracy@50</code> and 0.351
+  for <code>aurc</code>. On the twelve-answer shape above -- six correct, all at confidence 1.0 -- <code>aurc</code> moves
+  0.327 (0.173 to 0.500). A gate that was passing may fail, and one that was failing may pass; the
+  previous verdict depended on row order, including for an absolute <code>min</code> or <code>max</code> limit, which is
+  refused by nothing because it reads a single run.</li>
+<li><strong>Regenerate committed baselines.</strong> <code>config.coverage_metric_definition</code> records which definition
+  produced a report. Comparing a coverage metric across two definitions is refused on <strong>both</strong> the
+  gates that subtract a baseline -- <code>--baseline --tolerance</code> (<code>EvalReport.compare</code>) and a relative
+  rule (<code>max_drop</code> / <code>max_increase</code>) under <code>--gate-policy</code> -- and on <strong>either</strong> side being stale,
+  not just the baseline: a candidate produced by an older <code>laya</code> carries a row-order artifact that
+  can read <em>better</em> than the truth, so gating it against a correctly regenerated baseline would
+  pass a regression that the correctly scored report fails. Without that refusal a
+  stale baseline hides a real regression: a slice recorded at 0.033 under the old definition reads
+  0.517 under this one, so a candidate that genuinely dropped 0.217 would clear a <code>max_drop</code> of
+  0.05. <code>ece</code> and <code>brier</code> do not cut and stay comparable.</li>
+</ul>
+<p>With no ties in the data there is one level per answer, and both metrics are exactly what they have
+always been -- bit-identical, not merely close.</p>
+<p>Add <code>ScoreWithin(0.25)</code> to the evaluator list for a tolerance metric; the default evaluator set is
+<code>choice_accuracy</code>, <code>noul_accuracy</code>, <code>score_mae</code> and <code>mean_confidence</code>. The confidence metrics are not
+evaluators and are not opted into: <code>ece</code>, <code>brier</code>, <code>aurc</code>, <code>selective_accuracy@50</code> and
+<code>selective_accuracy@80</code> are all computed on every run that has at least one answer carrying both a
+confidence and a known label, whatever evaluator list it was given. From the CLI the
+same thing is one flag: <code>laya-evals run data.jsonl --score-within 0.25</code> reports <code>score_within_0.25</code>
+beside the defaults, and the flag repeats, so <code>--score-within 0.25 --score-within 0.5</code> reports both.</p>
+<p>A tolerance metric needs a <code>score</code> answer with a numeric label, so on a dataset without one it has
+no value: <code>run</code> names the metric it could not compute instead of publishing a silent zero, and a
+<code>--min</code> / <code>--max</code> gate naming that metric fails as missing. The tolerances a run was asked for are
+recorded in the report's <code>config</code> block, so a reviewed baseline says which columns it expects.</p>
+<h2 id="batching-and-timing">Batching and timing<a class="headerlink" href="#batching-and-timing" title="Permanent link">&para;</a></h2>
+<p><code>--batch-size N</code> scores up to N consecutive rows that share a checkpoint and a question schema in
+one call. Both timing metrics come from the same measurements and answer different questions:
+every row of a batch returns when the batch does, so its <code>latency</code> is the whole call, while its
+<code>cost_per_decision</code> is <code>1/N</code> of it. Batching therefore <em>raises</em> <code>latency_*</code> and <em>lowers</em>
+<code>cost_per_decision_*</code> on an unchanged set of decisions, and <code>--max latency_p50_ms=...</code> asks whether
+requests were served fast, not whether the run was cheap. With no <code>--batch-size</code> the two agree.</p>
+<p><code>compare</code> ignores any <code>*_ms</code> metric unless a tolerance names it, so these never fail a baseline on
+timing noise. What the harness actually did -- the batch size asked for, the runner shape it
+resolved to, how many rows shared a call, and the largest chunk -- is recorded in the report's
+<code>config.timing</code>, because the flag alone does not say whether anything was batched. Those counters
+record the calls issued, not the calls that returned: with <code>laya-evals run --on-error skip</code>, a
+chunk whose call raised still counts in <code>rows_grouped</code> and <code>max_chunk</code>, next to its entries in
+<code>config.errored</code>. The default is <code>--on-error fail</code>, which re-raises instead of publishing a report
+whose metrics cover only the calls that came back. The two <code>*_ms</code> metrics count only the calls that
+returned, so a failed call never contributes a latency it did not measure.</p>
+<h3 id="grouping-the-rows-inside-a-batch">Grouping the rows inside a batch<a class="headerlink" href="#grouping-the-rows-inside-a-batch" title="Permanent link">&para;</a></h3>
+<p><code>--sort-by-length</code> groups similarly sized rows into the same forward pass, so each pass pads to a
+shorter maximum instead of to the longest row in it. It is the shape of the calls, not their
+answers: results come back in the same order and score identically, which is why <code>research/</code> can
+report 2.15x over 10,000 tickets with no decision changing.</p>
+<p>There has to be more than one pass to reorder, so it takes effect only with a <code>--batch-size N</code>
+below the number of rows the run groups. <code>config.timing</code> keeps the two claims apart:
+<code>sort_by_length</code> is what the command line said, <code>sort_by_length_sent</code> is what reached the runner.
+A run with no <code>--batch-size</code> asks for something that cannot happen, and says so with
+<code>sent: false</code>; a runner whose <code>predict_batch</code> predates the knob is scored unsorted rather than
+raising <code>TypeError</code> halfway through a long run.</p>
+<h3 id="the-abstention-gate-at-a-threshold">The abstention gate at a threshold<a class="headerlink" href="#the-abstention-gate-at-a-threshold" title="Permanent link">&para;</a></h3>
+<p><code>--min-confidence T</code> forwards core's opt-in abstention threshold (#361) to every call the run
+makes, so <code>Router</code> and <code>ONNXAgent</code> mark answers whose <code>answer_confidence</code> falls below <code>T</code> with
+<code>low_confidence: True</code> and <code>abstention: "abstained"</code> before the harness sees them. The gate is a
+<em>reporting</em> control, not a scoring one: <code>apply_confidence_gate</code> leaves
+<code>answer["choice"] / ["noul"] / ["score"]</code> as the raw argmax and <code>_aggregate</code> reads only those
+keys, so every accuracy, calibration and coverage number -- <code>ece</code>, <code>brier</code>, <code>aurc</code>,
+<code>selective_accuracy@NN</code> -- is the same at <code>T=0</code> and <code>T=0.7</code>. What changes is the report's
+<code>config.timing.min_confidence</code> and <code>config.timing.min_confidence_sent</code>, and any caller who acts
+on the flag downstream of the harness.</p>
+<p>The accepted range is core's <code>laya.confidence.check_min_confidence</code> -- <code>[0.0, 1.0]</code>, finite, not
+a bool -- rather than a copy here, so a value the gate itself would reject fails as a usage error
+(exit 2) before any checkpoint loads. <code>0.0</code> is a legal ask: it is the control arm for an
+abstention sweep and the threshold at which <code>flag_low_confidence</code> marks no answer, so a check that
+dropped it would hide which arm actually ran.</p>
+<p>A runner whose <code>predict</code> or (for a batched run) whose <code>predict_batch</code> predates the gate is
+<strong>refused with a named <code>EvalError</code></strong>, not run without the threshold. Silently dropping it would
+let <code>report.config["timing"]["min_confidence"]</code> name a threshold the harness never applied -- the
+class of lie this harness exists to prevent, even though the metric numbers stay identical.
+<code>config.timing</code> records both the ask and the fact: <code>min_confidence</code> is the threshold that was
+requested, <code>min_confidence_sent</code> says whether any call this run made actually carried it.</p>
+<h2 id="slices">Slices<a class="headerlink" href="#slices" title="Permanent link">&para;</a></h2>
+<p><code>compare</code> and <code>run</code> report overall numbers and, for <code>--slice language|model|qid|tag</code>, the same
+metrics per slice value, so a regression in one language or one question is visible without
+reading the aggregate. The <code>model</code> slice holds the checkpoint that answered each row: the
+<code>Router</code>'s own choice per request, or the runner's <code>model</code> for a runner that does not route.</p>
+<h3 id="opt-in-slice-gates">Opt-in slice gates<a class="headerlink" href="#opt-in-slice-gates" title="Permanent link">&para;</a></h3>
+<p>The overall baseline gate can pass while a smaller language or question slice regresses. To make
+one reviewed slice a CI requirement, save a JSON policy such as <code>gates.json</code>:</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="p">{</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span><span class="nt">"rules"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">    </span><span class="p">{</span><span class="nt">"slice"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"language"</span><span class="p">:</span><span class="w"> </span><span class="s2">"zh"</span><span class="p">},</span><span class="w"> </span><span class="nt">"metric"</span><span class="p">:</span><span class="w"> </span><span class="s2">"choice_accuracy"</span><span class="p">,</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">     </span><span class="nt">"min_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">50</span><span class="p">,</span><span class="w"> </span><span class="nt">"max_drop"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.05</span><span class="p">},</span>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">    </span><span class="p">{</span><span class="nt">"slice"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"qid"</span><span class="p">:</span><span class="w"> </span><span class="s2">"intent"</span><span class="p">},</span><span class="w"> </span><span class="nt">"metric"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ece"</span><span class="p">,</span>
+</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">     </span><span class="nt">"min_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">50</span><span class="p">,</span><span class="w"> </span><span class="nt">"max"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.10</span><span class="p">}</span>
+</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="w">  </span><span class="p">]</span>
+</span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="p">}</span>
+</span></code></pre></div>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>laya-evals<span class="w"> </span>run<span class="w"> </span>data.jsonl<span class="w"> </span>--baseline<span class="w"> </span>baseline.json<span class="w"> </span>--tolerance<span class="w"> </span><span class="nv">choice_accuracy</span><span class="o">=</span><span class="m">0</span>.02<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">    </span>--gate-policy<span class="w"> </span>gates.json<span class="w"> </span>--json<span class="w"> </span>report.json
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>laya-evals<span class="w"> </span>compare<span class="w"> </span>report.json<span class="w"> </span>--baseline<span class="w"> </span>baseline.json<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">    </span>--tolerance<span class="w"> </span><span class="nv">choice_accuracy</span><span class="o">=</span><span class="m">0</span>.02<span class="w"> </span>--gate-policy<span class="w"> </span>gates.json
+</span></code></pre></div>
+<p>Each rule selects exactly one <code>language</code>, <code>model</code>, <code>qid</code>, or <code>tag</code> value and names the metric
+exactly as it appears in the slice report. It has a positive <code>min_count</code> and exactly one limit:
+<code>min</code> or <code>max</code> checks the candidate value; <code>max_drop</code> permits at most that decrease from the
+baseline; <code>max_increase</code> permits at most that increase. The latter two require <code>--baseline</code>.
+The count is the number of scored answers for that metric in the selected slice, in <strong>both</strong>
+reports for a relative rule. For <code>ece</code>, it is the number of answers with a finite confidence and
+boolean <code>correct</code> value. A missing slice or metric, too few scored answers, or skipped/errored
+cases fails the opted-in gate. Relative rules also require both reports to carry matching run
+identities, so missing evidence cannot appear as a pass. A measured regression reports the slice,
+metric, counts, values, and limit. Invalid policy syntax exits 2 before a checkpoint loads; a
+quality failure exits 1. The policy is recorded in <code>config.gate_policy</code> of a <code>run --json</code> report.
+<code>compare --gate-policy</code> applies the policy supplied on that command line to the saved measurements.
+If it differs from the report's recorded policy, <code>compare</code> says so; an explicit re-check under a
+new policy does not change the policy under which the original run was made.</p>
+<p>The regular overall comparison still applies, including its tolerance and legacy-baseline
+behavior. Without <code>--gate-policy</code>, slice reporting and comparison behave as before.</p>
+<h2 id="run-identity">Run identity<a class="headerlink" href="#run-identity" title="Permanent link">&para;</a></h2>
+<p><code>run</code> records what it measured in the report's <code>config</code> block, so the artifact a reviewer reads
+is reviewable on its own:</p>
+<table>
+<thead>
+<tr>
+<th>key</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>schema</code></td>
+<td>the report shape, <code>laya-evals-report/1</code>, so a consumer can refuse one it cannot read</td>
+</tr>
+<tr>
+<td><code>dataset</code></td>
+<td>the path as typed -- a name, not a hash</td>
+</tr>
+<tr>
+<td><code>dataset_sha256</code></td>
+<td>the sha256 of the dataset bytes that were parsed</td>
+</tr>
+<tr>
+<td><code>questions_sha256</code></td>
+<td>a fingerprint of the question schema: every question's id, type, <code>instructions</code>, <code>labels</code> and <code>criteria</code>, plus <code>option_order</code> on any row that names it, over the whole dataset</td>
+</tr>
+<tr>
+<td><code>laya_version</code></td>
+<td>the <code>laya</code> that computed the numbers</td>
+</tr>
+<tr>
+<td><code>coverage_metric_definition</code></td>
+<td>which definition of <code>aurc</code> / <code>selective_accuracy@*</code> produced this report (see <a href="#coverage-cuts-and-ties">coverage cuts</a>). A relative gate rule on either refuses a baseline recorded under a different one, rather than subtracting numbers that do not mean the same thing</td>
+</tr>
+<tr>
+<td><code>thresholds</code></td>
+<td>the gate this run applied: <code>min</code>, <code>max</code> and <code>baseline_tolerance</code></td>
+</tr>
+<tr>
+<td><code>gate_policy</code></td>
+<td>the optional slice gate policy applied by <code>run --gate-policy</code></td>
+</tr>
+<tr>
+<td><code>revisions</code></td>
+<td>the commit each checkpoint that answered was loaded from: a torch run reports one entry per checkpoint it loaded, an <code>--onnx</code> run one entry keyed by the <code>--model</code> value that names the export's source, and a checkpoint given as a local directory is recorded as <code>null</code> (see <a href="#baseline-and-ci-gate">below</a>)</td>
+</tr>
+</tbody>
+</table>
+<p><code>dataset</code> is a path, and a path is not an identity: a dataset can be edited in place, moved, or
+refetched under the same name, and a CI cache can hand two runs the same filename and different
+bytes. <code>questions_sha256</code> covers what was <em>asked</em> rather than how many rows there were, so adding
+states to an unchanged question set leaves the fingerprint alone -- <code>dataset_sha256</code> still moves,
+and adding a row is a change to the data, not to the question.</p>
+<p>It covers <code>instructions</code> too, because the instruction text is the prompt. <code>build_sequence</code> renders
+<code>"&lt;type&gt; question: &lt;instructions&gt;"</code> into the tokenized head, <code>Agent</code> refuses a question without one
+("add the text the model should answer"), and Laya's own question identity already counts it:
+<code>Router._question_schema</code> and this harness's batch grouping both key on the whole questions dict,
+and <code>tests/test_router_batch.py</code> pins that rewording <code>instructions</code> alone moves a row into its own
+batch group. So does a reworded instruction still compare equal to a baseline? No -- and that is
+the point. "Judge whether a refund is justified" and "Be conservative and only approve explicit
+refund requests" ask different questions, and the metric gate can only notice when the difference
+happens to move a number further than the tolerance you named. Naming a <code>choice</code> option is the
+same argument: <code>criteria</code> is the decision space, and the metamorphic checks in
+<code>research/eval/metamorphic.py</code> exist because renaming a label flips answers.</p>
+<p>Nothing about the instruction text is normalized except the one step the engine itself applies: a
+non-string <code>instructions</code> is hashed as <code>json.dumps(ins, ensure_ascii=False)</code>, matching
+<code>Agent._to_internal</code>. So whitespace and wording both count, and a rewording that a human considers
+a copy edit is treated as a new experiment. That is the honest default -- the alternative is a
+similarity heuristic standing between a run and its baseline, and no evaluation system in common
+use has one.</p>
+<p><code>option_order</code> is the one field hashed conditionally, and only when a row names it. It is a
+caller-supplied key: <code>laya/mcp/server.py</code> advertises it, <code>Agent._check_question</code> and
+<code>laya/mcp/tools.py::_check_option_order</code> validate it as a permutation of the option indices, and
+<code>laya/common.py::build_sequence</code> and <code>unpermute_probs</code> read it to place each answer slot, so a row
+that permutes its options asks a different question and two such datasets must not share a
+fingerprint. <code>research/eval/metamorphic.py::permute_options</code> measures the same sensitivity from the
+other side -- it exists to shuffle the option list and check that the answers follow. Hashing an
+absent key as <code>null</code> would move the digest of every dataset that never uses the field, so an absent
+key stays out of the hash and such a dataset keeps the fingerprint its committed baseline already
+carries.</p>
+<p>Nothing time-bearing is recorded, so a report is still byte-reproducible for a fixed runner.</p>
+<p><code>REPORT_SCHEMA</code>, <code>questions_fingerprint(dataset)</code> and <code>file_fingerprint(path)</code> are public, so a
+caller driving <code>laya.evals.evaluate</code> directly gets the same identity a CLI run does.</p>
+<h2 id="baseline-and-ci-gate">Baseline and CI gate<a class="headerlink" href="#baseline-and-ci-gate" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Keep the dataset, a baseline report (<code>--json</code> output you have reviewed), and the tolerances
+  together, committed, so a change is a reviewable diff. <code>--tolerance METRIC=VALUE</code> is the
+  maximum absolute drift allowed for that metric. It has to be a limit that can fail: <code>Infinity</code>
+  is one every finite drift fits inside, so it is refused rather than read as no gate for that
+  metric.</li>
+<li><code>laya-evals run ... --baseline baseline.json --tolerance ...</code> exits non-zero on drift, so it
+  drops into CI unchanged. <code>laya.evals.EvalReport.compare</code> and <code>assert_regression</code> expose the
+  same logic for tests.</li>
+</ul>
+<p>The metric gate answers "did the numbers move". It cannot answer "were these the same numbers",
+because <code>compare</code> reads <code>overall</code> and only <code>overall</code> -- so a baseline recorded against one dataset
+would pass a candidate scored on another, with identical arithmetic. <code>EvalReport.comparable_to</code>
+closes that: it compares <code>schema</code>, <code>dataset_sha256</code> and <code>questions_sha256</code>, and <code>run --baseline</code>
+and <code>compare</code> still print every delta, then fail with a non-zero exit naming the key and both
+values:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>FAIL: baseline is not comparable: dataset_sha256 (dataset bytes): baseline is &lt;sha&gt;, this run is &lt;sha&gt;
+</span></code></pre></div>
+<p>A key missing on either side is <em>unknown</em>, not a conflict, so every report written before the
+identity existed keeps comparing exactly as it did. That includes the scheduled gate's baseline
+below, which comes from <code>research/eval/</code> and has no <code>config.schema</code> at all.</p>
+<p>Two CI surfaces use this:</p>
+<ul>
+<li>a weight-free job in <code>.github/workflows/ci.yml</code> runs <code>tests/test_evals.py</code> and
+  <code>tests/test_evals_api.py</code>, so metric math, dataset parsing and the CLI are covered on every
+  PR without downloading a checkpoint;</li>
+<li><code>.github/workflows/evals.yml</code> runs weekly, before a release and on demand: it evaluates the
+  English checkpoint on the MASSIVE English suite and compares to
+  <code>research/results/eval_english_51_languages.json</code> with the tolerances in
+  <code>research/evals/thresholds.json</code>. It uploads the report as an artifact and does not block a
+  PR.</li>
+</ul>
+<p>The harness is deterministic for a fixed checkpoint revision, so a report is reproducible.
+<code>run</code> records the dataset, model and device, plus the <a href="#batching-and-timing">timing</a> facts of the
+run, in the report's <code>config</code> block, and <code>revisions</code>: the commit each checkpoint that answered was
+actually loaded from. <code>--revision &lt;SHA&gt;</code> pins that commit for every checkpoint the run loads, and
+<code>--revision english=&lt;SHA&gt;</code> pins one checkpoint — which is the form an auto-routing run
+wants, since the three checkpoints are three repositories and one commit cannot exist in all of
+them. Repeat a pin to say the same commit twice; two different commits for one checkpoint — however
+it is spelled, so <code>en=</code> beside <code>english=</code> counts — exit 2 instead of loading whichever came last,
+because <code>revisions</code> reports the commit that ANSWERED and a dropped pin would leave no trace. The
+same refusal covers two different bare commits.
+Left unpinned, the run takes the checkpoint's default branch and the report still says which
+commit answered, so a baseline drift can be attributed to the weights or to the code.
+<code>laya/revisions.py</code> publishes reviewed commit SHAs in <code>PINNED_REVISIONS</code> for callers who want to
+opt in. With <code>--onnx</code>, only a bare <code>--revision &lt;SHA&gt;</code> applies, to the config and tokenizer download.</p>
+<p>Both routes write the <code>revisions</code> block. A torch run reports one entry per checkpoint the Router
+loaded; an <code>--onnx</code> run answers from one export, so it reports a single entry keyed by the <code>--model</code>
+value that names that export's source — which is an assumption when <code>--model</code> is left out, since the
+key then reads the default <code>convaiinnovations/laya</code> while <code>model</code> itself is <code>null</code>. Neither route can
+name a commit for a checkpoint given as a local directory: <code>Agent.revision</code> and <code>ONNXAgent.revision</code>
+both stay <code>None</code> when nothing was downloaded (<code>laya/agent.py:574</code>, <code>laya/onnx_agent.py:107</code>), so that
+entry is recorded as <code>null</code> rather than dropped.</p>
+<h2 id="adding-the-real-labelled-set">Adding the real labelled set<a class="headerlink" href="#adding-the-real-labelled-set" title="Permanent link">&para;</a></h2>
+<p>Drop a JSONL in <code>research/evals/</code> and a reviewed baseline beside it, then point a workflow (or
+<code>research/evals/check_regression.py</code>) at both. The format is the same as the fixture; nothing in
+the harness knows about MASSIVE.</p>
+<h2 id="evidence-inspection">Evidence inspection<a class="headerlink" href="#evidence-inspection" title="Permanent link">&para;</a></h2>
+<p><code>evidence</code> reads — never writes — the artifacts a fine-tune/eval run already persists and says
+what evidence exists, what is missing, and what is insufficient. It loads no model weights and
+does not require torch.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>laya-evals<span class="w"> </span>evidence<span class="w"> </span>--checkpoint<span class="w"> </span>./my-checkpoint<span class="w"> </span><span class="o">[</span>--report<span class="w"> </span>report.json<span class="o">]</span>
+</span></code></pre></div>
+<p>A checkpoint directory must contain <code>rl_agent_config.json</code>. Calibration evidence is derived from
+the persisted <code>training.laya_train_calibration</code> block: a legacy checkpoint with no training
+metadata is <code>UNKNOWN</code>; an entry whose <code>items</code> is not an integer count — a missing key, a string, a
+JSON <code>true</code> — is <code>UNKNOWN</code> rather than a count of one; a question type with zero items is <code>MISSING</code>;
+a type whose entry records any upstream <code>issues</code> text (not fitted, below <code>MIN_TYPE_N</code>/<code>CALIB_WARN_N</code>,
+clamped, unchanged fit) is <code>INSUFFICIENT</code>; a clean fit is <code>PRESENT</code>. The helper trusts the persisted
+<code>issues</code> written by #933 instead of keeping a second numeric threshold source.</p>
+<p>The eval report's identity fields (<code>schema</code>, <code>dataset_sha256</code>, <code>questions_sha256</code>, <code>laya_version</code>)
+are reported with the same semantics as <code>run</code>. The checkpoint↔report relationship is claimed only
+as a deterministic conflict: if both artifacts expose the same <code>dataset_sha256</code>/<code>questions_sha256</code>
+with different values, it is <code>INCOMPARABLE</code>. Everything else is <code>UNKNOWN</code> — matching <code>laya_version</code>
+alone never proves a match, and differing <code>laya_version</code> alone never proves a conflict.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../compile-and-fast-path/" class="md-footer__link md-footer__link--prev" aria-label="Previous: compile=True and the TileLang fast path: engineering notes">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                compile=True and the TileLang fast path: engineering notes
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../fast-backends/" class="md-footer__link md-footer__link--next" aria-label="Next: Fast backends">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Fast backends
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Apache 2.0. Developed by Convai Innovations.
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":["content.code.copy","navigation.footer","navigation.indexes"],"redirect":null,"search":"../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.c04ba553.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,2460 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Multilingual, non-autoregressive System 1 decision engine">
+      
+      
+      
+        <link rel="canonical" href="https://thread3d.github.io/laya/docker/">
+      
+      
+        <link rel="prev" href="../typescript-sdk/">
+      
+      
+        <link rel="next" href="../docker-platforms/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="https://raw.githubusercontent.com/NandhaKishorM/laya/main/assets/logo-mark.svg">
+      <meta name="generator" content="zensical-0.0.65">
+    
+    
+      
+        <title>Docker quickstart - Laya</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.40d3fdbb.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../assets/stylesheets/modern/palette.812a03bb.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#docker-quickstart" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="Laya" class="md-header__button md-logo" aria-label="Laya" data-md-component="logo">
+      
+  <img src="https://raw.githubusercontent.com/NandhaKishorM/laya/main/assets/logo-mark.svg" alt="Laya">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Laya
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Docker quickstart
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/NandhaKishorM/laya" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    NandhaKishorM/laya
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="Laya" class="md-nav__button md-logo" aria-label="Laya" data-md-component="logo">
+      
+  <img src="https://raw.githubusercontent.com/NandhaKishorM/laya/main/assets/logo-mark.svg" alt="Laya">
+
+    </a>
+    Laya
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/NandhaKishorM/laya" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    NandhaKishorM/laya
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Laya
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guides
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_2">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Guides
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../use-cases/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Architectural Patterns and Production Use Cases
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../structured/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Schema-driven decisions
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../hooks/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hooks
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2_3" id="__nav_2_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_3_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_2_3">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Hooks
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API reference
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/lifecycle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Lifecycle
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/errors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Error handling
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/patterns/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Patterns and anti-patterns
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Examples
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/tracing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Tracing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../langchain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LangChain &amp; LangGraph Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llamaindex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LlamaIndex Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crewai/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CrewAI Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agno/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Agno Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Tool &amp; Function Selection
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Benchmarks and known limits
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli-mcp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Command line and MCP server
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../compile-and-fast-path/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  compile=True and the TileLang fast path: engineering notes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../evals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Evaluation harness
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fast-backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fast backends
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guardrail-limitations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guardrail Limitations
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../http-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  HTTP API
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../questions-and-answers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Questions and answers
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Routing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../staged-adoption/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Staged adoption
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../typescript-sdk/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  TypeScript SDK design
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Deployment
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+            <label class="md-nav__title" for="__nav_3">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Deployment
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Docker quickstart
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Docker quickstart
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#nvidia-gpu-cuda" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        NVIDIA GPU / CUDA
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Configuration
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#secret-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Secret files
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fine-tuned-checkpoints" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Fine-tuned checkpoints
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#models-from-modelscope" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Models from ModelScope
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#development-and-cleanup" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Development and cleanup
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#http-serving" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        HTTP serving
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="HTTP serving">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#server-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Server configuration
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bearer-token-from-a-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Bearer token from a file
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../docker-platforms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  ARM64 and DGX Spark containers
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Checkpoint integrity
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_4">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Fine-tuning
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../finetune/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning Laya on your own decisions
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../finetune_browser_agent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning Laya as a browser-agent decision head
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reference
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_5">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Reference
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/agent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Agent
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/router/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Router
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/helpers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Helpers
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/train/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/langchain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LangChain components
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#nvidia-gpu-cuda" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        NVIDIA GPU / CUDA
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Configuration
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#secret-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Secret files
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fine-tuned-checkpoints" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Fine-tuned checkpoints
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#models-from-modelscope" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Models from ModelScope
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#development-and-cleanup" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Development and cleanup
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#http-serving" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        HTTP serving
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="HTTP serving">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#server-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Server configuration
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bearer-token-from-a-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Bearer token from a file
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="docker-quickstart">Docker quickstart<a class="headerlink" href="#docker-quickstart" title="Permanent link">&para;</a></h1>
+<p>Run the SDK without installing Python or PyTorch on your host. For the CPU
+quickstart, allow 8 GB of RAM and 10 GB of free disk, with Docker Engine or
+Docker Desktop and Compose v2 or newer.</p>
+<p>From the repository root:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>docker<span class="w"> </span>compose<span class="w"> </span>run<span class="w"> </span>--build<span class="w"> </span>--rm<span class="w"> </span>laya
+</span></code></pre></div>
+<p>This builds the checkout, runs the <a href="https://github.com/NandhaKishorM/laya/blob/main/examples/docker/request.json">sample request</a>
+on CPU and prints JSON covering <code>choice</code>, <code>score</code> and <code>noul</code>. The first request
+downloads the selected public Hugging Face checkpoint; no account is needed.
+Allow several minutes for its first download.
+Weights stay in a named volume. Subsequent runs use <code>docker compose run --rm laya</code>.</p>
+<p>Predictions and confidence still need evaluation on your workload. See the
+<a href="https://github.com/NandhaKishorM/laya/blob/main/BENCHMARKS.md">benchmark limits</a>.</p>
+<p>For ARM64 hosts, DGX Spark and Apple Silicon, see
+<a href="../docker-platforms/">ARM64 and DGX Spark containers</a>.</p>
+<h2 id="nvidia-gpu-cuda">NVIDIA GPU / CUDA<a class="headerlink" href="#nvidia-gpu-cuda" title="Permanent link">&para;</a></h2>
+<p>Install a compatible NVIDIA driver and configure Docker with the
+<a href="https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html">NVIDIA Container Toolkit</a>.
+The GPU image uses PyTorch CUDA 13.0 wheels. Check your GPU's compute capability
+and driver against <a href="https://pytorch.org/get-started/locally/">PyTorch's supported builds</a>;
+older cards may require a different build. Allow additional disk space for CUDA
+layers. VRAM needs depend on the checkpoint, batch size and input length.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>compose.yaml<span class="w"> </span>-f<span class="w"> </span>compose.cuda.yaml<span class="w"> </span>run<span class="w"> </span>--build<span class="w"> </span>--rm<span class="w"> </span>laya
+</span></code></pre></div>
+<p>The override selects GPU <code>0</code> and defaults to <code>LAYA_DEVICE=cuda</code>. Set
+<code>LAYA_GPU_ID</code> to another host index or UUID. That GPU appears as device <code>0</code>
+inside the container. Check access without downloading weights:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>compose.yaml<span class="w"> </span>-f<span class="w"> </span>compose.cuda.yaml<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>laya<span class="w"> </span>python<span class="w"> </span>-c<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="s1">'import torch; assert torch.cuda.is_available(); print(torch.cuda.get_device_name(0)); print(torch.ones(1, device="cuda").cpu())'</span>
+</span></code></pre></div>
+<p>The sample rejects unavailable CUDA before loading a checkpoint. Laya can still
+fall back to CPU after a memory or inference error, so inspect its warnings.
+Rebuild when switching between CPU and CUDA configurations.</p>
+<p>The image sets <code>TORCH_DISABLE_NATIVE_JIT=1</code>. PyTorch 2.14 otherwise replaces some eager
+CUDA ops with Triton kernels that it compiles on the first inference, which needs a C
+compiler the slim image does not carry: the container reports healthy and then fails every
+request (#365). The stock kernels give the same answers at the same latency. Set the same
+variable on a bare-metal install if <code>predict</code> fails with <code>Failed to find C compiler</code>.</p>
+<p>This uses <a href="https://docs.docker.com/compose/how-tos/gpu-support/">Compose GPU reservations</a>.
+Windows requires Docker Desktop's supported WSL2 GPU setup. Apple MPS,
+AMD/ROCm and Intel GPU containers are outside this quickstart; use CPU unless
+you configure and validate another backend.</p>
+<h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
+<p>Set Compose variables in your shell, a local <code>.env</code> file, or the service's
+<code>environment</code> block. Don't commit secrets in <code>.env</code>. Runtime variables also
+work with <code>docker run -e</code>; Compose-only settings are identified below.</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>LAYA_DEVICE</code></td>
+<td><code>cpu</code> / <code>cuda</code></td>
+<td>Device selected by the base / GPU configuration</td>
+</tr>
+<tr>
+<td><code>LAYA_CUDA_AMP</code></td>
+<td>unset (checkpoint's <code>amp_dtype</code>)</td>
+<td><code>fp16</code>/<code>float16</code> or <code>bf16</code>/<code>bfloat16</code> for the CUDA forward; anything else is ignored. Not cosmetic: the README's threshold section measures bf16 flipping 3 of 864 argmaxes on the parity set where fp16 flips none</td>
+</tr>
+<tr>
+<td><code>LAYA_CPU_AMP</code></td>
+<td>unset</td>
+<td><code>bf16</code> or <code>bfloat16</code> opts the CPU forward into bf16; anything else leaves it fp32. No fp16 spelling turns it on either: CPU autocast has no fp16 fast path that beats fp32, so bf16 is the only reduced precision core offers on this device</td>
+</tr>
+<tr>
+<td><code>LAYA_MODEL</code></td>
+<td><code>auto</code></td>
+<td>Router alias: <code>auto</code>, <code>english</code>, <code>multilingual</code>, <code>typed-decisions</code></td>
+</tr>
+<tr>
+<td><code>LAYA_MODEL_PATH</code></td>
+<td>unset</td>
+<td>Compatible checkpoint path inside the container</td>
+</tr>
+<tr>
+<td><code>LAYA_REVISION</code></td>
+<td>unset</td>
+<td>Hub commit, branch or tag used for every checkpoint download, or <code>reviewed</code> for the reviewed SHAs in <code>laya/revisions.py</code>; a <code>revision=</code> argument still wins</td>
+</tr>
+<tr>
+<td><code>LAYA_SHA256_DIGESTS</code></td>
+<td>unset</td>
+<td>JSON digests verified before weights are parsed and loaded: <code>{artifact: digest}</code> for every checkpoint, or <code>{model: {artifact: digest}}</code> per checkpoint. See <a href="../security/">Security</a></td>
+</tr>
+<tr>
+<td><code>LAYA_REQUEST_FILE</code></td>
+<td>bundled request</td>
+<td>JSON request path inside the container</td>
+</tr>
+<tr>
+<td><code>OMP_NUM_THREADS</code></td>
+<td><code>4</code></td>
+<td>CPU threads; keep within available cores</td>
+</tr>
+<tr>
+<td><code>HF_TOKEN</code> / <code>HF_TOKEN_FILE</code></td>
+<td>unset</td>
+<td>Optional Hugging Face credential</td>
+</tr>
+<tr>
+<td><code>LAYA_API_KEY</code> / <code>LAYA_API_KEY_FILE</code></td>
+<td>unset</td>
+<td><strong><code>laya-serve</code> only:</strong> require <code>Authorization: Bearer &lt;key&gt;</code></td>
+</tr>
+<tr>
+<td><code>LAYA_PORT</code></td>
+<td><code>8000</code></td>
+<td><strong><code>laya-serve</code> only:</strong> container port, and the host port published for it</td>
+</tr>
+<tr>
+<td><code>HF_HUB_OFFLINE</code></td>
+<td><code>0</code></td>
+<td><code>1</code> uses only cached checkpoints</td>
+</tr>
+<tr>
+<td><code>HF_HOME</code></td>
+<td><code>/home/laya/.cache/huggingface</code></td>
+<td>Cache path; see mount requirement below</td>
+</tr>
+<tr>
+<td><code>LAYA_CACHE_VOLUME</code></td>
+<td>project model cache</td>
+<td><strong>Compose only:</strong> named cache volume</td>
+</tr>
+<tr>
+<td><code>LAYA_GPU_ID</code></td>
+<td><code>0</code></td>
+<td><strong>Compose only:</strong> NVIDIA device index or UUID</td>
+</tr>
+<tr>
+<td><code>LAYA_TORCH_INDEX</code></td>
+<td><code>cu130</code> (CUDA) / <code>cpu</code></td>
+<td><strong>Compose build:</strong> PyTorch wheel index. <code>cu126</code> also carries the pinned torch; <code>cu128</code> does not</td>
+</tr>
+<tr>
+<td><code>LAYA_TORCH_VERSION</code></td>
+<td><code>2.14.0</code></td>
+<td><strong>Compose build:</strong> pinned PyTorch version</td>
+</tr>
+</tbody>
+</table>
+<p>Compose forwards the runtime variables except <code>HF_HOME</code>, which stays aligned
+with its fixed cache mount, and except <code>LAYA_MPS_AMP_MIN_ROWS</code>, the MPS row gate,
+which no image here can reach because no container here can select MPS.
+If overriding <code>HF_HOME</code> in <code>docker run</code> or your own
+Compose file, provide a matching mount writable by UID 10001. Direct Docker
+builds select PyTorch with <code>--build-arg TORCH_INDEX=cu130</code>; runtime <code>-e</code> cannot
+change the installed wheel.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nv">LAYA_MODEL</span><span class="o">=</span>english<span class="w"> </span><span class="nv">OMP_NUM_THREADS</span><span class="o">=</span><span class="m">2</span><span class="w"> </span>docker<span class="w"> </span>compose<span class="w"> </span>run<span class="w"> </span>--build<span class="w"> </span>--rm<span class="w"> </span>laya
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>docker<span class="w"> </span>build<span class="w"> </span>-t<span class="w"> </span>laya:local<span class="w"> </span>.
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>-e<span class="w"> </span><span class="nv">LAYA_MODEL</span><span class="o">=</span>english<span class="w"> </span>-e<span class="w"> </span><span class="nv">OMP_NUM_THREADS</span><span class="o">=</span><span class="m">2</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span>-v<span class="w"> </span>laya-model-cache:/home/laya/.cache/huggingface<span class="w"> </span>laya:local
+</span></code></pre></div>
+<p>For your own request:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>docker<span class="w"> </span>compose<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>--volume<span class="w"> </span><span class="s2">"</span><span class="nv">$PWD</span><span class="s2">/request.json:/inputs/request.json:ro"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>--env<span class="w"> </span><span class="nv">LAYA_REQUEST_FILE</span><span class="o">=</span>/inputs/request.json<span class="w"> </span>laya
+</span></code></pre></div>
+<p>For a commented configuration with request, checkpoint and secret-file mounts,
+see <a href="https://github.com/NandhaKishorM/laya/blob/main/compose.example.yml"><code>compose.example.yml</code></a>:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>compose.yaml<span class="w"> </span>-f<span class="w"> </span>compose.example.yml<span class="w"> </span>run<span class="w"> </span>--build<span class="w"> </span>--rm<span class="w"> </span>laya
+</span></code></pre></div>
+<p>Add <code>-f compose.cuda.yaml</code> before <code>run</code> for NVIDIA GPUs. The example is an
+override of <code>compose.yaml</code>, so cache and image settings stay in one place.</p>
+<h2 id="secret-files">Secret files<a class="headerlink" href="#secret-files" title="Permanent link">&para;</a></h2>
+<p><code>HF_TOKEN_FILE</code> reads a mounted UTF-8 file at startup, trims surrounding
+whitespace and takes precedence over <code>HF_TOKEN</code>. Unreadable, empty or invalid
+files stop startup without printing their contents. The file must be readable
+by UID 10001. <code>_FILE</code> applies only to supported secrets, not every setting.</p>
+<p>With <code>HF_TOKEN_PATH</code> pointing to an existing host file outside the checkout:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>docker<span class="w"> </span>compose<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>--volume<span class="w"> </span><span class="s2">"</span><span class="nv">$HF_TOKEN_PATH</span><span class="s2">:/run/secrets/hf_token:ro"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span>--env<span class="w"> </span><span class="nv">HF_TOKEN_FILE</span><span class="o">=</span>/run/secrets/hf_token<span class="w"> </span>laya
+</span></code></pre></div>
+<p>Docker secrets or Kubernetes Secret volumes can supply the same file. Values
+are loaded into the process environment at startup; restart after changing a
+file. Never use tokens as build arguments or bake them into images. Public
+checkpoints need no token.</p>
+<h2 id="fine-tuned-checkpoints">Fine-tuned checkpoints<a class="headerlink" href="#fine-tuned-checkpoints" title="Permanent link">&para;</a></h2>
+<p>This image runs inference. Fine-tuning happens outside it — the
+<a href="https://github.com/NandhaKishorM/laya/blob/main/notebooks/laya_finetune_typed_decisions_2xT4_kaggle.ipynb">fine-tuning notebook</a>
+runs the whole loop on Kaggle's free 2xT4 GPUs and exports a checkpoint this image can
+serve. Background and open questions about the training interface stay in
+<a href="https://github.com/NandhaKishorM/laya/issues/4">#4</a> and
+<a href="https://github.com/NandhaKishorM/laya/issues/26">#26</a>.</p>
+<p>Point <code>LAYA_CHECKPOINT_PATH</code> to an absolute host directory containing
+<code>rl_agent_config.json</code>, <code>model.safetensors</code> and matching tokenizer files:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>docker<span class="w"> </span>compose<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>--volume<span class="w"> </span><span class="s2">"</span><span class="nv">$LAYA_CHECKPOINT_PATH</span><span class="s2">:/models/custom"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span>--env<span class="w"> </span><span class="nv">LAYA_MODEL_PATH</span><span class="o">=</span>/models/custom<span class="w"> </span>laya
+</span></code></pre></div>
+<p>Use a working copy writable by UID 10001 because the loader may update tokenizer
+configuration. A LoRA adapter alone is not a complete checkpoint. Leave
+<code>LAYA_MODEL=auto</code> when setting <code>LAYA_MODEL_PATH</code>; an explicit alias and local path
+are mutually exclusive. The local-path response comes from the Agent and has no
+Router <code>routing</code> metadata. These settings also work with the CUDA override.
+Evaluate fine-tuned checkpoints on held-out examples before relying on them.</p>
+<h2 id="models-from-modelscope">Models from ModelScope<a class="headerlink" href="#models-from-modelscope" title="Permanent link">&para;</a></h2>
+<p>When a host cannot reach huggingface.co, the checkpoint can come from
+<a href="https://modelscope.cn">ModelScope</a> and be baked into the image at build time. One
+argument selects which checkpoint, and it defaults to the multilingual one. The
+Compose override adds the prefetch arguments to both services and keeps the
+container off the Hub:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>compose.yaml<span class="w"> </span>-f<span class="w"> </span>compose.http.yaml<span class="w"> </span>-f<span class="w"> </span>compose.modelscope.yaml<span class="w"> </span>up<span class="w"> </span>--build<span class="w"> </span>laya-serve
+</span></code></pre></div>
+<p>For NVIDIA, add <code>-f compose.cuda.yaml</code> before <code>up</code>; it repeats its own arguments for
+both services, so the ordering between the two overrides does not matter. Plain
+Docker takes the arguments directly:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>docker<span class="w"> </span>build<span class="w"> </span>--build-arg<span class="w"> </span><span class="nv">MODELSCOPE_MODEL</span><span class="o">=</span>multilingual<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span>-t<span class="w"> </span>laya:local<span class="w"> </span>.
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>-e<span class="w"> </span><span class="nv">HF_HUB_OFFLINE</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>-p<span class="w"> </span><span class="m">127</span>.0.0.1:8000:8000<span class="w"> </span>laya:local<span class="w"> </span>laya-serve
+</span></code></pre></div>
+<p>One prerequisite on a host that has run this before. The baked weights land in
+<code>$HF_HOME/hub</code> inside the image, under the cache directory <code>compose.yaml</code> mounts
+the <code>model-cache</code> volume at (<code>/home/laya/.cache/huggingface</code>), and Docker seeds a
+named volume from the image only while that volume is empty. A volume left over
+from the Hub-based quickstart holds the older Hub snapshot, it is never
+re-seeded, and the baked weights stay invisible behind it: the loader resolves
+<code>refs/main</code> to the old Hub commit and the container answers with the weights
+that were already downloaded, as if the rebuild had changed nothing. Point the
+deployment at an empty cache volume -- <code>docker compose down --volumes</code> with the
+same Compose files and the same <code>LAYA_CACHE_VOLUME</code>, or <code>LAYA_CACHE_VOLUME=&lt;name&gt;</code>
+for a fresh one. With <code>HF_HUB_OFFLINE=1</code> a missing or divergent ref is a load
+failure with no network to fall back to, but the prerequisite is the same.</p>
+<p><a href="https://github.com/NandhaKishorM/laya/blob/main/docker/prefetch_modelscope.py"><code>docker/prefetch_modelscope.py</code></a>
+lists the repository on modelscope.cn, downloads the checkpoint's own files -- the
+same set <code>laya/agent.py</code> asks the Hub for, so no sibling checkpoint is pulled -- and
+writes them into the image's hub cache the way <code>snapshot_download</code> lays out a
+snapshot. Nothing else changes: <code>Agent</code>, the <code>Router</code> that <code>laya-serve</code> builds,
+<code>laya.cli</code> and the integrations keep their repo ids and resolve them to the baked
+snapshot, so a container built this way needs no network at all. Each file's size
+is checked against what the repository reports before the snapshot is published,
+and its SHA-256 as well when the repository publishes one. A size or digest
+mismatch fails the build. A repository that publishes no digest leaves the
+check to size alone, which cannot detect a same-size substitution.</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MODELSCOPE_MODEL</code></td>
+<td><code>multilingual</code> (Compose); empty in the Dockerfile</td>
+<td>Checkpoint to bake: <code>multilingual</code>, <code>english</code>, <code>typed-decisions</code> or <code>all</code>. Empty means no prefetch and the unchanged image</td>
+</tr>
+<tr>
+<td><code>MODELSCOPE_REVISION</code></td>
+<td><code>master</code></td>
+<td>ModelScope branch, tag or commit to bake</td>
+</tr>
+<tr>
+<td><code>HF_HUB_OFFLINE</code></td>
+<td><code>1</code> in the Compose override</td>
+<td><code>1</code> never contacts the Hub, so the baked copy is served</td>
+</tr>
+</tbody>
+</table>
+<p>A type expands to that checkpoint's path inside the bundled repository, which is what
+the <code>Router</code> and the one-shot quickstart load by default, so a build that names one
+type serves it with no further change:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nv">MODELSCOPE_MODEL</span><span class="o">=</span>english<span class="w"> </span>docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>compose.yaml<span class="w"> </span>-f<span class="w"> </span>compose.http.yaml<span class="w"> </span>-f<span class="w"> </span>compose.modelscope.yaml<span class="w"> </span>up<span class="w"> </span>--build<span class="w"> </span>laya-serve
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="nv">MODELSCOPE_MODEL</span><span class="o">=</span>all<span class="w"> </span>docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>compose.yaml<span class="w"> </span>-f<span class="w"> </span>compose.http.yaml<span class="w"> </span>-f<span class="w"> </span>compose.modelscope.yaml<span class="w"> </span>up<span class="w"> </span>--build<span class="w"> </span>laya-serve
+</span></code></pre></div>
+<p><code>all</code> is the whole family, about 2.4 GB of weights. The override also sets
+<code>LAYA_MODELS=multilingual</code>, because <code>LAYA_PRELOAD=1</code> with the default list would try
+to build every checkpoint and fail on the first one that was not baked; set
+<code>LAYA_MODELS</code> to the list you baked when you bake more, and <code>MODELSCOPE_MODEL=all</code>
+when a deployment really does serve the family.</p>
+<p>Several types can be named at once -- <code>MODELSCOPE_MODEL="english multilingual"</code>
+bakes both, about 1.5 GB -- which is what a serving image usually wants: the
+<code>Router</code> chooses between the English and the multilingual checkpoint on its own,
+and one it was not given answers <code>500 inference failed</code> with
+<code>does not contain 'rl_agent_config.json'</code> in the log. Checkpoints that share a
+repository always bake into one snapshot, because a cached revision resolves to a
+single directory; the root checkpoint and each subfolder are both in it.</p>
+<p>Beyond the types the argument also takes <code>repo[:subfolder]</code> specs, comma- or
+space-separated, which is how the mirror's standalone repositories
+(<a href="https://modelscope.cn/models/convaiinnovations/laya">laya</a>,
+<a href="https://modelscope.cn/models/convaiinnovations/laya-multilingual">laya-multilingual</a>,
+<a href="https://modelscope.cn/models/convaiinnovations/laya-typed-decisions">laya-typed-decisions</a>)
+or a fine-tuned checkpoint is baked. A standalone repository is what
+<code>Agent("convaiinnovations/laya-multilingual")</code> loads directly; the <code>Router</code>'s
+default is the bundled path, so a type is normally what a serving image wants.</p>
+<p>Two details about pins and provenance. The build prints the commit the snapshot is
+keyed by, which is the tip of the revision that was baked -- pass that SHA as
+<code>revision=</code> or <code>LAYA_REVISION</code> to pin a load to exactly what was baked. A mirror
+repository can hold files from several uploads, so that tip is the one
+repository-wide key there is. Hub-side pins do not describe a mirror snapshot:
+<code>reviewed</code> names Hugging Face commits, and the SHA-256 digest map is keyed to Hub
+artifact hashes, so neither applies here, and no digest pin exists for a mirror
+snapshot either. The build already refuses a download that does not match the
+mirror's own reported size -- and its digest, when the mirror publishes one --
+but this checks consistency with mirror metadata, not an independently pinned
+digest. The weights come from
+whichever mirror account the argument names, which is its own supply-chain
+decision for the deployment to make.</p>
+<h2 id="development-and-cleanup">Development and cleanup<a class="headerlink" href="#development-and-cleanup" title="Permanent link">&para;</a></h2>
+<p>Open a Python prompt with <code>docker compose run --rm laya python</code>. To run the
+existing routing/criteria checks and secret-file tests against your checkout
+without downloading weights:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>docker<span class="w"> </span>compose<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>--volume<span class="w"> </span><span class="s2">"</span><span class="nv">$PWD</span><span class="s2">:/workspace:ro"</span><span class="w"> </span>--workdir<span class="w"> </span>/workspace<span class="w"> </span>laya<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span>sh<span class="w"> </span>-ec<span class="w"> </span><span class="s1">'python tests/test_router.py; python tests/test_criteria.py; python tests/test_docker_entrypoint.py'</span>
+</span></code></pre></div>
+<p>Rebuild with <code>--build</code> after changing source or the bundled example. The image
+runs as UID/GID 10001. New named volumes inherit the image cache directory's
+ownership; host directories must be writable by that UID. Keep model caches
+writable for tokenizer compatibility updates.</p>
+<p><code>--rm</code> removes completed containers. <code>docker compose down</code> retains the cache.
+To <strong>delete downloaded weights</strong>, run <code>docker compose down --volumes</code> using the
+same Compose files and <code>LAYA_CACHE_VOLUME</code> setting. The next request downloads
+them again; don't remove a cache shared with another project.</p>
+<h2 id="http-serving">HTTP serving<a class="headerlink" href="#http-serving" title="Permanent link">&para;</a></h2>
+<p>The image ships <code>laya-serve</code>, so the same build that runs the one-shot quickstart can
+serve the Jev-compatible API. <code>compose.http.yaml</code> adds it as a second service and leaves
+<code>laya</code> alone:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>compose.yaml<span class="w"> </span>-f<span class="w"> </span>compose.http.yaml<span class="w"> </span>up<span class="w"> </span>--build<span class="w"> </span>laya-serve
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>curl<span class="w"> </span>-s<span class="w"> </span>localhost:8000/health
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>curl<span class="w"> </span>-s<span class="w"> </span>localhost:8000/v1/systemone<span class="w"> </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="w">  </span>--data<span class="w"> </span>@examples/docker/request.json
+</span></code></pre></div>
+<p>For NVIDIA, add the CUDA override. It repeats the build args and the device reservation
+for <code>laya-serve</code>, because <code>laya-serve</code> is a separate service and overrides for <code>laya</code>
+never reach it:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>compose.yaml<span class="w"> </span>-f<span class="w"> </span>compose.http.yaml<span class="w"> </span>-f<span class="w"> </span>compose.cuda.yaml<span class="w"> </span>up<span class="w"> </span>--build<span class="w"> </span>laya-serve
+</span></code></pre></div>
+<p><code>up</code> keeps the service running in the foreground; <code>-d</code> detaches. Weights go to the same
+named <code>model-cache</code> volume as the quickstart, so serving after a quickstart run starts
+with the checkpoints already on disk. Stop with <code>docker compose ... down</code>, using the same
+Compose files.</p>
+<p>The port is published on <code>127.0.0.1</code> only. The API has no authentication until
+<code>LAYA_API_KEY</code> is set, so set a key before exposing it with
+<code>LAYA_BIND_ADDRESS=0.0.0.0</code>, and put a TLS reverse proxy in front for remote clients.
+<code>/health</code> does not require authentication in either case, so the healthcheck below keeps
+working; with a key set it answers an unauthenticated caller <code>{"status": "ok"}</code> and withholds the
+checkpoint, revision and device fields, which need the bearer.</p>
+<p>The service has a healthcheck on <code>/health</code>. <code>docker compose ... up -d --wait laya-serve</code> waits for HTTP liveness. With the Compose default <code>LAYA_PRELOAD=0</code>, it can return with no checkpoint loaded; the first valid inference request loads the checkpoint it needs. With <code>LAYA_PRELOAD=1</code>, the server builds the selected checkpoints before listening, but preloading does not run a model forward.</p>
+<p>These are three separate checks: <code>/health</code> confirms the HTTP process responds, an authenticated <code>/health</code> response lists resident checkpoints, and a successful authenticated <code>POST /v1/systemone</code> confirms that the requested inference ran. A healthy container or a nonempty <code>loaded</code> list alone does not establish successful inference. The Docker workflow's HTTP job checks startup, loopback publication and authentication with preload disabled and invalid request bodies; it does not run a model forward.</p>
+<p><code>/health</code> reports <code>device</code> as the device a resident checkpoint actually computes
+on, which is not always what <code>LAYA_DEVICE</code> asked for: a checkpoint that wants a
+GPU it cannot get falls back to CPU silently and still answers correctly.
+<code>checkpoint_devices</code> names each loaded checkpoint, and <code>device_is_preference</code> is
+<code>true</code> only while nothing is resident, so a deployment that quietly lost its GPU
+says so instead of echoing its own configuration back.</p>
+<h3 id="server-configuration">Server configuration<a class="headerlink" href="#server-configuration" title="Permanent link">&para;</a></h3>
+<p>These apply to the <code>laya-serve</code> service only.</p>
+<table>
+<thead>
+<tr>
+<th>variable</th>
+<th>default</th>
+<th>effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>LAYA_HOST</code></td>
+<td><code>0.0.0.0</code></td>
+<td>bind address inside the container</td>
+</tr>
+<tr>
+<td><code>LAYA_PORT</code></td>
+<td><code>8000</code></td>
+<td>container port, and the host port published for it</td>
+</tr>
+<tr>
+<td><code>LAYA_BIND_ADDRESS</code></td>
+<td><code>127.0.0.1</code></td>
+<td>host address the port is published on</td>
+</tr>
+<tr>
+<td><code>LAYA_PRELOAD</code></td>
+<td><code>0</code></td>
+<td><code>1</code> builds every checkpoint at startup instead of on first request</td>
+</tr>
+<tr>
+<td><code>LAYA_MODELS</code></td>
+<td>(all)</td>
+<td>comma list to preload: <code>english,multilingual,typed-decisions</code></td>
+</tr>
+<tr>
+<td><code>LAYA_THREADS</code></td>
+<td><code>OMP_NUM_THREADS</code></td>
+<td>caps torch intra-op threads; keep at or below physical cores</td>
+</tr>
+<tr>
+<td><code>LAYA_AUTO_TASK</code></td>
+<td><code>0</code></td>
+<td><code>1</code> lets the router reach <code>typed-decisions</code> automatically</td>
+</tr>
+<tr>
+<td><code>LAYA_DEFAULT_MODEL</code></td>
+<td><code>multilingual</code></td>
+<td>Checkpoint a state with no language evidence falls back to (no letters, or Latin text too short to identify). Set <code>english</code> for mostly English traffic; an unresolvable name stops the container at startup instead of serving a configuration nobody asked for</td>
+</tr>
+<tr>
+<td><code>LAYA_EXTRA_MODELS</code></td>
+<td>(none)</td>
+<td>JSON object <code>{name: source}</code> registering extra checkpoints beside the bundled ones: a Hub repo id or local checkpoint directory as a string, or a <code>["repo", "subfolder"]</code> pair</td>
+</tr>
+<tr>
+<td><code>LAYA_IDLE_UNLOAD_SECONDS</code></td>
+<td><code>0</code></td>
+<td>unload resident checkpoints after this many idle seconds; the next request loads its checkpoint again. Zero disables unloading</td>
+</tr>
+<tr>
+<td><code>LAYA_MAX_LOADED</code></td>
+<td><code>2</code></td>
+<td>Checkpoints kept resident; <code>LAYA_AUTO_TASK</code> makes a third reachable on demand, and a cap below what routing chooses rebuilds one per switch</td>
+</tr>
+<tr>
+<td><code>LAYA_MAX_CONCURRENT</code></td>
+<td><code>16</code></td>
+<td>requests admitted at once; later ones get <code>503</code> (a value that does not parse, or is not positive, falls back to <code>16</code>)</td>
+</tr>
+<tr>
+<td><code>LAYA_LOG_LEVEL</code></td>
+<td><code>info</code></td>
+<td>uvicorn log level</td>
+</tr>
+<tr>
+<td><code>LAYA_API_KEY</code></td>
+<td>(none)</td>
+<td>when set, requires <code>Authorization: Bearer &lt;key&gt;</code></td>
+</tr>
+<tr>
+<td><code>LAYA_ROOT_PATH</code></td>
+<td>(empty)</td>
+<td>public URL prefix for FastAPI when behind a reverse proxy; the proxy should strip it before forwarding</td>
+</tr>
+<tr>
+<td><code>LAYA_MAX_TOKEN_BUDGET</code></td>
+<td><code>8192</code></td>
+<td>cap on per-request <code>max_len</code> and <code>head_max_len</code> overrides</td>
+</tr>
+<tr>
+<td><code>LAYA_MAX_BATCH_TOKENS</code></td>
+<td><code>131072</code></td>
+<td>tokens one <code>/v1/systemone/batch</code> forward pass may collate (<code>states</code> × questions × row width); a larger batch is split into several passes, not refused</td>
+</tr>
+<tr>
+<td><code>LAYA_JEV_STRICT</code></td>
+<td><code>0</code></td>
+<td><code>1</code> serves the strict Jev wire contract (no root <code>routing</code>, no per-answer <code>action</code> / <code>answer_confidence</code>, reduced <code>usage</code>) for strict Jev clients</td>
+</tr>
+<tr>
+<td><code>LAYA_TOURNAMENT_GROUP</code></td>
+<td><code>0</code></td>
+<td>answer a <code>choice</code> with more options than this by elimination in groups of this size (2 to 100), on <code>/v1/systemone</code>, and raise its option cap from 100 to 255. See <a href="../http-api/#large-choices-laya_tournament_group">Large choices</a>. Unset, or outside 2 to 100, is off</td>
+</tr>
+<tr>
+<td><code>LAYA_SHA256_DIGESTS</code></td>
+<td>(none)</td>
+<td>JSON digests checked before a checkpoint is parsed: <code>{artifact: digest}</code> for every checkpoint, or <code>{model: {artifact: digest}}</code> per checkpoint. See <a href="../security/">Security</a></td>
+</tr>
+</tbody>
+</table>
+<p>For example, set <code>LAYA_ROOT_PATH=/laya</code> when publishing the API under <code>/laya</code>. The proxy must
+strip that prefix before forwarding to the container; this setting updates FastAPI's generated
+URLs and does not change the internal <code>/health</code> or <code>/v1/systemone</code> routes.</p>
+<p><code>LAYA_PRELOAD</code> defaults to <code>0</code> here rather than the package default of <code>1</code>, because
+preloading makes the first boot download all three checkpoints. Set it to <code>1</code> for a
+long-running deployment so the first request does not pay for the build.</p>
+<p><code>LAYA_PORT</code> sets both the published host port and the port the server binds, so the two
+cannot drift. Change one place to move the service:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="nv">LAYA_PORT</span><span class="o">=</span><span class="m">9000</span><span class="w"> </span>docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>compose.yaml<span class="w"> </span>-f<span class="w"> </span>compose.http.yaml<span class="w"> </span>up<span class="w"> </span>--build<span class="w"> </span>laya-serve
+</span></code></pre></div>
+<h3 id="bearer-token-from-a-file">Bearer token from a file<a class="headerlink" href="#bearer-token-from-a-file" title="Permanent link">&para;</a></h3>
+<p><code>LAYA_API_KEY_FILE</code> is read once at startup, moved into <code>LAYA_API_KEY</code>, and the <code>_FILE</code>
+variable is removed before the server execs. Prefer this to putting the key in the
+environment:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>compose.yaml<span class="w"> </span>-f<span class="w"> </span>compose.http.yaml<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">  </span>--volume<span class="w"> </span><span class="s2">"</span><span class="nv">$PWD</span><span class="s2">/laya_api_key:/run/secrets/laya_api_key:ro"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">LAYA_API_KEY_FILE</span><span class="o">=</span>/run/secrets/laya_api_key<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="w">  </span>--service-ports<span class="w"> </span>laya-serve
+</span></code></pre></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../typescript-sdk/" class="md-footer__link md-footer__link--prev" aria-label="Previous: TypeScript SDK design">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                TypeScript SDK design
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../docker-platforms/" class="md-footer__link md-footer__link--next" aria-label="Next: ARM64 and DGX Spark containers">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                ARM64 and DGX Spark containers
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Apache 2.0. Developed by Convai Innovations.
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":["content.code.copy","navigation.footer","navigation.indexes"],"redirect":null,"search":"../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.c04ba553.min.js"></script>
+      
+    
+  </body>
+</html>

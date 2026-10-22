@@ -1,0 +1,2638 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Multilingual, non-autoregressive System 1 decision engine">
+      
+      
+      
+        <link rel="canonical" href="https://thread3d.github.io/laya/finetune/">
+      
+      
+        <link rel="prev" href="../security/">
+      
+      
+        <link rel="next" href="../finetune_browser_agent/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="https://raw.githubusercontent.com/NandhaKishorM/laya/main/assets/logo-mark.svg">
+      <meta name="generator" content="zensical-0.0.65">
+    
+    
+      
+        <title>Fine-tuning Laya on your own decisions - Laya</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.40d3fdbb.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../assets/stylesheets/modern/palette.812a03bb.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#fine-tuning-laya-on-your-own-decisions" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="Laya" class="md-header__button md-logo" aria-label="Laya" data-md-component="logo">
+      
+  <img src="https://raw.githubusercontent.com/NandhaKishorM/laya/main/assets/logo-mark.svg" alt="Laya">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Laya
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Fine-tuning Laya on your own decisions
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/NandhaKishorM/laya" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    NandhaKishorM/laya
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="Laya" class="md-nav__button md-logo" aria-label="Laya" data-md-component="logo">
+      
+  <img src="https://raw.githubusercontent.com/NandhaKishorM/laya/main/assets/logo-mark.svg" alt="Laya">
+
+    </a>
+    Laya
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/NandhaKishorM/laya" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    NandhaKishorM/laya
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Laya
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guides
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_2">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Guides
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../use-cases/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Architectural Patterns and Production Use Cases
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../structured/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Schema-driven decisions
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../hooks/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hooks
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2_3" id="__nav_2_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_3_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_2_3">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Hooks
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API reference
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/lifecycle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Lifecycle
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/errors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Error handling
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/patterns/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Patterns and anti-patterns
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Examples
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hooks/tracing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Tracing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../langchain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LangChain &amp; LangGraph Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llamaindex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LlamaIndex Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crewai/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CrewAI Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agno/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Agno Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Tool &amp; Function Selection
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Benchmarks and known limits
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli-mcp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Command line and MCP server
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../compile-and-fast-path/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  compile=True and the TileLang fast path: engineering notes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../evals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Evaluation harness
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fast-backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fast backends
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guardrail-limitations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guardrail Limitations
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../http-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  HTTP API
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../questions-and-answers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Questions and answers
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Routing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../staged-adoption/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Staged adoption
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../typescript-sdk/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  TypeScript SDK design
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Deployment
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_3">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Deployment
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Docker quickstart
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../docker-platforms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  ARM64 and DGX Spark containers
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Checkpoint integrity
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+            <label class="md-nav__title" for="__nav_4">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Fine-tuning
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning Laya on your own decisions
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning Laya on your own decisions
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#fine-tune-with-laya-train" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Fine-tune with <code>laya-train</code>
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Fine-tune with laya-train">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#from-a-csv" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        From a CSV
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#from-jsonl" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        From JSONL
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#check-the-data-before-a-long-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Check the data before a long run
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sizing-a-run-in-optimizer-updates" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sizing a run in optimizer updates
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-a-run-writes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What a run writes
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#diagnose-a-run-that-stays-at-chance" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Diagnose a run that stays at chance
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#options" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Options
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-the-options-are-worth" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What the options are worth
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fine-tuning-from-python" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Fine-tuning from Python
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-notebook-does-in-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What the notebook does, in order
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-training-recipe" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The training recipe
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#calibration-is-part-of-the-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Calibration is part of the run
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evaluating-before-you-trust-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Evaluating before you trust it
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pushing-to-the-hub" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Pushing to the Hub
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-to-watch" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What to watch
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../finetune_browser_agent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning Laya as a browser-agent decision head
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reference
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_5">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Reference
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/agent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Agent
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/router/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Router
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/helpers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Helpers
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/train/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/langchain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LangChain components
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#fine-tune-with-laya-train" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Fine-tune with <code>laya-train</code>
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Fine-tune with laya-train">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#from-a-csv" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        From a CSV
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#from-jsonl" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        From JSONL
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#check-the-data-before-a-long-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Check the data before a long run
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sizing-a-run-in-optimizer-updates" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sizing a run in optimizer updates
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-a-run-writes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What a run writes
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#diagnose-a-run-that-stays-at-chance" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Diagnose a run that stays at chance
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#options" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Options
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-the-options-are-worth" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What the options are worth
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fine-tuning-from-python" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Fine-tuning from Python
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-notebook-does-in-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What the notebook does, in order
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-training-recipe" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The training recipe
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#calibration-is-part-of-the-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Calibration is part of the run
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evaluating-before-you-trust-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Evaluating before you trust it
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pushing-to-the-hub" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Pushing to the Hub
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-to-watch" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What to watch
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="fine-tuning-laya-on-your-own-decisions">Fine-tuning Laya on your own decisions<a class="headerlink" href="#fine-tuning-laya-on-your-own-decisions" title="Permanent link">&para;</a></h1>
+<p>On the typed-decisions benchmark the base checkpoints score near chance zero-shot — 0.36 and
+0.35 against a 0.318 random baseline — while the fine-tuned checkpoint reaches <strong>0.766</strong> on the
+same 2,000 decisions, above TypeSafe Jev's published 0.727 and above the 0.735 teacher
+self-agreement ceiling. Fine-tuning is where most of the value is, and the public
+<a href="https://github.com/NandhaKishorM/laya/blob/main/notebooks/laya_finetune_typed_decisions_2xT4_kaggle.ipynb">fine-tuning notebook</a>
+runs the whole loop on Kaggle's free 2xT4 GPUs: build the dataset, train with RLCD, fit
+calibration temperatures, evaluate, and push the result to the Hub. This page walks that
+notebook and points at the parts that stay load-bearing when you swap the data for your own.</p>
+<p>The same loop is in the package. <code>laya-train</code> runs it on one device from a CSV or a JSONL of
+labelled decisions in one command, and <code>laya.train.finetune</code> does the same from Python; both are
+described first below, before the notebook.</p>
+<p>The other worked example — a browser-agent decision head on a single 16 GB GPU with no paid API
+— is at <a href="../finetune_browser_agent/">Fine-tuning Laya as a browser-agent decision head</a>.</p>
+<h2 id="fine-tune-with-laya-train">Fine-tune with <code>laya-train</code><a class="headerlink" href="#fine-tune-with-laya-train" title="Permanent link">&para;</a></h2>
+<p><code>laya-train</code> (also <code>laya train</code>) builds the training items, fine-tunes, fits calibration
+temperatures on a slice held out before training, and saves a checkpoint <code>laya.load</code> opens. It
+runs on one device: CUDA, MPS or CPU.</p>
+<h3 id="from-a-csv">From a CSV<a class="headerlink" href="#from-a-csv" title="Permanent link">&para;</a></h3>
+<p>One row per decision, with the text in one column and the correct label in another:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>laya-train<span class="w"> </span>--data<span class="w"> </span>tickets.csv<span class="w"> </span>--text-column<span class="w"> </span>body<span class="w"> </span>--label-column<span class="w"> </span>department<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">           </span>--base<span class="w"> </span>english<span class="w"> </span>--out<span class="w"> </span>./tickets-checkpoint
+</span></code></pre></div>
+<p>The label column becomes a choice question over its distinct values, in the order they first
+appear, with the id given by <code>--question-id</code> (default <code>label</code>) and the instructions given by
+<code>--instructions</code>. The question is saved as <code>questions.json</code> beside the checkpoint; ask the
+fine-tuned model the same question at inference:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">json</span><span class="o">,</span><span class="w"> </span><span class="nn">laya</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">laya</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"./tickets-checkpoint"</span><span class="p">)</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">questions</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="nb">open</span><span class="p">(</span><span class="s2">"./tickets-checkpoint/questions.json"</span><span class="p">))</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="nb">print</span><span class="p">(</span><span class="n">agent</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="s2">"We were billed twice for March."</span><span class="p">,</span> <span class="n">questions</span><span class="p">)[</span><span class="s2">"answers"</span><span class="p">])</span>
+</span></code></pre></div>
+<p>Files saved from Excel with a byte-order mark are read as usual. Rows with an empty text or label
+are skipped and counted.</p>
+<h3 id="from-jsonl">From JSONL<a class="headerlink" href="#from-jsonl" title="Permanent link">&para;</a></h3>
+<p>Each line is one case, and a case may ask several questions of any type. Two label shapes are
+read, and a file may mix them:</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span><span class="nt">"state"</span><span class="p">:</span><span class="w"> </span><span class="s2">"We were billed twice for March."</span><span class="p">,</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w"> </span><span class="nt">"questions"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"department"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"choice"</span><span class="p">,</span><span class="w"> </span><span class="nt">"instructions"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Which team should handle this?"</span><span class="p">,</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">                              </span><span class="nt">"criteria"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"billing"</span><span class="p">:</span><span class="w"> </span><span class="s2">"invoices, refunds"</span><span class="p">,</span><span class="w"> </span><span class="nt">"technical"</span><span class="p">:</span><span class="w"> </span><span class="s2">"bugs, outages"</span><span class="p">}},</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">               </span><span class="nt">"urgent"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"noul"</span><span class="p">,</span><span class="w"> </span><span class="nt">"instructions"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Does this need an answer today?"</span><span class="p">}},</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w"> </span><span class="nt">"expected"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"department"</span><span class="p">:</span><span class="w"> </span><span class="s2">"billing"</span><span class="p">,</span><span class="w"> </span><span class="nt">"urgent"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">}}</span>
+</span></code></pre></div>
+<ul>
+<li><code>expected</code> holds one answer per question, the format <code>laya-evals</code> reads, so the same file can
+  train a checkpoint and evaluate it: a choice label, <code>true</code>/<code>false</code> for a noul, and a level for a
+  score (a fractional level such as <code>1.5</code> splits its weight between levels 1 and 2).
+  <code>--label-smoothing 0.1</code> moves a tenth of each answer's weight to the other options.</li>
+<li><code>gold</code> holds a teacher's probabilities per question, the notebook's schema:
+  <code>{"department": {"probabilities": {"billing": 0.9, "technical": 0.1}}}</code>. Noul probabilities are
+  keyed <code>"false"</code>/<code>"true"</code> and score probabilities by the level index as a string.</li>
+</ul>
+<h3 id="check-the-data-before-a-long-run">Check the data before a long run<a class="headerlink" href="#check-the-data-before-a-long-run" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>laya-train<span class="w"> </span>--data<span class="w"> </span>tickets.csv<span class="w"> </span>--text-column<span class="w"> </span>body<span class="w"> </span>--label-column<span class="w"> </span>department<span class="w"> </span>--dry-run
+</span></code></pre></div>
+<p><code>--dry-run</code> builds the training items with the tokenizer and config of <code>--base</code>, without loading
+its weights or training, and prints how many rows were read, how many items they produced, how many
+questions were skipped and why, and the optimizer-update budget the configured defaults will spend
+(see <a href="#sizing-a-run-in-optimizer-updates">Sizing a run in optimizer updates</a>):</p>
+<table>
+<thead>
+<tr>
+<th>reason</th>
+<th>the question was skipped because</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>empty_text</code>, <code>empty_label</code></td>
+<td>the row had no text, or the question no answer</td>
+</tr>
+<tr>
+<td><code>invalid_question</code>, <code>invalid_target</code></td>
+<td>the question or its answer could not be read</td>
+</tr>
+<tr>
+<td><code>options_collapsed</code></td>
+<td>the head budget left two options with the same tokens (#538)</td>
+</tr>
+<tr>
+<td><code>options_beyond_max_len</code></td>
+<td>the question's options do not fit in <code>max_len</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="sizing-a-run-in-optimizer-updates">Sizing a run in optimizer updates<a class="headerlink" href="#sizing-a-run-in-optimizer-updates" title="Permanent link">&para;</a></h3>
+<p><code>--epochs</code>, <code>--micro-batch</code> and <code>--grad-accum</code> decide how much training a run gets, but the number
+that matters is the optimizer updates it performs. An epoch is split into
+<code>ceil(items / micro_batch)</code> micro-batches; one update runs per <code>grad_accum</code> micro-batches, plus one
+for the final partial window of each epoch, which steps once even when it holds fewer:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>updates = epochs * ceil(ceil(train_items / micro_batch) / grad_accum)
+</span></code></pre></div>
+<p><code>--dry-run</code> and the start of a run both print this budget, from the post-calibration training
+count, with the effective batch:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>optimizer budget: 1100 train item(s), effective batch up to 64 (micro_batch 8 x grad_accum 8), 72 optimizer updates over 4 epoch(s)
+</span></code></pre></div>
+<p>The defaults (4 epochs, effective batch 64) are the notebook's. On typed-decisions' 6,000
+decisions the default 400-item calibration slice leaves 5,600 training items, so a default run
+spends <strong>352</strong> updates — 376 only if no slice were held out. That number is a reference for
+comparing runs of different sizes, not a cutoff: 1,100 <em>training</em> items at the same settings give
+72 updates (64 when 1,100 is the pre-split count and the 10% slice holds 110 out), and
+<a href="https://github.com/NandhaKishorM/laya/issues/963">#963</a> measured a head that collapsed there while
+8 epochs still failed on the task itself. A small dataset therefore needs more epochs to reach a
+similar update count.</p>
+<h3 id="what-a-run-writes">What a run writes<a class="headerlink" href="#what-a-run-writes" title="Permanent link">&para;</a></h3>
+<p><code>--out</code> gets the layout <code>laya.load</code> reads (<code>model.safetensors</code>, <code>encoder/</code>, <code>tokenizer/</code>,
+<code>rl_agent_config.json</code>), plus <code>questions.json</code> and a <code>checkpoint_latest/</code> rewritten after every
+epoch, so a crash costs at most an epoch.</p>
+<p>The config records the <code>max_len</code> and <code>head_max_len</code> the run used, the training settings under
+<code>training.laya_train</code>, and a calibration report under <code>training.laya_train_calibration</code>: per
+question type, how many calibration items the temperature rests on, their accuracy and mean
+confidence, and what to doubt. The same issues are printed as warnings during the run:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>laya.train: choice calibration: not fitted: 2 calibration items, fewer than 10, so the temperature stays 1.0
+</span></code></pre></div>
+<p>A warning like that means the checkpoint's confidences were not calibrated; don't gate on
+<code>min_confidence</code> with it until a run with more data fits them.</p>
+<h3 id="diagnose-a-run-that-stays-at-chance">Diagnose a run that stays at chance<a class="headerlink" href="#diagnose-a-run-that-stays-at-chance" title="Permanent link">&para;</a></h3>
+<p>If a fine-tune never rises above the class prior, accuracy alone cannot say whether the task is
+hard or the budget is wrong. A label-encoding positive control separates the two: prepend a tag
+that spells the answer (for example <code>label=&lt;department&gt;;</code>) to every training and test text, and
+fine-tune on that copy. The model can read the answer off the tag, so the same budget has a
+trivially learnable signal to fit.</p>
+<ul>
+<li>Positive control fails to learn → suspect the budget, the optimization or the run setup, not the
+  task.</li>
+<li>Positive control reaches 1.00 while the real task stays at the prior → the evidence points at
+  task or representation difficulty rather than too few updates.
+  <a href="https://github.com/NandhaKishorM/laya/issues/963">#963</a> measured both at 8 epochs: the positive
+  control reached 1.00 while the real task still collapsed.</li>
+</ul>
+<p>A passing positive control only shows the run can fit a deliberately easy signal; it is not proof
+that the real task is learnable or that the checkpoint generalizes.</p>
+<p>Takeoff near the ln K plateau is also seed-dependent, so one run is not evidence either way.
+<a href="https://github.com/NandhaKishorM/laya/issues/963">#963</a> saw 9 of 15 runs leave the plateau and 6
+never do within 32 epochs, on identical data and configuration. Repeat the run with different seeds
+before concluding that a task is unlearnable or that a budget is fine, and read the collapse
+warning the run prints before gating on <code>min_confidence</code>.</p>
+<h3 id="options">Options<a class="headerlink" href="#options" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>flag</th>
+<th>default</th>
+<th>what it changes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--base</code></td>
+<td><code>convaiinnovations/laya</code></td>
+<td>checkpoint to start from: a directory, a built-in name (<code>english</code>, <code>multilingual</code>, <code>typed-decisions</code>) or a Hub repo id</td>
+</tr>
+<tr>
+<td><code>--loss</code></td>
+<td><code>rlcd</code></td>
+<td><code>rlcd</code> is the notebook's objective; <code>soft-ce</code> trains on the soft cross-entropy alone (#741)</td>
+</tr>
+<tr>
+<td><code>--shuffle-options</code></td>
+<td>off</td>
+<td>re-encodes choice questions with a random option order every epoch, with the answer moved to match</td>
+</tr>
+<tr>
+<td><code>--label-smoothing</code></td>
+<td><code>0.0</code></td>
+<td>weight moved off single answers</td>
+</tr>
+<tr>
+<td><code>--freeze-encoder</code></td>
+<td>off</td>
+<td>trains the decision head only; fits a small GPU or a CPU, but gains much less than a full fine-tune</td>
+</tr>
+<tr>
+<td><code>--epochs</code>, <code>--micro-batch</code>, <code>--grad-accum</code></td>
+<td>4, 8, 8</td>
+<td>the notebook's 4 epochs and effective batch of 64</td>
+</tr>
+<tr>
+<td><code>--encoder-lr</code>, <code>--head-lr</code></td>
+<td>2.5e-5, 1e-4</td>
+<td>learning rates</td>
+</tr>
+<tr>
+<td><code>--max-len</code>, <code>--head-max-len</code></td>
+<td>the base checkpoint's</td>
+<td>token budgets; the notebook uses 1024 and 256</td>
+</tr>
+<tr>
+<td><code>--eval</code>, <code>--eval-data</code></td>
+<td>none</td>
+<td>a second dataset, answered before and after the fine-tune. Without it the "after" numbers come from the calibration slice; the run's report says which of the two it is (<code>eval_mode</code>, <code>is_held_out</code>, <code>note</code>), and rows whose state and question also occur in the training or calibration inputs count as overlap and stop the metrics being held out (#967)</td>
+</tr>
+<tr>
+<td><code>--target-error</code></td>
+<td><code>0.10</code></td>
+<td>the error the run fits the checkpoint's per-bucket abstention thresholds to keep among the answers it accepts</td>
+</tr>
+<tr>
+<td><code>--min-abstain-n</code></td>
+<td><code>10</code></td>
+<td>a bucket with fewer items than this is left out of that map, and <code>resolve_min_confidence</code> gates that option count at 0.0 -- nothing abstains -- unless the caller sets <code>min_confidence</code> itself</td>
+</tr>
+<tr>
+<td><code>--device</code>, <code>--seed</code></td>
+<td><code>auto</code>, 0</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>Mixed precision is on for CUDA. On a GPU where fp16 runs slower than fp32 (the GTX 16xx cards, for
+example), set <code>amp=False</code> in <code>TrainConfig</code> from Python.</p>
+<h3 id="what-the-options-are-worth">What the options are worth<a class="headerlink" href="#what-the-options-are-worth" title="Permanent link">&para;</a></h3>
+<p>Full fine-tunes of <code>convaiinnovations/laya</code> on one T4 per run, with the notebook's settings, from
+<a href="https://github.com/NandhaKishorM/laya/issues/887">#887</a>.</p>
+<p>On typed-decisions (6,000 training decisions, all 2,000 test decisions, one seed):</p>
+<table>
+<thead>
+<tr>
+<th>run</th>
+<th>accuracy</th>
+<th>ECE</th>
+<th>choice answers that change with the options reversed</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>base checkpoint</td>
+<td>0.362</td>
+<td>0.174</td>
+<td>0.357</td>
+</tr>
+<tr>
+<td><code>--loss rlcd</code> (the default)</td>
+<td>0.7715</td>
+<td>0.150</td>
+<td>0.065</td>
+</tr>
+<tr>
+<td><code>--loss soft-ce</code></td>
+<td>0.790</td>
+<td>0.157</td>
+<td>0.078</td>
+</tr>
+<tr>
+<td><code>--loss soft-ce --shuffle-options</code></td>
+<td>0.7875</td>
+<td>0.159</td>
+<td>0.062</td>
+</tr>
+</tbody>
+</table>
+<p>On MASSIVE intent in English, with 20 options per question (11,514 training rows, all 2,974 test
+cases, each also answered in 3 shuffled orders; <code>--loss soft-ce</code>, two seeds per row):</p>
+<table>
+<thead>
+<tr>
+<th>run</th>
+<th>accuracy</th>
+<th>answers that change when the options are reordered</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>base checkpoint</td>
+<td>0.730</td>
+<td>0.187</td>
+</tr>
+<tr>
+<td>without <code>--shuffle-options</code></td>
+<td>0.936</td>
+<td>0.026</td>
+</tr>
+<tr>
+<td>with <code>--shuffle-options</code></td>
+<td>0.941</td>
+<td>0.019</td>
+</tr>
+</tbody>
+</table>
+<p>With 4 options, fine-tuning alone already makes answers stable under reordering, and shuffling
+changes nothing measurable. With 20 options it raises accuracy by 0.55 points and cuts the answers
+that change by about a quarter, both significant over the two seeds, for about 14% more training
+time. Use it when questions have many options.</p>
+<h2 id="fine-tuning-from-python">Fine-tuning from Python<a class="headerlink" href="#fine-tuning-from-python" title="Permanent link">&para;</a></h2>
+<p><code>laya.train.finetune</code> is what <code>laya-train</code> calls:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">laya</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">laya.train</span><span class="w"> </span><span class="kn">import</span> <span class="n">TrainConfig</span><span class="p">,</span> <span class="n">finetune</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="n">report</span> <span class="o">=</span> <span class="n">finetune</span><span class="p">(</span><span class="s2">"train.jsonl"</span><span class="p">,</span> <span class="s2">"english"</span><span class="p">,</span> <span class="s2">"./my-checkpoint"</span><span class="p">,</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>                  <span class="n">TrainConfig</span><span class="p">(</span><span class="n">loss</span><span class="o">=</span><span class="s2">"soft-ce"</span><span class="p">,</span> <span class="n">shuffle_options</span><span class="o">=</span><span class="p">(</span><span class="s2">"choice"</span><span class="p">,)))</span>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="nb">print</span><span class="p">(</span><span class="n">report</span><span class="p">[</span><span class="s2">"train_items"</span><span class="p">],</span> <span class="n">report</span><span class="p">[</span><span class="s2">"skipped"</span><span class="p">],</span> <span class="n">report</span><span class="p">[</span><span class="s2">"calibration"</span><span class="p">])</span>
+</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>
+</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">laya</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"./my-checkpoint"</span><span class="p">)</span>
+</span></code></pre></div>
+<p><code>TrainConfig()</code> has the defaults in the table above, plus the settings the command does not
+expose: <code>amp</code> and <code>gradient_checkpointing</code> (on for CUDA by default), the calibration slice
+(<code>calib_max=400</code> items or <code>calib_frac=0.1</code>, whichever is smaller), and <code>option_layout</code>. The
+returned report has <code>train_items</code>, <code>calibration_items</code>, <code>skipped</code>, <code>epoch_loss</code>, the fitted
+<code>temperature</code> and <code>temperature_by_options</code>, and the <code>calibration</code> report. For a data pipeline of
+your own, <code>train_model</code> and <code>calibration_records</code> are the two halves <code>finetune</code> is built from; the
+<a href="../reference/train/">API reference</a> lists them all.</p>
+<h2 id="what-the-notebook-does-in-order">What the notebook does, in order<a class="headerlink" href="#what-the-notebook-does-in-order" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>step</th>
+<th>what happens</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Environment</td>
+<td>asserts both T4 GPUs are visible and allocated</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Install</td>
+<td><code>laya</code>, <code>transformers</code>, <code>datasets</code> and the training dependencies</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Preprocess</td>
+<td>the 1,200 training cases (6,000 typed decisions) become tokenized items with soft targets, written to disk for both DDP ranks</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Train</td>
+<td><code>train_ddp.py</code> under <code>torchrun --nproc_per_node=2</code>, four epochs</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Calibrate</td>
+<td>one temperature per type, fitted on a slice held out before training (inside the training script, after the last epoch)</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Evaluate</td>
+<td>the official <code>test</code> split answered by the fine-tuned checkpoint — 400 cases, 2,000 decisions — with per-case latency</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Metrics</td>
+<td>accuracy, soft accuracy, Brier, ECE, score MAE, within-one-level, KL/TV and latency percentiles; a head-to-head table against Jev and the teacher ceiling</td>
+</tr>
+<tr>
+<td>8</td>
+<td>Publish</td>
+<td>(optional) a model card built from the run's own numbers, folder uploaded to the Hub</td>
+</tr>
+<tr>
+<td>9</td>
+<td>Report</td>
+<td><code>benchmark_report.json</code> with the metrics table and per-workflow accuracy</td>
+</tr>
+</tbody>
+</table>
+<p>Kaggle settings: <strong>Accelerator</strong> <code>GPU T4 x2</code>, <strong>Internet</strong> <code>On</code>. Outputs land in
+<code>/kaggle/working/laya_finetuned_typed_decisions</code>.</p>
+<h2 id="the-training-recipe">The training recipe<a class="headerlink" href="#the-training-recipe" title="Permanent link">&para;</a></h2>
+<p>RLCD trains on the benchmark's <strong>gold distributions</strong>, not on hard labels: every item carries
+the probability the teacher assigned to each option, and both halves of the loss read that
+target —</p>
+<ul>
+<li>a <strong>policy-gradient term</strong> over sampled noisy logit projections (GRPO-style: four samples per
+  item, exploration noise annealed 0.4 → 0.1), rewarded by proper scoring rules (spherical
+  0.75, ranked probability 1.0);</li>
+<li>a full-weight <strong>soft cross-entropy</strong> term against the same distribution.</li>
+</ul>
+<p>The knobs the notebook sets for a 16 GB card:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>epochs</td>
+<td>4</td>
+</tr>
+<tr>
+<td>effective batch</td>
+<td>64 sequences (8 per micro-batch, 2 GPUs, 4 accumulation steps)</td>
+</tr>
+<tr>
+<td>learning rates</td>
+<td>encoder 2.5e-5, head 1e-4 — AdamW, cosine schedule</td>
+</tr>
+<tr>
+<td>memory</td>
+<td>fp16 autocast, gradient checkpointing on the encoder and the head, gradient-norm clip 1.0</td>
+</tr>
+<tr>
+<td>sequence budget</td>
+<td><code>max_len</code> 1024, <code>head_max_len</code> 256, <code>max_tokens_per_batch</code> 4096</td>
+</tr>
+</tbody>
+</table>
+<p>Runtime on 2xT4 is minutes for the demo and hours for real data: about 4–6 minutes for the
+demo's 6,000 decisions, and roughly 4–5 hours for four epochs over ~30k questions.</p>
+<p>To point it at your data, replace the two <code>load_dataset</code> calls and keep the row schema: each
+case carries <code>state</code>, <code>questions</code> and <code>gold</code> (the teacher probabilities per question), and the
+preprocessor turns them into items. The question types are <code>choice</code>, <code>score</code> and <code>noul</code>;
+anything you can express with them over a state is fair game.</p>
+<h2 id="calibration-is-part-of-the-run">Calibration is part of the run<a class="headerlink" href="#calibration-is-part-of-the-run" title="Permanent link">&para;</a></h2>
+<p>This is the step most likely to be dropped when copying the loop, and it is load-bearing the
+moment anyone gates on confidence.</p>
+<p>The notebook takes a <strong>calibration slice out of the training data before sharding it across
+ranks</strong> (up to 400 items, or 10%, at a fixed seed, identical on every rank). Fitting
+temperatures on items the run has already trained on measures the fit rather than the
+calibration — the model is near-certain and near-correct on them, so the optimiser has nothing
+to soften and returns a degenerate scale.</p>
+<p>After the last epoch, rank 0 fits <strong>one temperature per question type</strong> (<code>choice</code>, <code>score</code>,
+<code>noul</code>) by LBFGS on the log-temperature, clamped to <code>[0.1, 10]</code> (<code>1.0</code> for a slice under ten
+items, <code>1.2</code> if the fit raises). The values go into <code>rl_agent_config.json</code> as <code>temperature</code>,
+and the notebook <strong>removes any inherited <code>temperature_by_options</code></strong> in the same write: those
+old bucket values take precedence at inference and would silently mask the new fit.</p>
+<p>Temperature scaling leaves the argmax — and accuracy — unchanged; what moves is the
+confidence. The checkpoints as shipped are over-confident, so fit before relying on any
+threshold, and evaluate the result on held-out data before claiming an improvement. The
+config-persistence regression runs without downloads or training:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>python<span class="w"> </span>tests/test_calibration_persistence.py
+</span></code></pre></div>
+<h2 id="evaluating-before-you-trust-it">Evaluating before you trust it<a class="headerlink" href="#evaluating-before-you-trust-it" title="Permanent link">&para;</a></h2>
+<p>The evaluation is a full pass over the official test split: 400 cases, 2,000 decisions across
+Agent Trace Observability, Customer Service, Invoice Processing and Security Incidents. It
+computes accuracy, soft accuracy, Brier, ECE (via <code>laya.common.ece_score</code>), score MAE,
+within-one-level and latency percentiles, then builds a head-to-head table whose reference rows
+are fixed:</p>
+<table>
+<thead>
+<tr>
+<th>model</th>
+<th>kind</th>
+<th>accuracy</th>
+<th>ECE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>TypeSafe Jev 1.13.0</td>
+<td>general</td>
+<td>0.727</td>
+<td>0.144</td>
+</tr>
+<tr>
+<td>ModernBERT-base (149M)</td>
+<td>specialist</td>
+<td>0.646</td>
+<td>0.179</td>
+</tr>
+<tr>
+<td>Teacher Self-Agreement</td>
+<td>ceiling</td>
+<td>0.735</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Laya (published checkpoint)</td>
+<td>fine-tuned</td>
+<td>0.766</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p>The Laya row of your own run is computed the same way — the notebook rebuilds the table from
+the run's own numbers. Two habits worth copying: keep the slices you care about (a language, a
+workflow) inside held-out data, and report calibration next to accuracy, because the training
+signal is a distribution, not just a label. When you have numbers, a post in the repository's
+<a href="https://github.com/NandhaKishorM/laya/discussions">Discussions</a> is the place to share them;
+benchmarks and known limits live in <code>BENCHMARKS.md</code> at the repository root.</p>
+<h2 id="pushing-to-the-hub">Pushing to the Hub<a class="headerlink" href="#pushing-to-the-hub" title="Permanent link">&para;</a></h2>
+<p>The publish cell is the loop's last mile, and it is deliberately boring:</p>
+<ol>
+<li>Put a write <code>HF_TOKEN</code> in Kaggle (Add-ons → Secrets). The cell raises with the exact
+   instructions if it is missing.</li>
+<li>Set the destination repo — the shipped cell defaults to a name in the project's own
+   namespace, so change it before running.</li>
+<li>Run it. It writes a model card whose numbers come from this run's comparison table, then
+   uploads <code>model.safetensors</code>, <code>encoder/</code>, <code>tokenizer/</code>, <code>rl_agent_config.json</code>, the card and
+   the benchmark report.</li>
+</ol>
+<p>The result loads like any other checkpoint — there is no fine-tuning-specific API:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">laya</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">laya</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"your-org/your-checkpoint"</span><span class="p">)</span>   <span class="c1"># the repo you just pushed</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="n">result</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">questions</span><span class="p">)</span>
+</span></code></pre></div>
+<p>A rolling <code>checkpoint_latest/</code> is overwritten after every epoch, so a Kaggle timeout or OOM
+costs one epoch rather than the run.</p>
+<h2 id="what-to-watch">What to watch<a class="headerlink" href="#what-to-watch" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>The loop is only as good as the targets.</strong> RLCD imitates a teacher's distribution on your
+  questions; collect the teacher confidences before (or alongside) training, and treat their
+  quality as the ceiling.</li>
+<li><strong>The calibration slice is small on purpose.</strong> Up to 400 items or 10% — enough for three
+  per-type scalars, not enough to validate against. Hold out your own evaluation data.</li>
+<li><strong>Your labels must fit the three primitives.</strong> If your decision is not a choice, a scale or a
+  yes/no probability, shape it into one first. Two sharp edges are already documented: high
+  option counts degrade confidence selection (<a href="https://github.com/NandhaKishorM/laya/issues/394">#394</a>),
+  and forced-choice negation can follow the question over the state (<a href="https://github.com/NandhaKishorM/laya/issues/377">#377</a>).</li>
+<li><strong>Ship the config, not just the weights.</strong> The removed <code>temperature_by_options</code> is the part
+  that silently un-fits a calibration if it survives in a copied config.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../security/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Checkpoint integrity">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Checkpoint integrity
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../finetune_browser_agent/" class="md-footer__link md-footer__link--next" aria-label="Next: Fine-tuning Laya as a browser-agent decision head">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Fine-tuning Laya as a browser-agent decision head
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Apache 2.0. Developed by Convai Innovations.
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":["content.code.copy","navigation.footer","navigation.indexes"],"redirect":null,"search":"../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.c04ba553.min.js"></script>
+      
+    
+  </body>
+</html>

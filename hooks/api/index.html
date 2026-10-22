@@ -1,0 +1,2994 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Multilingual, non-autoregressive System 1 decision engine">
+      
+      
+      
+        <link rel="canonical" href="https://thread3d.github.io/laya/hooks/api/">
+      
+      
+        <link rel="prev" href="../">
+      
+      
+        <link rel="next" href="../lifecycle/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="https://raw.githubusercontent.com/NandhaKishorM/laya/main/assets/logo-mark.svg">
+      <meta name="generator" content="zensical-0.0.65">
+    
+    
+      
+        <title>API reference - Laya</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.40d3fdbb.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#api-reference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Laya" class="md-header__button md-logo" aria-label="Laya" data-md-component="logo">
+      
+  <img src="https://raw.githubusercontent.com/NandhaKishorM/laya/main/assets/logo-mark.svg" alt="Laya">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Laya
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              API reference
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/NandhaKishorM/laya" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    NandhaKishorM/laya
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Laya" class="md-nav__button md-logo" aria-label="Laya" data-md-component="logo">
+      
+  <img src="https://raw.githubusercontent.com/NandhaKishorM/laya/main/assets/logo-mark.svg" alt="Laya">
+
+    </a>
+    Laya
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/NandhaKishorM/laya" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    NandhaKishorM/laya
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Laya
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guides
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+            <label class="md-nav__title" for="__nav_2">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Guides
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../use-cases/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Architectural Patterns and Production Use Cases
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../structured/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Schema-driven decisions
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_3" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hooks
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2_3" id="__nav_2_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_3_label" aria-expanded="true">
+            <label class="md-nav__title" for="__nav_2_3">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Hooks
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+              
+                
+                  
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API reference
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API reference
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#predictcontext" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        PredictContext
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="PredictContext">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#predictcontextskipresults" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>PredictContext.skip(results)</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hook-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Hook protocol
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Hook protocol">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#basehook" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        BaseHook
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#optionstabilityhook" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        OptionStabilityHook
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="OptionStabilityHook">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#calibrating-and-replaying-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Calibrating and replaying decisions
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-it-costs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What it costs
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#convenience-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Convenience types
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#runtime-registration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Runtime registration
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#process-wide-defaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Process-wide defaults
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#async-hooks" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Async hooks
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Configuration surface
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuration surface">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Agent
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#router" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Router
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#onnxagent" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        ONNXAgent
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#event-payloads" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Event payloads
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Validation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#advanced-helpers" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Advanced helpers
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        See also
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../lifecycle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Lifecycle
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../errors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Error handling
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../patterns/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Patterns and anti-patterns
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Examples
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tracing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Tracing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../langchain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LangChain &amp; LangGraph Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../llamaindex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LlamaIndex Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../crewai/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CrewAI Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agno/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Agno Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Tool &amp; Function Selection
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Benchmarks and known limits
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli-mcp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Command line and MCP server
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../compile-and-fast-path/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  compile=True and the TileLang fast path: engineering notes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../evals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Evaluation harness
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../fast-backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fast backends
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guardrail-limitations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guardrail Limitations
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../http-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  HTTP API
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../questions-and-answers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Questions and answers
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Routing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../staged-adoption/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Staged adoption
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../typescript-sdk/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  TypeScript SDK design
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Deployment
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_3">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Deployment
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Docker quickstart
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../docker-platforms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  ARM64 and DGX Spark containers
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Checkpoint integrity
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_4">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Fine-tuning
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../finetune/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning Laya on your own decisions
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../finetune_browser_agent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning Laya as a browser-agent decision head
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reference
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_5">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Reference
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/agent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Agent
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/router/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Router
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/helpers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Helpers
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/train/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Fine-tuning
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/langchain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LangChain components
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#predictcontext" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        PredictContext
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="PredictContext">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#predictcontextskipresults" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>PredictContext.skip(results)</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hook-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Hook protocol
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Hook protocol">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#basehook" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        BaseHook
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#optionstabilityhook" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        OptionStabilityHook
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="OptionStabilityHook">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#calibrating-and-replaying-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Calibrating and replaying decisions
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-it-costs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What it costs
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#convenience-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Convenience types
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#runtime-registration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Runtime registration
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#process-wide-defaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Process-wide defaults
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#async-hooks" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Async hooks
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Configuration surface
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuration surface">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Agent
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#router" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Router
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#onnxagent" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        ONNXAgent
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#event-payloads" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Event payloads
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Validation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#advanced-helpers" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Advanced helpers
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        See also
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="api-reference">API reference<a class="headerlink" href="#api-reference" title="Permanent link">&para;</a></h1>
+<p>Everything on this page is importable from <code>laya</code> (the common names) or <code>laya.hooks</code> (the
+whole surface).</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">laya</span><span class="w"> </span><span class="kn">import</span> <span class="n">PredictContext</span><span class="p">,</span> <span class="n">PredictHook</span><span class="p">,</span> <span class="n">Hook</span><span class="p">,</span> <span class="n">OptionStabilityHook</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">laya.hooks</span><span class="w"> </span><span class="kn">import</span> <span class="n">HOOK_EVENTS</span><span class="p">,</span> <span class="n">normalise_hooks</span><span class="p">,</span> <span class="n">dispatch</span><span class="p">,</span> <span class="n">aggregate_usage</span>
+</span></code></pre></div>
+<ul>
+<li><a href="#predictcontext">PredictContext</a></li>
+<li><a href="#hook-protocol">Hook protocol</a></li>
+<li><a href="#optionstabilityhook">OptionStabilityHook</a></li>
+<li><a href="#convenience-types">Convenience types</a></li>
+<li><a href="#configuration-surface">Configuration surface</a></li>
+<li><a href="#event-payloads">Event payloads</a></li>
+<li><a href="#validation">Validation</a></li>
+<li><a href="#advanced-helpers">Advanced helpers</a></li>
+</ul>
+<h2 id="predictcontext">PredictContext<a class="headerlink" href="#predictcontext" title="Permanent link">&para;</a></h2>
+<p>A <code>PredictContext</code> is created once per public call and passed to every hook of that call.
+<code>Router.predict_batch</code> is the one exception: it creates one per request, as a <code>Router.predict</code>
+call for that request would, so its Router-level hooks fire once per request with one state
+each. It is <strong>mutable</strong>: hooks may rewrite <code>states</code>, <code>questions</code> and <code>results</code>, and <code>on_route</code> may rewrite
+<code>decision</code>. It uses identity equality (<code>eq=False</code>), so a context is hashable and two contexts are
+never equal.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">eq</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="k">class</span><span class="w"> </span><span class="nc">PredictContext</span><span class="p">:</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">states</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="n">questions</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="n">run_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="o">&lt;</span><span class="n">uuid4</span> <span class="nb">hex</span><span class="o">&gt;</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="n">results</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]]</span> <span class="o">=</span> <span class="kc">None</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    <span class="n">decision</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    <span class="n">model</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>    <span class="n">agent</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>    <span class="n">router</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>    <span class="n">max_len</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>    <span class="n">head_max_len</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>    <span class="n">usage</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span>
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>    <span class="n">started_at</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="o">&lt;</span><span class="n">perf_counter</span><span class="p">()</span><span class="o">&gt;</span>
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>    <span class="n">elapsed_ms</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>    <span class="n">error</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="ne">BaseException</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>field</th>
+<th>type</th>
+<th>set when</th>
+<th>mutable</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>states</code></td>
+<td><code>list</code></td>
+<td>always</td>
+<td>yes (start)</td>
+<td>the states for this call. <code>system_one</code>/<code>Router.predict</code> pass one; <code>Agent.predict_batch</code> passes many; <code>Router.predict_batch</code> passes one per request. A start hook may replace the list.</td>
+</tr>
+<tr>
+<td><code>questions</code></td>
+<td><code>dict</code></td>
+<td>always</td>
+<td>yes (start)</td>
+<td>the questions. A start hook may replace the dict.</td>
+</tr>
+<tr>
+<td><code>run_id</code></td>
+<td><code>str</code></td>
+<td>always</td>
+<td>no</td>
+<td>a unique id shared by the predict events of this call (<code>on_predict_start</code>, <code>on_predict_end</code>, <code>on_error</code>). <code>on_route</code>, <code>on_load</code> and <code>on_evict</code> are dispatched with contexts of their own, so their <code>run_id</code> differs even within one <code>Router.predict</code>. Use it to correlate events and spans.</td>
+</tr>
+<tr>
+<td><code>results</code></td>
+<td><code>list \| None</code></td>
+<td>end (and on a skip)</td>
+<td>yes (end)</td>
+<td>per-state result dicts, each shaped like <code>system_one</code>'s return. <code>None</code> until inference finishes.</td>
+</tr>
+<tr>
+<td><code>decision</code></td>
+<td><code>dict \| None</code></td>
+<td>Router only</td>
+<td>yes (route)</td>
+<td>the <code>RouteDecision</code> (a <code>dict</code>) that selected the checkpoint.</td>
+</tr>
+<tr>
+<td><code>model</code></td>
+<td><code>str \| None</code></td>
+<td>always</td>
+<td>no</td>
+<td>the checkpoint id: <code>Agent.model_id</code> for an Agent, the resolved alias (for example <code>"english"</code>) for a Router.</td>
+</tr>
+<tr>
+<td><code>agent</code></td>
+<td><code>Agent \| ONNXAgent \| None</code></td>
+<td>predict events</td>
+<td>no</td>
+<td>the runtime answering the call.</td>
+</tr>
+<tr>
+<td><code>router</code></td>
+<td><code>Router \| None</code></td>
+<td>Router events</td>
+<td>no</td>
+<td>the Router, when one is in play.</td>
+</tr>
+<tr>
+<td><code>max_len</code></td>
+<td><code>int \| None</code></td>
+<td>always</td>
+<td>yes (start)</td>
+<td>per-call token budget for the encoder. <code>None</code> uses the agent config.</td>
+</tr>
+<tr>
+<td><code>head_max_len</code></td>
+<td><code>int \| None</code></td>
+<td>always</td>
+<td>yes (start)</td>
+<td>per-call token budget for the question head. <code>None</code> uses the agent config.</td>
+</tr>
+<tr>
+<td><code>usage</code></td>
+<td><code>dict \| None</code></td>
+<td>end</td>
+<td>yes (end)</td>
+<td><code>{"input_tokens", "output_tokens"}</code>, summed over the states of the call.</td>
+</tr>
+<tr>
+<td><code>started_at</code></td>
+<td><code>float</code></td>
+<td>always</td>
+<td>no</td>
+<td><code>time.perf_counter()</code> when the call began.</td>
+</tr>
+<tr>
+<td><code>elapsed_ms</code></td>
+<td><code>float \| None</code></td>
+<td>end</td>
+<td>no</td>
+<td>wall time in milliseconds, measured from <code>started_at</code>. On an Agent that is the whole call. On a Router <code>started_at</code> is reset after routing and loading, so it is the prediction only -- a cold model load is not in it.</td>
+</tr>
+<tr>
+<td><code>error</code></td>
+<td><code>BaseException \| None</code></td>
+<td>failure path</td>
+<td>no</td>
+<td>the exception, set before <code>on_error</code> and <code>on_predict_end</code>.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="predictcontextskipresults"><code>PredictContext.skip(results)</code><a class="headerlink" href="#predictcontextskipresults" title="Permanent link">&para;</a></h3>
+<p>Short-circuits inference. Called from <code>on_predict_start</code>, it sets <code>ctx.results</code> so the forward
+pass is skipped; <code>on_predict_end</code> still runs and the supplied results are returned.</p>
+<p>The key has to cover everything the answer depends on, and the hook has to cover everything the
+call carries: hooks fire once per call, and <code>predict_batch</code> calls them with every state at once.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span><span class="o">,</span><span class="w"> </span><span class="nn">json</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">CACHE</span> <span class="o">=</span> <span class="p">{}</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="k">def</span><span class="w"> </span><span class="nf">key</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">index</span><span class="p">):</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="c1"># Not sort_keys=True: criteria order is positional, so two orders are two questions,</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="c1"># and the checkpoint and token budget change the answer too.</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="n">payload</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">([</span><span class="n">ctx</span><span class="o">.</span><span class="n">states</span><span class="p">[</span><span class="n">index</span><span class="p">],</span> <span class="n">ctx</span><span class="o">.</span><span class="n">questions</span><span class="p">,</span> <span class="n">ctx</span><span class="o">.</span><span class="n">model</span><span class="p">,</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>                          <span class="n">ctx</span><span class="o">.</span><span class="n">max_len</span><span class="p">,</span> <span class="n">ctx</span><span class="o">.</span><span class="n">head_max_len</span><span class="p">],</span> <span class="n">default</span><span class="o">=</span><span class="nb">str</span><span class="p">)</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>    <span class="k">return</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">(</span><span class="n">payload</span><span class="o">.</span><span class="n">encode</span><span class="p">())</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="k">def</span><span class="w"> </span><span class="nf">cache_read</span><span class="p">(</span><span class="n">ctx</span><span class="p">):</span>
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>    <span class="n">hits</span> <span class="o">=</span> <span class="p">[</span><span class="n">CACHE</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">i</span><span class="p">))</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">ctx</span><span class="o">.</span><span class="n">states</span><span class="p">))]</span>
+</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>    <span class="k">if</span> <span class="nb">all</span><span class="p">(</span><span class="n">hit</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">for</span> <span class="n">hit</span> <span class="ow">in</span> <span class="n">hits</span><span class="p">):</span>
+</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>        <span class="n">ctx</span><span class="o">.</span><span class="n">skip</span><span class="p">(</span><span class="n">hits</span><span class="p">)</span>   <span class="c1"># one entry per state, same shape as predict_batch's return</span>
+</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>
+</span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="k">def</span><span class="w"> </span><span class="nf">cache_write</span><span class="p">(</span><span class="n">ctx</span><span class="p">):</span>
+</span><span id="__span-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">result</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">ctx</span><span class="o">.</span><span class="n">results</span> <span class="ow">or</span> <span class="p">[]):</span>
+</span><span id="__span-2-19"><a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>        <span class="n">CACHE</span><span class="p">[</span><span class="n">key</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">i</span><span class="p">)]</span> <span class="o">=</span> <span class="n">result</span>
+</span><span id="__span-2-20"><a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>
+</span><span id="__span-2-21"><a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="n">laya</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"convaiinnovations/laya"</span><span class="p">,</span> <span class="n">on_predict_start</span><span class="o">=</span><span class="n">cache_read</span><span class="p">,</span> <span class="n">on_predict_end</span><span class="o">=</span><span class="n">cache_write</span><span class="p">)</span>
+</span></code></pre></div>
+<p><code>tests/test_hooks_api.py</code> execs this block, <code>examples/hooks/cache.py</code>, and the caching blocks of
+<code>docs/hooks/patterns.md</code> and <code>docs/hooks/examples.md</code>, and asserts all four keys the same way, so a
+page cannot teach a key the example has moved on from.</p>
+<p>On the <code>Router</code>, a skipped payload gets a <code>routing</code> key added (without overwriting one it
+already has), so <code>Router.predict</code> keeps its documented return shape.</p>
+<h2 id="hook-protocol">Hook protocol<a class="headerlink" href="#hook-protocol" title="Permanent link">&para;</a></h2>
+<p><code>Hook</code> is a <code>typing.Protocol</code>. Implement any subset of the methods; the rest are skipped.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">Hook</span><span class="p">(</span><span class="n">Protocol</span><span class="p">):</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">on_predict_start</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ctx</span><span class="p">:</span> <span class="n">PredictContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">on_predict_end</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ctx</span><span class="p">:</span> <span class="n">PredictContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">on_route</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ctx</span><span class="p">:</span> <span class="n">PredictContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">on_load</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ctx</span><span class="p">:</span> <span class="n">PredictContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">on_evict</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ctx</span><span class="p">:</span> <span class="n">PredictContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">on_error</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ctx</span><span class="p">:</span> <span class="n">PredictContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>event</th>
+<th>where</th>
+<th>runs</th>
+<th>can change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>on_predict_start</code></td>
+<td>Agent, Router</td>
+<td>before tokenization/forward</td>
+<td><code>states</code>, <code>questions</code>, or <code>skip()</code></td>
+</tr>
+<tr>
+<td><code>on_predict_end</code></td>
+<td>Agent, Router</td>
+<td>after results exist, success or failure</td>
+<td><code>results</code></td>
+</tr>
+<tr>
+<td><code>on_route</code></td>
+<td>Router</td>
+<td>after detection, before loading</td>
+<td><code>decision</code></td>
+</tr>
+<tr>
+<td><code>on_load</code></td>
+<td>Router</td>
+<td>after a checkpoint is built</td>
+<td>nothing (observe)</td>
+</tr>
+<tr>
+<td><code>on_evict</code></td>
+<td>Router</td>
+<td>after a checkpoint is freed</td>
+<td>nothing (observe)</td>
+</tr>
+<tr>
+<td><code>on_error</code></td>
+<td>Agent, Router</td>
+<td>when a predict call fails</td>
+<td>nothing (observe)</td>
+</tr>
+</tbody>
+</table>
+<p>A hook is free to define extra attributes and methods; only the six event names are consulted.
+If a hook defines one of the six as a non-callable, configuration fails fast (see
+<a href="#validation">Validation</a>).</p>
+<h3 id="basehook">BaseHook<a class="headerlink" href="#basehook" title="Permanent link">&para;</a></h3>
+<p><code>BaseHook</code> is the concrete counterpart to the protocol: a class with a no-op body for every event.
+Subclass it and override only the events you need.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">laya</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseHook</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="k">class</span><span class="w"> </span><span class="nc">Audit</span><span class="p">(</span><span class="n">BaseHook</span><span class="p">):</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">on_predict_end</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ctx</span><span class="p">):</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>        <span class="n">ship</span><span class="p">(</span><span class="n">ctx</span><span class="o">.</span><span class="n">run_id</span><span class="p">,</span> <span class="n">ctx</span><span class="o">.</span><span class="n">results</span><span class="p">)</span>
+</span></code></pre></div>
+<p><code>Hook</code> is best when you want structural typing (any object with the right methods); <code>BaseHook</code> is
+best when you want an explicit base to subclass and call <code>super()</code> on.</p>
+<h2 id="optionstabilityhook">OptionStabilityHook<a class="headerlink" href="#optionstabilityhook" title="Permanent link">&para;</a></h2>
+<p><code>OptionStabilityHook</code> evaluates prediction reliability across meaning-preserving option permutations and letter renamings (addressing issue #635). It executes variants in the same single-forward-pass batch without multiple network calls or serial invocations.</p>
+<p>Layout-aware (#635, #951): on checkpoints using parallel option layouts (<code>option_layout="parallel"</code>), options cannot attend to each other so reordering cannot move decisions by construction. The hook automatically detects layout from the agent config, executing rename-only probes on parallel checkpoints while running both rename and reorder probes on sequential checkpoints.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">laya</span><span class="w"> </span><span class="kn">import</span> <span class="n">OptionStabilityHook</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="c1"># Required accept and escalate thresholds; pass None to disable categorical triage:</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">stability_hook</span> <span class="o">=</span> <span class="n">OptionStabilityHook</span><span class="p">(</span><span class="n">accept</span><span class="o">=</span><span class="mf">0.85</span><span class="p">,</span> <span class="n">escalate</span><span class="o">=</span><span class="mf">0.60</span><span class="p">,</span> <span class="n">variants</span><span class="o">=</span><span class="s2">"fast"</span><span class="p">)</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">laya</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"convaiinnovations/laya"</span><span class="p">,</span> <span class="n">hooks</span><span class="o">=</span><span class="p">[</span><span class="n">stability_hook</span><span class="p">])</span>
+</span></code></pre></div>
+<p>Thresholds <code>accept</code> and <code>escalate</code> are required keyword arguments: categorical gating decisions (<code>ACCEPT</code>, <code>VERIFY</code>, <code>ESCALATE</code>) depend directly on application error tolerance, option count, and temperature calibration (Issue #1245). Pass <code>accept=None, escalate=None</code> to evaluate continuous stability signals without applying categorical gating.</p>
+<p>It attaches a <code>reliability</code> diagnostic block to each choice question's answer:
+- <code>probes</code>: List of probe kinds that executed (e.g. <code>["rename"]</code>, <code>["reorder", "rename"]</code>, or <code>[]</code>).
+- <code>option_layout</code>: Checkpoint layout (<code>"parallel"</code> or <code>"sequential"</code>).
+- <code>soft_stability</code>: Mean probability assigned to the chosen option across all evaluated variants, without additional rounding (<code>None</code> if unprobed). This is the exact value used for <code>decision</code>.
+- <code>stability</code>: Fraction of variants whose argmax choice agrees with the original decision (<code>None</code> if unprobed).
+- <code>rename_stability</code>: Stability across rename variants (<code>None</code> if no rename probe ran).
+- <code>reorder_stability</code>: Stability across reorder variants (<code>None</code> if no reorder probe ran).
+- <code>decision</code>: Categorical classification (<code>ACCEPT</code>, <code>VERIFY</code>, or <code>ESCALATE</code>, or <code>None</code> if unprobed).
+- <code>variant_choices</code>: Mapping of variant name to decoded choice.
+- <code>variant_support</code>: Mapping of variant name to probability mass on the primary choice.</p>
+<h3 id="calibrating-and-replaying-decisions">Calibrating and replaying decisions<a class="headerlink" href="#calibrating-and-replaying-decisions" title="Permanent link">&para;</a></h3>
+<p>Collect <code>soft_stability</code> with <code>accept=None, escalate=None</code> on labelled evaluation examples,
+then pass those numeric values and correctness labels to <code>laya.hooks.calibrate_reliability</code>.
+Only fit or replay probed, numeric scores; exclude unprobed reports with <code>soft_stability=None</code>
+and keep their <code>decision=None</code>.
+It chooses cutoffs from the distinct input scores at their supplied precision; equal scores
+stay in the same group. <code>ACCEPT</code> includes scores equal to <code>accept</code>, while <code>ESCALATE</code> requires
+a score strictly below <code>escalate</code>. If no cutoff meets the requested accuracy, <code>accept=1.01</code>
+accepts nothing. These are fits to the supplied examples, not a guarantee on unseen data.</p>
+<p>Keep the numeric scores and thresholds unchanged when saving them (for example, in JSON).
+Replaying <code>decide_reliability(report["soft_stability"], accept, escalate)</code> then agrees with
+the hook for the same evaluated variants and decoded probabilities. Format a separate display
+string if fewer decimal places are wanted; do not fit or gate on that string. The other stability
+diagnostics and <code>variant_support</code> retain their four-decimal formatting and are not substitutes
+for <code>soft_stability</code> when replaying the gate.</p>
+<p>Earlier reports rounded <code>soft_stability</code> to four decimals even though the gate used the
+unrounded mean. Previously saved reports cannot recover that lost precision: recollect them
+before refitting thresholds. Fixed thresholds still use the same runtime comparison; the
+reported score and newly fitted cutoffs may now contain more decimal places.</p>
+<h3 id="what-it-costs">What it costs<a class="headerlink" href="#what-it-costs" title="Permanent link">&para;</a></h3>
+<p>One forward pass, not several, but a wider one: the variants are extra rows in the same batch.
+A four-option <code>choice</code> costs 3 rows under <code>variants="fast"</code> and 7 under <code>"full"</code>, against 1 with
+no hook. On a GPU or MPS those extra rows are largely absorbed by the batch; on a CPU they are
+not, and the cost is close to linear in rows. Measured here on one 4-option choice, CPU, median
+of 15 calls after 4 warmups:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th style="text-align: right;">rows</th>
+<th style="text-align: right;">median</th>
+<th style="text-align: right;">against baseline</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>no hook</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">62.5 ms</td>
+<td style="text-align: right;">1.00x</td>
+</tr>
+<tr>
+<td><code>variants="fast"</code></td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">123.9 ms</td>
+<td style="text-align: right;">1.98x</td>
+</tr>
+<tr>
+<td><code>variants="full"</code></td>
+<td style="text-align: right;">7</td>
+<td style="text-align: right;">230.5 ms</td>
+<td style="text-align: right;">3.69x</td>
+</tr>
+</tbody>
+</table>
+<p>So on CPU this is a diagnostic to enable deliberately, per request or on a sample of traffic,
+rather than everywhere by default. Scale the row counts by option count from the table in #908.</p>
+<h2 id="convenience-types">Convenience types<a class="headerlink" href="#convenience-types" title="Permanent link">&para;</a></h2>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">PredictHook</span> <span class="o">=</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">PredictContext</span><span class="p">],</span> <span class="kc">None</span><span class="p">]</span>
+</span></code></pre></div>
+<p><code>PredictHook</code> is the type of a plain callable used with <code>on_predict_start=</code> / <code>on_predict_end=</code>.
+Pass a single callable or a sequence of them; each is wrapped into a minimal hook.</p>
+<h2 id="runtime-registration">Runtime registration<a class="headerlink" href="#runtime-registration" title="Permanent link">&para;</a></h2>
+<p>Every runtime mixes in <code>HookRegistry</code>, so hooks can be added, removed or scoped after
+construction. Mutation is thread-safe; a call reads a snapshot of the list, so adding or
+removing a hook never disturbs a call in flight.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">agent</span><span class="o">.</span><span class="n">add_hook</span><span class="p">(</span><span class="n">tracer</span><span class="p">)</span>              <span class="c1"># one hook or a sequence; returns self for chaining</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">agent</span><span class="o">.</span><span class="n">remove_hook</span><span class="p">(</span><span class="n">tracer</span><span class="p">)</span>           <span class="c1"># by identity; True if it was installed</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="k">with</span> <span class="n">agent</span><span class="o">.</span><span class="n">hooks_installed</span><span class="p">(</span><span class="n">debug</span><span class="p">):</span>  <span class="c1"># installed for the block, removed on exit</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>    <span class="n">agent</span><span class="o">.</span><span class="n">system_one</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">questions</span><span class="p">)</span>
+</span></code></pre></div>
+<p><code>add_hook</code> accepts the same objects as <code>hooks=</code> (not plain callables). <code>hooks_installed</code> takes
+any number of hook objects or sequences and, on exit -- including when the block raises -- removes
+exactly what it installed: one occurrence of each hook it added, the most recent. It does not
+restore a snapshot of the list, so a hook the application had already installed stays installed,
+and a hook added inside the block with <code>add_hook</code> is left in place.</p>
+<h2 id="process-wide-defaults">Process-wide defaults<a class="headerlink" href="#process-wide-defaults" title="Permanent link">&para;</a></h2>
+<p><code>laya.hooks</code> keeps a small process-wide registry, so a tracer, metrics hook or tenant tagger does
+not have to be threaded through every <code>Agent</code> and <code>Router</code>. Defaults run <strong>first</strong>, then the
+hooks installed on the instance, then per-call hooks.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">laya</span><span class="w"> </span><span class="kn">import</span> <span class="n">hooks</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="n">hooks</span><span class="o">.</span><span class="n">set_default_hooks</span><span class="p">(</span><span class="n">hooks</span><span class="o">=</span><span class="p">[</span><span class="n">Tracer</span><span class="p">()])</span>          <span class="c1"># replaces the set, accepts the hooks= arguments</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="n">hooks</span><span class="o">.</span><span class="n">add_default_hook</span><span class="p">(</span><span class="n">Metrics</span><span class="p">())</span>                  <span class="c1"># appends</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="n">hooks</span><span class="o">.</span><span class="n">clear_default_hooks</span><span class="p">()</span>                        <span class="c1"># removes everything</span>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="n">hooks</span><span class="o">.</span><span class="n">default_hooks</span><span class="p">()</span>                              <span class="c1"># a copy of the current list</span>
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>
+</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="n">hooks</span><span class="o">.</span><span class="n">compose_hooks</span><span class="p">(</span><span class="n">agent</span><span class="o">.</span><span class="n">hooks</span><span class="p">)</span>                   <span class="c1"># defaults + installed (advanced)</span>
+</span></code></pre></div>
+<p>Defaults apply to every event, including the Router lifecycle events <code>on_load</code> and <code>on_evict</code>.
+The registry is read at call time, so hooks set after an <code>Agent</code> or <code>Router</code> is built still apply.
+There is no per-instance opt-out; call <code>clear_default_hooks()</code> to turn the process-wide set off.</p>
+<h2 id="async-hooks">Async hooks<a class="headerlink" href="#async-hooks" title="Permanent link">&para;</a></h2>
+<p>An event may be a coroutine. Wrap the hook in <code>AsyncHook</code> and its <code>async def</code> methods run to
+completion in the sync core:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">laya</span><span class="w"> </span><span class="kn">import</span> <span class="n">AsyncHook</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="k">class</span><span class="w"> </span><span class="nc">Remote</span><span class="p">:</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">on_predict_end</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ctx</span><span class="p">):</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>        <span class="k">await</span> <span class="n">ship</span><span class="p">(</span><span class="n">ctx</span><span class="o">.</span><span class="n">results</span><span class="p">)</span>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">laya</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"convaiinnovations/laya"</span><span class="p">,</span> <span class="n">hooks</span><span class="o">=</span><span class="p">[</span><span class="n">AsyncHook</span><span class="p">(</span><span class="n">Remote</span><span class="p">())])</span>
+</span></code></pre></div>
+<p>A plain async callable passed to <code>on_predict_start=</code> / <code>on_predict_end=</code> also works, because
+<code>dispatch</code> runs any awaitable a hook returns.</p>
+<p>Where the coroutine runs:</p>
+<ul>
+<li>If the calling thread has no running loop, it is run with <code>asyncio.run</code>.</li>
+<li>If it already has one (a caller inside an async function), it runs on a dedicated background
+  loop, so the calling thread can block without deadlocking. Pass <code>AsyncHook(hook, loop=...)</code> to
+  funnel onto a specific loop; it must be running, and must not be the calling thread's own loop.
+  Both are checked: a stopped loop and the caller's own loop each raise <code>ValueError</code> instead of
+  blocking forever.</li>
+</ul>
+<p>A hook with no <code>async</code> methods is unaffected.</p>
+<h2 id="configuration-surface">Configuration surface<a class="headerlink" href="#configuration-surface" title="Permanent link">&para;</a></h2>
+<p>Every entry point accepts the same hook parameters. <code>hooks</code> takes an object or a sequence
+of objects; <code>on_predict_start</code> / <code>on_predict_end</code> take a callable or a sequence.</p>
+<table>
+<thead>
+<tr>
+<th>parameter</th>
+<th>type</th>
+<th>default</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>hooks</code></td>
+<td><code>Hook \| Sequence[Hook] \| None</code></td>
+<td><code>None</code></td>
+<td>lifecycle hooks (any of the six events).</td>
+</tr>
+<tr>
+<td><code>on_predict_start</code></td>
+<td><code>PredictHook \| Sequence[PredictHook] \| None</code></td>
+<td><code>None</code></td>
+<td>convenience callables for one event.</td>
+</tr>
+<tr>
+<td><code>on_predict_end</code></td>
+<td><code>PredictHook \| Sequence[PredictHook] \| None</code></td>
+<td><code>None</code></td>
+<td>convenience callables for one event.</td>
+</tr>
+<tr>
+<td><code>hooks_raise</code></td>
+<td><code>bool</code></td>
+<td><code>True</code></td>
+<td><code>True</code>: a hook exception propagates. <code>False</code>: warn and continue.</td>
+</tr>
+<tr>
+<td><code>hooks_concurrent</code></td>
+<td><code>bool</code></td>
+<td><code>True</code></td>
+<td><code>False</code>: dispatch hooks under a lock, one at a time.</td>
+</tr>
+<tr>
+<td><code>hooks_timeout</code></td>
+<td><code>float \| None</code></td>
+<td><code>None</code></td>
+<td>per-hook time limit in seconds; <code>None</code> means no limit.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="agent">Agent<a class="headerlink" href="#agent" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">Agent</span><span class="p">(</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>    <span class="n">model_id_or_path</span><span class="o">=</span><span class="s2">"convaiinnovations/laya"</span><span class="p">,</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    <span class="n">device</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">token</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">subfolder</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">fast</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="nb">compile</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>    <span class="n">hooks</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">on_predict_start</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">on_predict_end</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>    <span class="n">hooks_raise</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">hooks_concurrent</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">hooks_timeout</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="p">)</span>
+</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>
+</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="n">load</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">hooks</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">on_predict_start</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">on_predict_end</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>     <span class="n">hooks_raise</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">hooks_concurrent</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">hooks_timeout</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-10-10"><a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>
+</span><span id="__span-10-11"><a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="n">agent</span><span class="o">.</span><span class="n">predict_batch</span><span class="p">(</span><span class="n">states</span><span class="p">,</span> <span class="n">questions</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-10-12"><a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a>                    <span class="n">hooks</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">on_predict_start</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">on_predict_end</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">hooks_raise</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-10-13"><a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a>                    <span class="n">hooks_timeout</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">max_len</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">head_max_len</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">sort_by_length</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</span><span id="__span-10-14"><a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a>
+</span><span id="__span-10-15"><a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a><span class="n">agent</span><span class="o">.</span><span class="n">system_one</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">questions</span><span class="p">,</span>
+</span><span id="__span-10-16"><a id="__codelineno-10-16" name="__codelineno-10-16" href="#__codelineno-10-16"></a>                 <span class="n">hooks</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">on_predict_start</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">on_predict_end</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">hooks_raise</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-10-17"><a id="__codelineno-10-17" name="__codelineno-10-17" href="#__codelineno-10-17"></a>                 <span class="n">hooks_timeout</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">max_len</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">head_max_len</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-10-18"><a id="__codelineno-10-18" name="__codelineno-10-18" href="#__codelineno-10-18"></a>
+</span><span id="__span-10-19"><a id="__codelineno-10-19" name="__codelineno-10-19" href="#__codelineno-10-19"></a><span class="n">agent</span><span class="o">.</span><span class="n">predict_long</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">questions</span><span class="p">,</span> <span class="n">window</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">stride</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">aggregate</span><span class="o">=</span><span class="s2">"auto"</span><span class="p">,</span>
+</span><span id="__span-10-20"><a id="__codelineno-10-20" name="__codelineno-10-20" href="#__codelineno-10-20"></a>                   <span class="n">batch_size</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">lang</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-10-21"><a id="__codelineno-10-21" name="__codelineno-10-21" href="#__codelineno-10-21"></a>                   <span class="n">hooks</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">on_predict_start</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">on_predict_end</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">hooks_raise</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-10-22"><a id="__codelineno-10-22" name="__codelineno-10-22" href="#__codelineno-10-22"></a>                   <span class="n">hooks_timeout</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-10-23"><a id="__codelineno-10-23" name="__codelineno-10-23" href="#__codelineno-10-23"></a>
+</span><span id="__span-10-24"><a id="__codelineno-10-24" name="__codelineno-10-24" href="#__codelineno-10-24"></a><span class="n">agent</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>          <span class="c1"># alias of system_one</span>
+</span></code></pre></div>
+<ul>
+<li><code>hooks_raise</code> and <code>hooks_timeout</code> on a per-call method default to <code>None</code>, meaning "use the instance value".</li>
+<li><code>hooks_concurrent</code> is instance-level only.</li>
+<li>On <code>predict_long</code> the hooks wrap the inference that answers the state, which for a document
+  needing several windows is the single shared <code>predict_batch</code> over them: <code>on_predict_start</code> fires
+  once, and <code>ctx.states</code> holds the decoded window texts in scan order rather than the caller's
+  state, which was tokenized to produce them. <code>states</code> is mutable from a start hook, so the scan
+  that reaches inference need not be the split <code>predict_long</code> computed. What changes is what the
+  answer can claim:</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>what the start hook did</th>
+<th><code>usage["windows"]</code></th>
+<th><code>answer["window"]</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>answered with <code>ctx.skip([result])</code></td>
+<td><code>0</code></td>
+<td>absent -- no window scored it</td>
+</tr>
+<tr>
+<td>left the scan as it was built</td>
+<td><code>N</code></td>
+<td>present -- <code>index</code>, <code>token_start</code>/<code>token_end</code> name the deciding span</td>
+</tr>
+<tr>
+<td>replaced the scan, in any way</td>
+<td>the states that were scored</td>
+<td>absent -- the offsets describe <code>predict_long</code>'s windows, not the text that was scored</td>
+</tr>
+</tbody>
+</table>
+<p><code>usage["windows"]</code> is total over every path, including the one where a state already fit a single
+  window, so a cached answer never reads as a window the model read.</p>
+<h3 id="router">Router<a class="headerlink" href="#router" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">Router</span><span class="p">(</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>    <span class="n">models</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">token</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">max_loaded</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s2">"multilingual"</span><span class="p">,</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>    <span class="n">auto_task_detection</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">standalone_repos</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">preload</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">lang_guess</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>    <span class="n">hooks</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">on_predict_start</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">on_predict_end</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>    <span class="n">hooks_raise</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">hooks_concurrent</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">hooks_timeout</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="p">)</span>
+</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>
+</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="n">router</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">questions</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">task</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">lang</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">lang_guess</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>             <span class="n">hooks</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">hooks_raise</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">hooks_timeout</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>
+</span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="n">router</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">questions</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">task</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">lang</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">lang_guess</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-11-12"><a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a>               <span class="n">hooks</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">on_predict_start</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">on_predict_end</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">hooks_raise</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-11-13"><a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a>               <span class="n">hooks_timeout</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">max_len</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">head_max_len</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-11-14"><a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a>
+</span><span id="__span-11-15"><a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a><span class="n">router</span><span class="o">.</span><span class="n">predict_batch</span><span class="p">(</span><span class="n">requests</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">hooks_timeout</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">min_confidence</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-11-16"><a id="__codelineno-11-16" name="__codelineno-11-16" href="#__codelineno-11-16"></a>                     <span class="n">sort_by_length</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">hooks</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">on_predict_start</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">on_predict_end</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-11-17"><a id="__codelineno-11-17" name="__codelineno-11-17" href="#__codelineno-11-17"></a>                     <span class="n">hooks_raise</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">diagnostics</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-11-18"><a id="__codelineno-11-18" name="__codelineno-11-18" href="#__codelineno-11-18"></a>
+</span><span id="__span-11-19"><a id="__codelineno-11-19" name="__codelineno-11-19" href="#__codelineno-11-19"></a><span class="n">router</span><span class="o">.</span><span class="n">route_batch</span><span class="p">(</span><span class="n">requests</span><span class="p">,</span> <span class="n">hooks_timeout</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">hooks</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">hooks_raise</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-11-20"><a id="__codelineno-11-20" name="__codelineno-11-20" href="#__codelineno-11-20"></a>
+</span><span id="__span-11-21"><a id="__codelineno-11-21" name="__codelineno-11-21" href="#__codelineno-11-21"></a><span class="n">router</span><span class="o">.</span><span class="n">system_one</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>      <span class="c1"># alias of predict</span>
+</span><span id="__span-11-22"><a id="__codelineno-11-22" name="__codelineno-11-22" href="#__codelineno-11-22"></a><span class="n">router</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>           <span class="c1"># builds on first use; fires on_load</span>
+</span><span id="__span-11-23"><a id="__codelineno-11-23" name="__codelineno-11-23" href="#__codelineno-11-23"></a><span class="n">router</span><span class="o">.</span><span class="n">preload</span><span class="p">(</span><span class="n">names</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>  <span class="c1"># builds several; fires on_load per build</span>
+</span><span id="__span-11-24"><a id="__codelineno-11-24" name="__codelineno-11-24" href="#__codelineno-11-24"></a><span class="n">router</span><span class="o">.</span><span class="n">unload</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>    <span class="c1"># frees one or all; fires on_evict</span>
+</span><span id="__span-11-25"><a id="__codelineno-11-25" name="__codelineno-11-25" href="#__codelineno-11-25"></a><span class="n">router</span><span class="o">.</span><span class="n">attach</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">agent</span><span class="p">)</span>  <span class="c1"># registers an existing agent; does not fire on_load</span>
+</span><span id="__span-11-26"><a id="__codelineno-11-26" name="__codelineno-11-26" href="#__codelineno-11-26"></a><span class="n">router</span><span class="o">.</span><span class="n">loaded</span>               <span class="c1"># list of resident checkpoint names</span>
+</span></code></pre></div>
+<ul>
+<li><code>route_batch</code> calls <code>route</code> once per request, so it dispatches <code>on_route</code> once per request with
+  the same per-call hooks. It is the one surface whose hook arguments differ in shape: <code>hooks</code> and
+  <code>hooks_raise</code> are keyword-only and there is no <code>on_predict_start=</code> / <code>on_predict_end=</code>, because
+  it never predicts.</li>
+<li>Per-call <code>hooks=</code> on <code>route</code>, <code>route_batch</code>, <code>predict</code> and <code>predict_batch</code> apply to the whole call, including <code>on_route</code>. On <code>predict_batch</code> the list is composed the same way as on <code>predict</code> (installed hooks first, then the per-call list; <code>None</code> and <code>[]</code> add nothing) and runs once per request.</li>
+<li><code>route()</code> is public: calling it dispatches <code>on_route</code> with the installed hooks plus any
+  per-call <code>hooks</code>.</li>
+</ul>
+<h3 id="onnxagent">ONNXAgent<a class="headerlink" href="#onnxagent" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">ONNXAgent</span><span class="p">(</span><span class="n">model_id_or_path</span><span class="p">,</span> <span class="n">onnx_path</span><span class="o">=</span><span class="s2">"laya.onnx"</span><span class="p">,</span> <span class="n">subfolder</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>          <span class="n">hooks</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">on_predict_start</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">on_predict_end</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>          <span class="n">hooks_raise</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">hooks_concurrent</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">hooks_timeout</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>
+</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="n">onnx_agent</span><span class="o">.</span><span class="n">system_one</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">questions</span><span class="p">,</span>
+</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>                      <span class="n">hooks</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">on_predict_start</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">on_predict_end</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">hooks_raise</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>                      <span class="n">hooks_timeout</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">max_len</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">head_max_len</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>
+</span><span id="__span-12-9"><a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="n">onnx_agent</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>     <span class="c1"># alias of system_one</span>
+</span></code></pre></div>
+<p><code>ONNXAgent</code> has no Router, so it exposes only the predict-level events.</p>
+<h2 id="event-payloads">Event payloads<a class="headerlink" href="#event-payloads" title="Permanent link">&para;</a></h2>
+<p>Which fields are populated, per event and runtime:</p>
+<table>
+<thead>
+<tr>
+<th>event</th>
+<th>runtime</th>
+<th><code>states</code></th>
+<th><code>questions</code></th>
+<th><code>decision</code></th>
+<th><code>model</code></th>
+<th><code>agent</code></th>
+<th><code>router</code></th>
+<th><code>results</code></th>
+<th><code>usage</code></th>
+<th><code>elapsed_ms</code></th>
+<th><code>error</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>on_predict_start</code></td>
+<td>Agent</td>
+<td>✓</td>
+<td>✓</td>
+<td>–</td>
+<td>✓</td>
+<td>✓</td>
+<td>–</td>
+<td>–</td>
+<td>–</td>
+<td>–</td>
+<td>–</td>
+</tr>
+<tr>
+<td><code>on_predict_start</code></td>
+<td>Router</td>
+<td>✓</td>
+<td>✓</td>
+<td>✓</td>
+<td>✓</td>
+<td>✓</td>
+<td>✓</td>
+<td>–</td>
+<td>–</td>
+<td>–</td>
+<td>–</td>
+</tr>
+<tr>
+<td><code>on_predict_end</code></td>
+<td>Agent</td>
+<td>✓</td>
+<td>✓</td>
+<td>–</td>
+<td>✓</td>
+<td>✓</td>
+<td>–</td>
+<td>✓</td>
+<td>on success</td>
+<td>✓</td>
+<td>on failure</td>
+</tr>
+<tr>
+<td><code>on_predict_end</code></td>
+<td>Router</td>
+<td>✓</td>
+<td>✓</td>
+<td>✓</td>
+<td>✓</td>
+<td>✓</td>
+<td>✓</td>
+<td>✓</td>
+<td>on success</td>
+<td>✓</td>
+<td>on failure</td>
+</tr>
+<tr>
+<td><code>on_error</code></td>
+<td>both</td>
+<td>✓</td>
+<td>✓</td>
+<td>✓ (Router)</td>
+<td>✓</td>
+<td>✓</td>
+<td>✓ (Router)</td>
+<td>–</td>
+<td>–</td>
+<td>–</td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>on_route</code></td>
+<td>Router</td>
+<td>✓</td>
+<td>✓</td>
+<td>✓</td>
+<td>–</td>
+<td>–</td>
+<td>✓</td>
+<td>–</td>
+<td>–</td>
+<td>–</td>
+<td>–</td>
+</tr>
+<tr>
+<td><code>on_load</code></td>
+<td>Router</td>
+<td><code>[]</code></td>
+<td><code>{}</code></td>
+<td>–</td>
+<td>✓</td>
+<td>✓</td>
+<td>✓</td>
+<td>–</td>
+<td>–</td>
+<td>–</td>
+<td>–</td>
+</tr>
+<tr>
+<td><code>on_evict</code></td>
+<td>Router</td>
+<td><code>[]</code></td>
+<td><code>{}</code></td>
+<td>–</td>
+<td>✓</td>
+<td>–</td>
+<td>✓</td>
+<td>–</td>
+<td>–</td>
+<td>–</td>
+<td>–</td>
+</tr>
+</tbody>
+</table>
+<p>Timing details:</p>
+<ul>
+<li><code>on_predict_end</code> sees <code>results</code> on the success path. On the failure path <code>results</code> is <code>None</code>
+  unless a start hook had set them via <code>skip()</code>, and <code>usage</code> is therefore <code>None</code> too (it is
+  derived from <code>results</code>); <code>elapsed_ms</code> is always set.</li>
+<li><code>on_error</code> runs before the <code>finally</code> block that computes <code>elapsed_ms</code> and <code>usage</code>, so both are
+  <code>None</code> there. Read timing and usage from <code>on_predict_end</code> instead.</li>
+<li><code>run_id</code> is always populated.</li>
+</ul>
+<h2 id="validation">Validation<a class="headerlink" href="#validation" title="Permanent link">&para;</a></h2>
+<p>Configuration is validated when hooks are normalised, which happens at construction for
+installed hooks and at call time for per-call hooks. These raise <code>TypeError</code>:</p>
+<table>
+<thead>
+<tr>
+<th>case</th>
+<th>message</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>a class is passed instead of an instance</td>
+<td><code>hooks entries must be instances, not classes; ...</code></td>
+</tr>
+<tr>
+<td>an object implements none of the six events</td>
+<td><code>hooks entries must implement at least one of ...</code></td>
+</tr>
+<tr>
+<td>an event attribute is not callable</td>
+<td><code>hooks entry X.on_predict_start must be callable, got int</code></td>
+</tr>
+<tr>
+<td><code>on_predict_start=</code> / <code>on_predict_end=</code> is not callable</td>
+<td><code>on_predict_start must be callable, got int</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>hooks=</code> does not accept plain callables, because a bare callable does not say <em>which</em> event it
+is for. Use <code>on_predict_start=</code> / <code>on_predict_end=</code> for those.</p>
+<h2 id="advanced-helpers">Advanced helpers<a class="headerlink" href="#advanced-helpers" title="Permanent link">&para;</a></h2>
+<p>These are used internally and are stable, but most users do not need them.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="n">HOOK_EVENTS</span>          <span class="c1"># tuple of the six event names; the set hooks= is validated against</span>
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="n">normalise_hooks</span><span class="p">(</span><span class="n">hooks</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">on_predict_start</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">on_predict_end</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span>
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="n">dispatch</span><span class="p">(</span><span class="n">hooks</span><span class="p">,</span> <span class="n">event</span><span class="p">,</span> <span class="n">ctx</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">raise_errors</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">lock</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="n">aggregate_usage</span><span class="p">(</span><span class="n">results</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="p">{</span><span class="s2">"input_tokens"</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="s2">"output_tokens"</span><span class="p">:</span> <span class="nb">int</span><span class="p">}</span>
+</span></code></pre></div>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="n">dispatch</span><span class="p">(</span><span class="n">hooks</span><span class="p">,</span> <span class="n">event</span><span class="p">,</span> <span class="n">ctx</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">raise_errors</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">lock</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="n">run_coroutine_sync</span><span class="p">(</span><span class="n">coro</span><span class="p">,</span> <span class="n">loop</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span></code></pre></div>
+<p><code>HOOK_EVENTS</code> is the set of names <code>normalise_hooks</code> and <code>AsyncHook</code> look for on a hook; its order
+is declaration order, not the order the events fire in a call -- for that see
+<a href="../lifecycle/">Lifecycle</a>. <code>normalise_hooks</code> flattens a <code>hooks</code> object/sequence and the two
+callables into one ordered list.
+<code>dispatch</code> calls <code>event</code> on every hook that implements it, applying the raise policy, lock and
+timeout, and runs a hook's result if it is awaitable. <code>run_coroutine_sync</code> runs an awaitable to
+completion from sync code, on the caller's loop if it is free, or on a background loop if the
+caller already has one. <code>aggregate_usage</code> sums per-state usage blocks.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">laya.hooks</span><span class="w"> </span><span class="kn">import</span> <span class="n">normalise_hooks</span><span class="p">,</span> <span class="n">dispatch</span><span class="p">,</span> <span class="n">PredictContext</span>
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="n">hooks</span> <span class="o">=</span> <span class="n">normalise_hooks</span><span class="p">(</span><span class="n">on_predict_start</span><span class="o">=</span><span class="p">[</span><span class="n">log</span><span class="p">,</span> <span class="n">redact</span><span class="p">])</span>
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="n">ctx</span> <span class="o">=</span> <span class="n">PredictContext</span><span class="p">(</span><span class="n">states</span><span class="o">=</span><span class="p">[</span><span class="s2">"..."</span><span class="p">],</span> <span class="n">questions</span><span class="o">=</span><span class="p">{</span><span class="o">...</span><span class="p">})</span>
+</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="n">dispatch</span><span class="p">(</span><span class="n">hooks</span><span class="p">,</span> <span class="s2">"on_predict_start"</span><span class="p">,</span> <span class="n">ctx</span><span class="p">)</span>
+</span></code></pre></div>
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../lifecycle/">Lifecycle</a>: when each event runs, with flowcharts.</li>
+<li><a href="../errors/">Errors</a>: the failure matrix and chaining rules.</li>
+<li><a href="../patterns/">Patterns and anti-patterns</a>: how to structure hooks well.</li>
+<li><a href="../examples/">Examples</a>: recipes for every use case.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../" class="md-footer__link md-footer__link--prev" aria-label="Previous: Prediction Hooks">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Prediction Hooks
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../lifecycle/" class="md-footer__link md-footer__link--next" aria-label="Next: Lifecycle">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Lifecycle
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Apache 2.0. Developed by Convai Innovations.
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["content.code.copy","navigation.footer","navigation.indexes"],"redirect":null,"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.c04ba553.min.js"></script>
+      
+    
+  </body>
+</html>
