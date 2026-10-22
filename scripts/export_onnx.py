@@ -177,13 +177,25 @@ def example_inputs(batch: Optional[int] = None, seq_len: int = 16, num_markers: 
 
 
 def default_opset_version() -> int:
-    """The highest opset the installed `torch.onnx.export` accepts: 18, or 17 on torch 2.2.
+    """The highest opset the installed `torch.onnx.export` implements: 18, or 17 on torch 2.2.
 
     `dynamic_axes` is the declaration every torch this package supports accepts, so the shape
-    spelling no longer varies with the version -- but the *opset ceiling* still does, and it is a
-    hard failure rather than a warning: the TorchScript exporter that torch 2.2 ships stops at
-    opset 17, so `opset_version=18` raises. This fork pins torch 2.2 on macOS/Intel (LOCAL_SETUP.md,
-    the last PyTorch with an x86_64 macOS wheel), where the exporter could not run at all.
+    spelling no longer varies with the version -- but the *opset ceiling* still does. Upstream
+    defaults `export_module` to 18, which is right on the torch its CI runs; the TorchScript
+    exporter that torch 2.2 ships caps at `ONNX_TORCHSCRIPT_EXPORTER_MAX_OPSET = 17`.
+
+    What the mismatch costs is quieter than a crash, which is why it is worth pinning rather than
+    leaving to chance. `torch.onnx.export` does **not** raise: it emits an `OnnxExporterWarning`
+    ("Exporting to ONNX opset version 18 is not supported ... highest opset version supported is
+    17") and then exports anyway, so the graph's `opset_import` declares 18 while the nodes were
+    built from the exporter's 17-era symbolic functions. Measured here on torch 2.2.2: requesting
+    18 declares 18 plus the warning, requesting 17 declares 17 with no warning (both load in ONNX
+    Runtime for a simple graph, so nothing fails where a user would notice). Declaring the version
+    the exporter actually implements is the honest artifact.
+
+    Upstream declares `torch>=2.0.0`, so this is not only this machine's pin: any torch whose
+    TorchScript exporter stops at 17 hits it, and this fork runs torch 2.2 on macOS/Intel
+    (LOCAL_SETUP.md, the last PyTorch with an x86_64 macOS wheel).
 
     Probe the installed signature rather than `torch.__version__`, matching how `_amp_context` in
     `laya/common.py` decides autocast support: a torch that backports either spelling is handled

@@ -4,8 +4,11 @@ not put a graph in ``--out-dir`` before the checks that gate it have passed.
 The last section covers ``scripts/export_onnx.py`` instead: `dynamic_axes` ships on every torch
 (#726), but the opset ceiling still varies with the installed torch, and torch 2.2 -- the
 macOS/Intel pin in LOCAL_SETUP.md, the last PyTorch with an x86_64 macOS wheel -- stops at opset
-17. A constant there is a `TypeError` on one of the two stacks. The security workflow runs this
-file on a bare Python with neither torch nor laya, so that section is guarded and skips there.
+17. A hard-coded constant is wrong on one of the two stacks: too high and the graph declares an
+opset the exporter's symbolic functions do not cover (torch warns and exports anyway, without
+the warning being visible in a captured log), too low and every newer torch is capped. The
+security workflow runs this file on a bare Python with neither torch nor laya, so that section is
+guarded and skips there.
 """
 
 import importlib.util
@@ -263,9 +266,10 @@ else:
         py_exporter.DYNAMIC_AXES
     assert set(py_exporter.INPUT_NAMES + py_exporter.OUTPUT_NAMES) == AXES
 
-    # The default has to follow the installed torch. A hard-coded 18 raises on torch 2.2 and a
-    # hard-coded 17 caps the opset on every newer torch, so either constant is wrong on one of the
-    # two stacks this package supports -- which is exactly how the export came to fail here at all.
+    # The default has to follow the installed torch. A hard-coded 18 makes torch 2.2 warn and
+    # write a graph declaring an opset its symbolics do not implement; a hard-coded 17 caps the
+    # opset on every newer torch. Either constant is wrong on one of the two stacks this package
+    # supports, and `torch>=2.0.0` is upstream's own floor.
     installed = "dynamic_shapes" in inspect.signature(torch.onnx.export).parameters
     expected = 18 if installed else 17
     assert py_exporter.default_opset_version() == expected, (
