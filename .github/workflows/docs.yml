@@ -55,10 +55,12 @@ jobs:
   deploy:
     name: docs (deploy)
     needs: build
-    # Only the canonical repository has Pages configured. A fork would try to create a deployment
-    # it is not allowed to (404) and go red on every push to main; the strict build above still
-    # runs there, so the docs are checked everywhere and published in one place.
-    if: github.event_name != 'pull_request' && github.repository == 'NandhaKishorM/laya'
+    # Pages is configured on the canonical repository and on this fork (thread3d/laya), which
+    # publishes its own docs at https://thread3d.github.io/laya/. Other forks still skip: with no
+    # Pages site a deploy would 404 and go red on every push to main, while the strict build above
+    # still runs there, so the docs are checked everywhere and published in the two configured
+    # places.
+    if: github.event_name != 'pull_request' && (github.repository == 'NandhaKishorM/laya' || github.repository == 'thread3d/laya')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
