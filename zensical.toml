@@ -4,7 +4,7 @@
 [project]
 site_name = "Laya"
 site_description = "Multilingual, non-autoregressive System 1 decision engine"
-site_url = "https://nandhakishorm.github.io/laya/"
+site_url = "https://thread3d.github.io/laya/"
 repo_url = "https://github.com/NandhaKishorM/laya"
 repo_name = "NandhaKishorM/laya"
 edit_uri = "edit/main/docs/"
