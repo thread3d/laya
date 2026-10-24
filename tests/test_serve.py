@@ -112,6 +112,23 @@ def test_root_path_from_environment_updates_openapi_and_keeps_routes(monkeypatch
         assert client.get("/openapi.json").json()["servers"] == [{"url": "/laya"}]
 
 
+@pytest.mark.parametrize("path", ["/openapi.json", "/docs", "/redoc"])
+def test_no_docs_or_schema_on_a_locked_down_deployment(monkeypatch, path):
+    """FastAPI's own documentation routes are not written by this module, so per-route auth never
+    covered them: with LAYA_API_KEY set they answered 200 to an unauthenticated caller, publishing
+    the API shape and an interactive console beside a service the operator had locked down."""
+    client, _ = _client(monkeypatch, api_key="s3cret")
+    assert client.get(path).status_code == 404
+    # The decision routes still refuse without the bearer, so the app itself is up.
+    assert client.post("/v1/systemone", json=REQ).status_code == 401
+
+
+def test_docs_and_schema_are_served_without_a_key(monkeypatch):
+    client, _ = _client(monkeypatch)
+    assert client.get("/openapi.json").status_code == 200
+    assert client.get("/docs").status_code == 200
+
+
 @pytest.mark.parametrize("root_path", [None, ""])
 def test_root_path_defaults_to_empty(monkeypatch, root_path):
     if root_path is None:

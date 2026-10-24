@@ -42,7 +42,7 @@ Everything is environment variables, so one image serves a laptop dev run and a 
 | `LAYA_MAX_TOKEN_BUDGET` | server-side ceiling on the per-request `max_len` and `head_max_len` overrides; a larger value is a `422`. Unparseable or non-positive input logs a warning and falls back | `8192` |
 | `LAYA_DEFAULT_MODEL` | checkpoint a state with no language evidence falls back to; aliases such as `ml` resolve the way core resolves them, and an unresolvable name stops the server at startup | `multilingual` |
 | `LAYA_EXTRA_MODELS` | JSON object `{name: source}` registering extra checkpoints beside the bundled ones: a Hub repo id or local checkpoint directory as a string, or a `["repo", "subfolder"]` pair. Names get the same `model=` pin a built-in does; a malformed value or bad name stops the server at startup | none |
-| `LAYA_API_KEY` | if set, require `Authorization: Bearer <key>` | none |
+| `LAYA_API_KEY` | if set, require `Authorization: Bearer <key>` on every route, and stop serving `/docs`, `/redoc` and `/openapi.json` (FastAPI's own routes, which per-route auth never covered) | none |
 | `LAYA_LOG_LEVEL` | uvicorn log level | `info` |
 | `LAYA_MAX_CONCURRENT` | requests admitted past auth at once; excess gets `503` | `16` |
 | `LAYA_BODY_READ_TIMEOUT` | seconds a request may spend delivering its body before the server answers `408` and releases the admission slot it was holding. Unparseable, non-positive or infinite input falls back | `10` |

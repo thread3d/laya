@@ -37,6 +37,8 @@ env var                    meaning                                        defaul
 ``LAYA_IDLE_UNLOAD_SECONDS`` unload checkpoints after this many idle     0 (off)
                            seconds; the next request loads them again.
 ``LAYA_API_KEY``           if set, require ``Authorization: Bearer <it>``  (none)
+                           on every route, and do not serve the
+                           interactive docs or the OpenAPI schema
 ``LAYA_ROOT_PATH``         public URL prefix behind a reverse proxy        (none)
 ``LAYA_LOG_LEVEL``         uvicorn log level                              info
 ``LAYA_MAX_CONCURRENT``    cap on requests past auth at once; excess      16
@@ -1286,11 +1288,20 @@ def create_app(router: Optional[Any] = None):
             pool.shutdown(wait=True, cancel_futures=True)
             pool_closed = True
 
+    # Auth is enforced per route below, and FastAPI's own documentation routes are not written by
+    # this module -- on a deployment with LAYA_API_KEY set they answered 200 to an unauthenticated
+    # caller, publishing the whole API shape and an interactive console next to a service the
+    # operator had locked down. When a key is configured there is no way to authenticate them
+    # without adding a second auth path, so they are not served at all; run the server without a
+    # key (or read docs/http-api.md) when you need the schema.
     app = FastAPI(
         title="laya-serve",
         summary="Laya System-1 decisions over the TypeSafe Jev /v1/systemone protocol",
         root_path=os.environ.get("LAYA_ROOT_PATH", ""),
         lifespan=lifespan,
+        docs_url=None if api_key else "/docs",
+        redoc_url=None if api_key else "/redoc",
+        openapi_url=None if api_key else "/openapi.json",
     )
 
     # Compared as bytes, not str. `hmac.compare_digest` raises TypeError when a str
