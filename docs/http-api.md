@@ -45,6 +45,7 @@ Everything is environment variables, so one image serves a laptop dev run and a 
 | `LAYA_API_KEY` | if set, require `Authorization: Bearer <key>` | none |
 | `LAYA_LOG_LEVEL` | uvicorn log level | `info` |
 | `LAYA_MAX_CONCURRENT` | requests admitted past auth at once; excess gets `503` | `16` |
+| `LAYA_BODY_READ_TIMEOUT` | seconds a request may spend delivering its body before the server answers `408` and releases the admission slot it was holding. Unparseable, non-positive or infinite input falls back | `10` |
 | `LAYA_MAX_BATCH_TOKENS` | tokens one `/v1/systemone/batch` FORWARD PASS may collate (`states` x questions x row width); a larger batch is split into several passes, not refused | `131072` |
 | `LAYA_JEV_STRICT` | serve the strict Jev wire contract: no root `routing`, no per-answer `action` / `answer_confidence`, no `confidence` on noul answers, and `usage` reduced to `input_tokens` + `output_tokens`. For clients that validate the response against the Jev contract with no extra fields | `0` |
 | `LAYA_TOURNAMENT_GROUP` | answer a `choice` with more options than this by elimination, in groups of this size, on `/v1/systemone` and `/v1/systemone/batch`, and raise their option cap from 100 to 255. See [Large choices](#large-choices-laya_tournament_group). Unset, or outside 2 to 100, is off | `0` |
@@ -451,7 +452,11 @@ never runs on the event loop: requests are handed to a single-worker executor, w
 forward pass at a time -- the shape a single checkpoint on one device wants. Admission (the
 `LAYA_MAX_CONCURRENT` semaphore) is checked before any body byte is read and held through
 inference; the inference gate is joined only after the body is complete, so a slow client holds an
-admission slot but never an inference slot.
+admission slot but never an inference slot. That ordering is what bounds how many bodies are
+buffered at once, so the body read carries its own deadline (`LAYA_BODY_READ_TIMEOUT`, 10 s): a peer
+that sends a request head and then stops writing answers `408` and gives the slot back, rather than
+holding one of the `LAYA_MAX_CONCURRENT` slots -- and so both decision routes -- out of service for
+as long as it keeps the socket open.
 
 ## Not (yet) here
 

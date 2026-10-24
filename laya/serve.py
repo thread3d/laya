@@ -48,6 +48,9 @@ env var                    meaning                                        defaul
                            explicit ``model=`` like a built-in.
 ``LAYA_MAX_TOKEN_BUDGET``  cap on per-request max_len / head_max_len       8192
 ``LAYA_MAX_BATCH_TOKENS``  cap on batch forward tokens (states x q x len)  131072
+``LAYA_BODY_READ_TIMEOUT`` seconds a request may spend delivering its body   10
+                           before the server answers 408 and releases its
+                           admission slot (see below)
 ``LAYA_JEV_STRICT``        if set, serve the strict Jev wire contract: no   0
                            root `routing`, no per-answer `action` /
                            `answer_confidence`, no `confidence` on noul
@@ -91,6 +94,17 @@ MAX_QUESTIONS = 64
 MAX_STATE_CHARS = 50000
 MAX_BATCH_STATES = 64
 MAX_BODY_BYTES = 2 * 1024 * 1024
+# How long a request may take to deliver its body. Admission is taken BEFORE the body is read --
+# that ordering is deliberate, it is what bounds how many bodies are buffered at once -- but it also
+# means a client that sends a request head and one partial body chunk and then goes quiet holds one
+# of the `LAYA_MAX_CONCURRENT` slots for as long as the socket stays open. There is no deadline at
+# any other layer: uvicorn has no request-body timeout, and `async for chunk in request.stream()`
+# waits as long as the peer does. So without the bound below, `LAYA_MAX_CONCURRENT` stalled uploads
+# (16 by default, a few bytes each) keep BOTH decision routes answering 503 for as long as the
+# attacker keeps the sockets open, while `/health` -- which takes no admission slot -- keeps telling
+# the orchestrator the process is healthy, so nothing ever restarts it. Bounding the read turns an
+# indefinitely held slot into a slot held for at most this long, and releases it either way.
+DEFAULT_BODY_READ_TIMEOUT = 10.0
 # `/v1/systemone/batch` collates `states x questions` rows into ONE tensor, and each of the caps
 # above bounds only one factor: 64 states of 64 questions is 4096 rows from a 4.1 KB body, with every
 # documented limit satisfied, and `batch_size` defaults to `None`, which `predict_batch` documents as
@@ -424,6 +438,18 @@ def _resolve_max_concurrent() -> int:
     except ValueError:
         return DEFAULT_MAX_CONCURRENT
     return n if n > 0 else DEFAULT_MAX_CONCURRENT
+
+
+def _resolve_body_read_timeout() -> float:
+    """Seconds a request may spend delivering its body, from LAYA_BODY_READ_TIMEOUT."""
+    raw = os.environ.get("LAYA_BODY_READ_TIMEOUT")
+    if not raw or not raw.strip():
+        return DEFAULT_BODY_READ_TIMEOUT
+    try:
+        value = float(raw)
+    except ValueError:
+        return DEFAULT_BODY_READ_TIMEOUT
+    return value if 0.0 < value < float("inf") else DEFAULT_BODY_READ_TIMEOUT
 
 
 def _resolve_tournament_group() -> int:
@@ -1041,7 +1067,7 @@ def _has_lone_surrogate(value: Any) -> bool:
     return False
 
 
-async def _read_body_capped(request: Any) -> bytes:
+async def _read_body_capped(request: Any, timeout: Optional[float] = None) -> bytes:
     """Read the request body, refusing to buffer more than ``MAX_BODY_BYTES``.
 
     ``Content-Length`` cannot be the only gate. It is a value the client chooses,
@@ -1050,24 +1076,48 @@ async def _read_body_capped(request: Any) -> bytes:
     read into memory in full, whatever its size. The body is streamed here and
     abandoned as soon as it exceeds the cap, so the limit holds for every framing
     rather than only for clients that announce their length honestly.
+
+    The read is also bounded in TIME (``LAYA_BODY_READ_TIMEOUT``, 10 s), because the
+    admission slot is taken before this runs: a peer that sends a request head and
+    then stops writing would otherwise hold one of the ``LAYA_MAX_CONCURRENT`` slots
+    for as long as it keeps the socket open. Nothing below the application layer
+    bounds that -- uvicorn has no request-body timeout -- so without this a handful
+    of idle sockets take the whole decision API out of service while ``/health``,
+    which takes no slot, still reports the process as healthy. A body that does not
+    arrive in time answers ``408`` and the slot is released by the unwinding
+    ``async with _admit()``, exactly as a ``413`` already was.
     """
+    import asyncio
+
     from fastapi import HTTPException
 
-    total = 0
-    chunks = []
-    async for chunk in request.stream():
-        if not chunk:
-            continue
-        total += len(chunk)
-        if total > MAX_BODY_BYTES:
-            # Stop reading rather than draining the rest: the peer is already over
-            # the limit and nothing further can make the request acceptable.
-            raise HTTPException(status_code=413, detail="request body too large")
-        chunks.append(chunk)
-    return b"".join(chunks)
+    async def collect() -> bytes:
+        total = 0
+        chunks = []
+        async for chunk in request.stream():
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > MAX_BODY_BYTES:
+                # Stop reading rather than draining the rest: the peer is already over
+                # the limit and nothing further can make the request acceptable.
+                raise HTTPException(status_code=413, detail="request body too large")
+            chunks.append(chunk)
+        return b"".join(chunks)
+
+    try:
+        return await asyncio.wait_for(
+            collect(), timeout=_resolve_body_read_timeout() if timeout is None else timeout)
+    except asyncio.TimeoutError:
+        # Cancelling `collect()` cancels the stream read, so the peer's socket is not
+        # left half-consumed; the response below is what it sees.
+        raise HTTPException(
+            status_code=408,
+            detail="request body was not received in time",
+        ) from None
 
 
-async def _read_json_body(request: Any) -> Any:
+async def _read_json_body(request: Any, timeout: Optional[float] = None) -> Any:
     """Read the request body and decode JSON, enforcing size caps and parse error guards."""
     from fastapi import HTTPException
 
@@ -1077,7 +1127,7 @@ async def _read_json_body(request: Any) -> Any:
                 raise HTTPException(status_code=413, detail="request body too large")
         except ValueError:
             pass
-    raw = await _read_body_capped(request)
+    raw = await _read_body_capped(request, timeout)
     try:
         return json.loads(raw)
     except (ValueError, RecursionError):
@@ -1171,6 +1221,7 @@ def create_app(router: Optional[Any] = None):
     # gate is still joined only after the body is complete, so a slow client
     # holds an admission slot but never an inference slot.
     max_concurrent = _resolve_max_concurrent()
+    body_read_timeout = _resolve_body_read_timeout()
     admission: Optional[asyncio.Semaphore] = None
 
     idle_unload_seconds = _resolve_idle_unload_seconds()
@@ -1337,7 +1388,7 @@ def create_app(router: Optional[Any] = None):
     async def _systemone_inner(request: Request):
         nonlocal gate
         _mark_request()
-        body = await _read_json_body(request)
+        body = await _read_json_body(request, body_read_timeout)
         if not isinstance(body, dict) or "questions" not in body:
             raise HTTPException(status_code=400, detail="request body must be an object with a 'questions' field")
         state = body.get("state")
@@ -1434,7 +1485,7 @@ def create_app(router: Optional[Any] = None):
     async def _systemone_batch_inner(request: Request):
         nonlocal gate
         _mark_request()
-        body = await _read_json_body(request)
+        body = await _read_json_body(request, body_read_timeout)
         if not isinstance(body, dict) or "questions" not in body or "states" not in body:
             raise HTTPException(
                 status_code=400,

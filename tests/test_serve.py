@@ -27,6 +27,7 @@ from laya.serve import (  # noqa: E402
     BATCH_BODY_ITEM_CONTROLS,
     BODY_CONTROLS,
     BODY_REFUSALS,
+    DEFAULT_BODY_READ_TIMEOUT,
     DEFAULT_LOG_LEVEL,
     DEFAULT_MAX_TOKEN_BUDGET,
     DEFAULT_PORT,
@@ -37,6 +38,7 @@ from laya.serve import (  # noqa: E402
     _check_request_limits,
     _env_bool,
     _LONE_SURROGATE_DETAIL,
+    _resolve_body_read_timeout,
     _resolve_log_level,
     _resolve_max_token_budget,
     _resolve_idle_unload_seconds,
@@ -4218,3 +4220,94 @@ def test_extra_models_pin_over_http_and_do_not_leak_into_routing(monkeypatch):
     assert plain.status_code == 200, plain.text
     assert plain.json()["routing"]["model"] in ("english", "multilingual", "typed-decisions")
     assert "my-ckpt" not in built[1:] or built[1:] == [], built
+
+
+# --------------------------------------------------------------------------- body-read deadline
+#
+# `_admit()` takes a `LAYA_MAX_CONCURRENT` slot BEFORE the body is read, which is what bounds how
+# many bodies are buffered at once. A peer that sends a request head and one partial chunk and then
+# stops writing used to hold that slot for as long as it kept the socket open, so a few idle sockets
+# took both decision routes out of service while `/health` kept reporting the process healthy.
+# `_read_body_capped` now bounds the read, answers 408, and lets the `async with _admit()` unwind.
+
+_ASGI_BODY = json.dumps({
+    "state": "hi",
+    "questions": {"q": {"type": "noul", "instructions": "is it true?"}},
+}).encode()
+
+
+def _asgi_scope(path):
+    return {"type": "http", "asgi": {"version": "3.0", "spec_version": "2.1"},
+            "http_version": "1.1", "method": "POST", "scheme": "http",
+            "path": path, "raw_path": path.encode(), "query_string": b"",
+            "root_path": "", "headers": [(b"content-type", b"application/json")],
+            "client": ("127.0.0.1", 5000), "server": ("127.0.0.1", 8000)}
+
+
+async def _asgi_post(app, path, body, *, stall_after=None, timeout=10.0):
+    """One ASGI POST, returning (status, body). `stall_after` sends that many bytes then hangs."""
+    messages = []
+    state = {"sent": False}
+
+    async def receive():
+        if not state["sent"]:
+            state["sent"] = True
+            if stall_after is None:
+                return {"type": "http.request", "body": body, "more_body": False}
+            return {"type": "http.request", "body": body[:stall_after], "more_body": True}
+        if stall_after is not None:
+            await asyncio.Event().wait()          # the peer never writes another byte
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        messages.append(message)
+
+    await asyncio.wait_for(app(_asgi_scope(path), receive, send), timeout=timeout)
+    status = next(m["status"] for m in messages if m["type"] == "http.response.start")
+    payload = b"".join(m.get("body", b"") for m in messages if m["type"] == "http.response.body")
+    return status, payload
+
+
+def test_a_stalled_body_answers_408_and_frees_its_admission_slot(monkeypatch):
+    # One slot, so the second request proves the first one gave its slot back rather than merely
+    # that a second request is allowed to take one.
+    monkeypatch.setenv("LAYA_MAX_CONCURRENT", "1")
+    monkeypatch.setenv("LAYA_BODY_READ_TIMEOUT", "0.05")
+    app = create_app(router=FakeRouter())
+
+    async def run():
+        stalled = await _asgi_post(app, "/v1/systemone", _ASGI_BODY, stall_after=10)
+        served = await _asgi_post(app, "/v1/systemone", _ASGI_BODY)
+        return stalled, served
+
+    (stall_status, stall_body), (served_status, _) = asyncio.run(run())
+    assert stall_status == 408, stall_body
+    assert b"not received in time" in stall_body
+    assert served_status == 200, served_status
+
+
+@pytest.mark.parametrize("raw, want", [
+    (None, DEFAULT_BODY_READ_TIMEOUT),
+    ("2.5", 2.5),
+    ("", DEFAULT_BODY_READ_TIMEOUT),
+    ("  ", DEFAULT_BODY_READ_TIMEOUT),
+    ("0", DEFAULT_BODY_READ_TIMEOUT),
+    ("-1", DEFAULT_BODY_READ_TIMEOUT),
+    ("nope", DEFAULT_BODY_READ_TIMEOUT),
+    ("inf", DEFAULT_BODY_READ_TIMEOUT),
+    ("nan", DEFAULT_BODY_READ_TIMEOUT),
+])
+def test_body_read_timeout_resolution(monkeypatch, raw, want):
+    monkeypatch.delenv("LAYA_BODY_READ_TIMEOUT", raising=False)
+    if raw is not None:
+        monkeypatch.setenv("LAYA_BODY_READ_TIMEOUT", raw)
+    assert _resolve_body_read_timeout() == want
+
+
+def test_a_body_delivered_in_time_still_answers(monkeypatch):
+    # The deadline adds no behaviour to the ordinary path: same status, same payload.
+    monkeypatch.setenv("LAYA_BODY_READ_TIMEOUT", "5")
+    app = create_app(router=FakeRouter())
+    status, payload = asyncio.run(_asgi_post(app, "/v1/systemone", _ASGI_BODY))
+    assert status == 200
+    assert json.loads(payload)["usage"]["input_tokens"] == 42
