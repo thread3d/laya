@@ -94,33 +94,46 @@ The shipped checkpoints work zero-shot, but fine-tuning on decisions from your o
 
 **[nandhakishorm.github.io/laya](https://nandhakishorm.github.io/laya/)**: guides for [prediction hooks](https://nandhakishorm.github.io/laya/hooks/), [schema-driven decisions](https://nandhakishorm.github.io/laya/structured/), [Docker](https://nandhakishorm.github.io/laya/docker/) and [LangChain and LangGraph](https://nandhakishorm.github.io/laya/langchain/), plus a full [API reference](https://nandhakishorm.github.io/laya/reference/).
 
-## What's new in 0.4.14
+## What's new in 0.4.15
 
-* **Plain English questions stop going to the multilingual checkpoint.** Nothing in "Why hasn't my
-  card been delivered?" was on the 34-word English function list, so it read as undecided and took
-  the router default. 82 closed-class words are now on that list: question words, auxiliaries,
-  what `_WORD` leaves of a contraction, and common determiners and connectives. That is 589 of the
-  2,974 MASSIVE en-US test rows, and on the rows that move the English checkpoint answers better
-  (283 against 214 head to head, sign test p=0.002). Content words stay out, because a foreign
-  sentence borrows those. No row moves off the English checkpoint, and 15 of 148,700 non-English
-  MASSIVE rows move onto it, 11 of them English titles (#1315). All four SDKs carry the same list.
-* **A Go SDK you can route with.** `laya-go` gains the routing half of `laya.router` with
-  `Route`/`RouteBatch` and `on_route` hooks, the `laya.email` port, presets and the embedding
-  shortlist, a calibration payload installed at `Open`, and runnable quickstart and benchmark
-  samples (#1310, #1311, #1308, #1307, #1306, #1309).
-* **Four more fail-closed guards in the integrations.** A remote decision body that is valid JSON
-  but not an object now raises instead of leaking `AttributeError` in LangChain, CrewAI and
-  LlamaIndex (#1301). A probability that is not a real number, or is a bool, routes to the
-  `fallback_tool` rather than raising out of `float()` (#1300), and the guardrail score rail
-  degrades instead of crashing on a malformed `probabilities` block (#1302).
-* **`calibrate_reliability` refuses evidence it cannot fit**: mismatched lengths, a score outside
-  [0, 1], a non-finite score, and a label that is not a boolean (#1314). NumPy booleans and reals
-  count, since `preds == gold` is how correctness is usually computed.
-* **`probabilities` are rounded independently and need not sum to 1.** Three equally likely options
-  come back as `0.3333` each, totalling `0.9999`. Now documented in both the in-process and HTTP
-  references, where a strict unit-sum check would have been written against it (#1305).
-* **pydecide joins Community Tools.** Local inference is its default now, and hosted backends have
-  to be asked for by name rather than appearing because an API key is in the environment (#1304).
+* **A stalled upload can no longer take the server down.** Admission is taken before the request
+  body is read — that is what bounds how many bodies are buffered — but nothing bounded the read
+  itself, so 16 half-open sockets (`LAYA_MAX_CONCURRENT`'s default) held every slot forever and both
+  decision routes answered `503` while `/health` stayed green. The read now has a deadline
+  (`LAYA_BODY_READ_TIMEOUT`, 10 s, also a `bodyReadTimeout` NixOS option) and answers `408`
+  (#1331). A caller-supplied `batch_size` may shape a forward pass but not widen it past
+  `LAYA_MAX_BATCH_TOKENS` — `batch_size=10**18` used to opt out of the only guard that bounds a pass
+  (#1332) — and a deployment with `LAYA_API_KEY` set no longer serves `/docs`, `/redoc` or
+  `/openapi.json` to unauthenticated callers (#1333).
+* **Language detection no longer depends on the interpreter's Unicode database.** `str.isalpha()`
+  answers from the database bundled with the host, so on Python 3.10/3.11 a letter added since
+  Unicode 14 read as *unassigned* and was dropped before the "unclaimed script" branch could count
+  it: Kawi, Nag Mundari, Todhri and CJK extension I text reported `script="unknown"`, i.e. "no
+  letters detected", which the router treats as the default checkpoint. The letter test now supplies
+  the answer a newer database would give, and is codepoint-for-codepoint identical on the newest one
+  (#1334).
+* **The integrations fail closed on malformed nested bodies.** One level below the top-level
+  refusals, `answers` being a list, an answer being a string or `null`, `choice` being a list and
+  `noul` being a string, `null` or a bool all raised `AttributeError`/`TypeError` out of the path
+  whose job is to fail closed — and `noul: true` read as 1.0, raising a guardrail violation on a body
+  nobody could read. Shared checks in `integrations/_guard.py` now cover CrewAI, Agno and LlamaIndex
+  (#1335).
+* **TypeScript runtime parity.** All-caps lines stop being read as French or Portuguese — English
+  support mail carrying `NAV COM OS 2 DESKTOP SUPPORT` took the multilingual checkpoint (#1336);
+  a detected `"en"` reaches `lang_temperatures.en` (#1337); `Router.predict` forwards
+  `maxLen`/`headMaxLen` (#1338); batch request contexts end LIFO (#1339); `decideBatch(router, …)`
+  forwards its hooks (#1340); floats ≥ 1e16 serialize as CPython spells them (#1341); and the noul
+  enum shortcut needs two distinct booleans (#1342). The TypeScript client also accepts
+  `option_order` and noul `labels` (#1343).
+* **`laya-rust` and `laya-dotnet` clip shortlist cosines to [-1, 1]**, as Python and Go already do;
+  a self-cosine rounded to `1.0000000000000002` (#1344).
+* **The .NET JSON reader is non-recursive.** It mirrored CPython's 2997-level limit but needed ~2
+  managed frames per level to reach it, so a document CPython loads aborted the process instead of
+  raising — .NET cannot catch a stack overflow. The parser, the re-emitter and the tree walk all use
+  an explicit stack now, `tokenizer_config.json` included, and the whole .NET suite runs to completion
+  where 85 tests used to abort it (#1346).
+
+All of the above is also proposed upstream, one pull request per change (#1331–#1346).
 
 Earlier releases are in the [GitHub releases](https://github.com/NandhaKishorM/laya/releases).
 
