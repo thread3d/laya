@@ -393,6 +393,55 @@ with patch("urllib.request.build_opener") as mock_build_opener:
     check("remote/auth", req.headers.get("Authorization"), "Bearer sk-test-token")
 
 
+# --------------------------------------------------------------- 5b. Non-Object Remote Response
+#
+# A remote laya-serve body is arbitrary JSON: a gateway, a mis-pointed `base_url`, or a proxy error
+# page can answer with a top-level array, string, number or `true`/`null`. `json.loads` accepts each
+# of those and the consumers read the result with `res.get("answers", …)` (the selector and route
+# lookups), so before the guard a non-object leaked `AttributeError: 'list' object has no attribute
+# 'get'` past the fail-closed path instead of the `RuntimeError` every other remote failure raises
+# here. `_call_remote` and the public `select()` are both driven so a regression at either layer is
+# caught.
+from laya.integrations.llamaindex import _call_remote as _llama_call_remote
+
+_LLAMA_NON_OBJECT_BODIES = [
+    ([], "list"),
+    ([{"answers": {"selector": {"choice": "choice_1"}}}], "list-of-objects"),
+    ("unauthorized", "str"),
+    (None, "null"),
+    (123, "int"),
+    (True, "bool"),
+]
+for _body, _label in _LLAMA_NON_OBJECT_BODIES:
+    with patch("urllib.request.build_opener") as _m:
+        _m.return_value.open.return_value = DummyHTTPResponse(_body)
+        try:
+            _llama_call_remote("http://localhost:8000", "s", {"q": {}})
+            check_true("nonobj/%s/_call_remote raises" % _label, False, "no error raised")
+        except RuntimeError as exc:
+            check_true("nonobj/%s/malformed" % _label, "Malformed decision response" in str(exc))
+            check_true("nonobj/%s/names object" % _label, "expected a JSON object" in str(exc))
+        except Exception as exc:
+            check_true("nonobj/%s/_call_remote raises" % _label, False, type(exc).__name__)
+
+        try:
+            LayaSingleSelector(base_url="http://localhost:8000", api_key="k").select(
+                tools, "Query via remote server")
+            check_true("nonobj/%s/select raises" % _label, False, "no error raised")
+        except RuntimeError as exc:
+            check_true("nonobj/%s/select malformed" % _label,
+                       "Malformed decision response" in str(exc))
+        except Exception as exc:
+            check_true("nonobj/%s/select surfaces RuntimeError" % _label, False, type(exc).__name__)
+
+# Positive control: a well-formed object body still selects -- the guard does not over-reject.
+with patch("urllib.request.build_opener") as _m:
+    _m.return_value.open.return_value = DummyHTTPResponse(remote_response)
+    check("nonobj/object still selects",
+          LayaSingleSelector(base_url="http://localhost:8000").select(
+              tools, "Query via remote server").selections[0].index, 1)
+
+
 # --------------------------------------------------------------- 6. Per-call decision controls
 #
 # `laya.integrations.langchain` has forwarded `max_len` / `head_max_len` and the five hook

@@ -31,6 +31,9 @@ reference over far more input than a hand-written corpus, from a fixed seed:
   * questions       Agent._check_question over question definitions, every refusal with its text,
                     and for the accepted ones render_options, the labels, the legend and the
                     normalized instructions and option order
+  * calibration     apply_calibration_payload on an ONNXAgent-shaped object (every accepted and
+                    rejected shape: version, temperature, temperature_by_options, binning_map,
+                    identity), apply_binning_map, and calibration_payload
   * predict_plan    ONNXAgent._infer_batch on a stub session: which rows each run holds (shape and
                     per-row checksums), the sort order, the result order, the answers and the
                     usage, over batch sizes, sorting and question sets on both tokenizers
@@ -48,6 +51,7 @@ import json
 import os
 import random
 import sys
+import time
 import unicodedata
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -928,6 +932,828 @@ def predict_plan_family(rng):
 
 
 
+# --- calibration payload (runtime half) -------------------------------------------------------
+CALIB_CFG = {"max_len": 512, "head_max_len": 192, "option_layout": "sequential",
+             "temperature": [1.0, 1.0, 1.0], "temperature_by_options": {"choice:2": 2.0},
+             "extra": {"a": [1, 2.5, True], "b": None}}
+CALIB_IDENTITY = {k: v for k, v in CALIB_CFG.items() if k not in ("temperature", "temperature_by_options")}
+OK_T = "[1.5, 2, 0.75]"
+OK_BIN = '{"choice:2": {"bins": 3, "values": [0.1, 0.5, 1]}}'
+
+
+def _calib_cases():
+    ident = json.dumps(CALIB_IDENTITY)
+    cases = []
+
+    def add(name, text, cfg=None):
+        cases.append((name, text, CALIB_CFG if cfg is None else cfg))
+
+    def body(**kw):
+        parts = ['"%s": %s' % (k, v) for k, v in kw.items()]
+        return "{" + ", ".join(parts) + "}"
+
+    # payload shape
+    for name, text in [("array", "[]"), ("number", "1"), ("string", '"x"'), ("null", "null"),
+                       ("true", "true")]:
+        add("payload_" + name, text)
+    # version
+    for name, v in [("absent", None), ("null", "null"), ("one", "1"), ("two", "2"), ("three", "3"),
+                    ("str_two", '"2"'), ("str_padded", '" 2 "'), ("str_underscore", '"0_2"'),
+                    ("str_double_underscore", '"2__0"'), ("str_trailing_underscore", '"2_"'),
+                    ("str_plus", '"+2"'), ("str_word", '"abc"'), ("str_empty", '""'),
+                    ("str_float", '"2.0"'), ("float_two", "2.0"), ("float_high", "2.9"),
+                    ("float_low", "1.9"), ("float_half", "1.5"), ("float_above", "2.5"),
+                    ("str_fullwidth", '"\uff12"'), ("str_arabic_indic", '"\u0662"'),
+                    ("str_fullwidth_underscore", '"\uff10_\uff12"'), ("str_tab_newline", '"\\t2\\n"'),
+                    ("str_nbsp", '"\u00a02\u00a0"'), ("str_superscript", '"\u00b2"'), ("exp", "2e0"), ("nan", "NaN"), ("inf", "Infinity"),
+                    ("huge_float", "1e999"), ("bool", "true"), ("false", "false"), ("list", "[2]"),
+                    ("object", "{}"), ("negative", "-1"), ("big", "1" + "0" * 30)]:
+        kw = {"temperature": OK_T}
+        if v is not None:
+            kw = {"version": v, **kw}
+        add("version_" + name, body(**kw))
+    # identity
+    v2 = lambda **kw: body(version=2, temperature=OK_T, **kw)
+    add("identity_match", v2(model_id_or_path="null", subfolder="null", config=ident))
+    add("identity_config_absent", v2())
+    add("identity_config_null", v2(config="null"))
+    add("identity_model", v2(model_id_or_path='"org/m"', subfolder="null", config=ident))
+    add("identity_subfolder", v2(model_id_or_path="null", subfolder='"sub"', config=ident))
+    add("identity_both", v2(model_id_or_path='"it\'s"', subfolder='"s"', config='{"max_len": 1}'))
+    add("identity_config_differs", v2(config='{"max_len": 256}'))
+    add("identity_equal_numbers", v2(config='{"extra": {"b": null, "a": [1.0, 2.5, 1]}, '
+        '"option_layout": "sequential", "head_max_len": 192.0, "max_len": 512}'))
+    add("identity_bool_as_int", v2(config='{"max_len": 512, "head_max_len": 192, '
+        '"option_layout": "sequential", "extra": {"a": [true, 2.5, 1], "b": null}}'))
+    add("identity_extra_key", v2(config=json.dumps({**CALIB_IDENTITY, "z": 1})))
+    add("identity_with_temps", v2(model_id_or_path="null", subfolder="null", config=json.dumps(CALIB_CFG)))
+    add("identity_list", v2(config="[]"))
+    add("identity_not_checked_v1", body(version=1, temperature=OK_T, model_id_or_path='"x"'))
+    add("identity_empty_cfg", v2(model_id_or_path="null", subfolder="null", config="{}"), {})
+    # temperature
+    for name, t in [("absent", None), ("null", "null"), ("two", "[1, 2]"), ("four", "[1, 2, 3, 4]"),
+                    ("string", '"abc"'), ("object", '{"a": 1, "b": 2, "c": 3}'), ("number", "3"),
+                    ("clamped", "[0.1, 9, 2.5]"), ("strings", '["2.5", "x", " 3 "]'),
+                    ("string_specials", '["nan", "inf", "0x1p1"]'),
+                    ("specials", "[null, NaN, Infinity]"), ("neg_inf", "[-Infinity, 1e999, -1e999]"),
+                    ("bools", "[true, false, 1]"), ("zero", "[0, -0.0, 0.5]"),
+                    ("nested", '[[1], {}, "1 0"]'), ("edges", "[0.5, 5, 5.0000001]"),
+                    ("ints", "[1, 5, 100000000000000000000000]"),
+                    ("plain_strings", '["+2", "1e1", "1.5"]'),
+                    ("str_underscores", '["1_5", "1_0.5", "2e1_0"]'),
+                    ("str_bad_underscores", '["1_.5", "1._5", "_1"]'),
+                    ("str_unicode_digits", '["\uff11.\uff15", "\u0663", "\u00b2"]'),
+                    ("str_signed_nan", '["+nan", "-NaN", "-Infinity"]'),
+                    ("str_inf_words", '["inf", "INFINITY", "infinit"]'),
+                    ("str_nbsp", '["\u00a02\u00a0", "\u20032", "2\\u200b"]'),
+                    ("str_overflow", '["1e400", "-1e400", "1e-400"]'),
+                    ("bool_true_only", "[true, 1.0, 1]")]:
+        add("temperature_" + name, body(version=1, **({} if t is None else {"temperature": t})))
+    # temperature_by_options
+    for name, b in [("absent", None), ("null", "null"), ("empty", "{}"), ("list", "[]"),
+                    ("string", '"x"'), ("number", "5"), ("false", "false"),
+                    ("mixed", '{"choice:2": 0.01, "choice:3-5": "3", "score:2": true, "noul:2": null, '
+                              '"choice:11+": 7, "choice:6-10": 2}'),
+                    ("duplicate", '{"choice:2": 9, "choice:2": 0.1}')]:
+        kw = {"version": 1, "temperature": OK_T}
+        if b is not None:
+            kw["temperature_by_options"] = b
+        add("by_options_" + name, body(**kw))
+    # binning
+    def bm(v):
+        return body(version=1, temperature=OK_T, binning_map=v)
+
+    for name, v in [("null", "null"), ("empty", "{}"), ("valid", OK_BIN), ("one_bin", '{"c": {"bins": 1, "values": [0.25]}}'),
+                    ("ints", '{"c": {"bins": 2, "values": [0, 1]}}'),
+                    ("two_buckets", '{"choice:2": {"bins": 2, "values": [0.2, 0.9]}, '
+                                    '"score:3-5": {"bins": 1, "values": [0.5]}}'),
+                    ("list", "[]"), ("string", '"x"'), ("number", "1"), ("true", "true"),
+                    ("entry_list", '{"c": []}'), ("entry_null", '{"c": null}'), ("entry_empty", '{"c": {}}'),
+                    ("bins_bool", '{"c": {"bins": true, "values": [0.5]}}'),
+                    ("bins_float", '{"c": {"bins": 2.0, "values": [0.5, 0.5]}}'),
+                    ("bins_exp", '{"c": {"bins": 1e0, "values": [0.5]}}'),
+                    ("bins_str", '{"c": {"bins": "2", "values": [0.5, 0.5]}}'),
+                    ("bins_zero", '{"c": {"bins": 0, "values": []}}'),
+                    ("bins_negative", '{"c": {"bins": -1, "values": []}}'),
+                    ("bins_missing", '{"c": {"values": [0.5]}}'),
+                    ("bins_huge", '{"c": {"bins": 100000000000000000000, "values": [0.5]}}'),
+                    ("values_short", '{"c": {"bins": 3, "values": [0.5, 0.5]}}'),
+                    ("values_long", '{"c": {"bins": 1, "values": [0.5, 0.5]}}'),
+                    ("values_missing", '{"c": {"bins": 1}}'),
+                    ("values_string", '{"c": {"bins": 1, "values": "a"}}'),
+                    ("values_object", '{"c": {"bins": 1, "values": {"a": 1}}}'),
+                    ("value_str", '{"c": {"bins": 1, "values": ["0.5"]}}'),
+                    ("value_bool", '{"c": {"bins": 1, "values": [true]}}'),
+                    ("value_null", '{"c": {"bins": 1, "values": [null]}}'),
+                    ("value_list", '{"c": {"bins": 1, "values": [[0.5]]}}'),
+                    ("value_nan", '{"c": {"bins": 1, "values": [NaN]}}'),
+                    ("value_inf", '{"c": {"bins": 1, "values": [Infinity]}}'),
+                    ("value_huge", '{"c": {"bins": 1, "values": [1e999]}}'),
+                    ("value_negative", '{"c": {"bins": 1, "values": [-0.1]}}'),
+                    ("value_high", '{"c": {"bins": 1, "values": [1.0000001]}}'),
+                    ("value_edges", '{"c": {"bins": 2, "values": [0.0, 1.0]}}'),
+                    ("second_entry_bad", '{"a": {"bins": 1, "values": [0.5]}, "b": {"bins": 1, "values": [2]}}')]:
+        add("binning_" + name, bm(v))
+    # the whole thing at once
+    add("full", body(version=2, temperature="[0.2, 3, 9]", temperature_by_options='{"choice:2": 0.1, "score:2": 2}',
+                     model_id_or_path="null", subfolder="null", config=ident, binning_map=OK_BIN))
+    add("duplicate_keys", '{"version": 1, "temperature": [9, 9, 9], "temperature": [2, 2, 2]}')
+    return cases
+
+
+class _CalibObj:
+    def __init__(self, cfg):
+        self.cfg = cfg   # the parsed rl_agent_config.json; Go has no model id, so it compares against (None, None)
+
+
+def calibration_family():
+    import warnings
+
+    from laya.calibrate import apply_binning_map, apply_calibration_payload, calibration_payload
+
+    cases = []
+    for name, text, cfg in _calib_cases():
+        obj = _CalibObj(json.loads(json.dumps(cfg)))
+        obj.binning_map = "unset"
+        record = {"name": name, "payload": text, "config": json.dumps(cfg)}
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            try:
+                apply_calibration_payload(obj, json.loads(text))
+            except ValueError as exc:
+                record["error"] = str(exc)
+            else:
+                record["temperature"] = obj.temperature
+                record["by_options"] = obj.temperature_by_options
+                record["binning"] = obj.binning_map
+        record["warnings"] = [[w.category.__name__, str(w.message)] for w in caught]
+        cases.append(record)
+
+    rng = random.Random(SEED + 8)
+    maps = [{"choice:2": {"bins": 3, "values": [0.1, 0.5, 1.0]}},
+            {"choice:2": {"bins": 1, "values": [0.25]}, "score:3-5": {"bins": 15, "values": [i / 15 for i in range(15)]}},
+            {}]
+    buckets = ["choice:2", "choice:3-5", "score:3-5", "noul:2", "choice:11+"]
+    confs = [0.0, 1.0, 0.5, 1 / 3, 2 / 3, 0.9999999, 1e-12, 0.3333333333333333, -0.5, 1.5]
+    confs += [rng.random() for _ in range(40)]
+    binning = [{"map": m, "bucket": b, "confidence": c, "result": apply_binning_map(c, b, m)}
+               for m in maps for b in buckets for c in confs]
+
+    writer = []
+    for model, sub, cfg, bmap in [(None, None, CALIB_CFG, None), ("org/m", "sub", CALIB_CFG, OK_BIN_MAP),
+                                  (None, None, None, {}), (None, None, {}, OK_BIN_MAP)]:
+        body = calibration_payload([1.5, 2, 0.75], {"choice:2": 2, "score:3-5": 0.5}, model, sub, cfg, bmap)
+        writer.append({"model": model, "subfolder": sub, "config": cfg, "binning_map": bmap,
+                       "payload": json.dumps(body)})
+    return {"cases": cases, "binning": binning, "writer": writer}
+
+
+OK_BIN_MAP = json.loads(OK_BIN)
+
+class _OrderAgent:
+    """Records the questions predict_shortlist hands to predict, option_order included."""
+
+    def __init__(self):
+        self.seen = None
+
+    def predict(self, state, questions, **kwargs):
+        self.seen = {qid: dict(qdef) for qid, qdef in questions.items()}
+        return {"answers": {}, "model": "stub"}
+
+
+def _order_embed(texts):
+    """Rank option i by a fixed score, so which labels survive the cut is known by reading it."""
+    import numpy as np
+
+    return np.asarray([[1.0, 0.0] if i == 0 else [1.0 / (i + 1), float(i % 3)]
+                       for i in range(len(texts))], dtype=np.float64)
+
+
+def shortlist_order_family(rng):
+    """predict_shortlist's option_order rule: a narrowed choice loses it, with one warning each."""
+    import copy
+    import warnings
+
+    from laya import shortlist as mod
+
+    six = {name: "the %s option" % name for name in ("a", "b", "c", "d", "e", "f")}
+    three = {"x": "first", "y": "second", "z": "third"}
+    cases = []
+    for name, questions, k in [
+        ("narrowed-loses-order", {"q": {"type": "choice", "instructions": "Which?", "criteria": six,
+                                        "option_order": [5, 4, 3, 2, 1, 0]}}, 3),
+        ("passthrough-keeps-order", {"q": {"type": "choice", "instructions": "Which?", "criteria": three,
+                                           "option_order": [2, 0, 1]}}, 3),
+        ("non-choice-keeps-order", {
+            "s": {"type": "score", "instructions": "How bad?", "criteria": ["low", "mid", "high"],
+                  "option_order": [2, 1, 0]},
+            "n": {"type": "noul", "instructions": "Is it?", "option_order": [1, 0]}}, 2),
+        ("two-narrowed-two-warnings", {
+            "p": {"type": "choice", "instructions": "P?", "criteria": six, "option_order": [1, 0, 2, 3, 4, 5]},
+            "q": {"type": "choice", "instructions": "Q?", "criteria": six, "option_order": [5, 4, 3, 2, 1, 0]},
+            "r": {"type": "choice", "instructions": "R?", "criteria": three, "option_order": [1, 2, 0]}}, 4),
+        ("narrowed-without-order", {"q": {"type": "choice", "instructions": "Which?", "criteria": six}}, 2),
+    ]:
+        agent = _OrderAgent()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = mod.predict_shortlist(agent, "state", copy.deepcopy(questions), _order_embed, k)
+        cases.append({
+            "name": name, "k": k, "questions": questions,
+            "asked": agent.seen,
+            "warnings": [str(w.message) for w in caught if issubclass(w.category, RuntimeWarning)],
+            "labels": {qid: entry["labels"] for qid, entry in result["shortlist"].items()},
+        })
+    return {"cases": cases}
+
+def email_fold_family(rng):
+    """Which code points `re.I` treats as each literal letter laya/email.py's patterns spell.
+
+    The Go port matches those patterns on text folded to one rune per rune (Go's `(?i)` is a
+    different relation: it has no dotless i), so the fold is held to Python over all of Unicode
+    for every letter the patterns use. `orbit[L]` lists every other code point that matches L.
+    """
+    import re
+    from laya import email as email_mod
+
+    sources = [p.pattern for p in email_mod._QUOTE_HEADERS]
+    sources += [email_mod._ATTRIBUTION_TAIL.pattern, email_mod._ATTRIBUTION_HEAD.pattern,
+                email_mod._HEADER_FROM_NAME.pattern, email_mod._HEADER_NEXT.pattern,
+                email_mod._SIGNOFF_HEAD.pattern, email_mod._DEVICE_FOOTER.pattern,
+                email_mod._DISCLAIMER.pattern, email_mod._DEVICE]
+    sources += [m.pattern for m in email_mod._SIGNATURE_MARKERS if hasattr(m, "pattern")]
+    accented = sorted({c for src in sources for c in src if ord(c) > 127})
+    alphabet = [chr(c) for c in range(ord("a"), ord("z") + 1)] + accented
+    pattern = re.compile("|".join("(%s)" % re.escape(c) for c in alphabet), re.I)
+    orbit = {c: [] for c in alphabet}
+    for cp in range(MAX):
+        if cp in SURROGATES or not chr(cp).isalpha():
+            continue
+        m = pattern.fullmatch(chr(cp))
+        if m is not None and chr(cp) != alphabet[m.lastindex - 1]:
+            orbit[alphabet[m.lastindex - 1]].append(cp)
+    return {"alphabet": "".join(alphabet), "orbit": {k: v for k, v in orbit.items() if v}}
+
+
+EMAIL_FRAGMENTS = [
+    "I cannot log in and need a password reset.", "Please refund the duplicate charge.",
+    "On Mon, Jan 5, 2026 at 9:00 AM Ana <ana@x.com> wrote:", "On Monday I wrote:",
+    "Em seg., 5 de jan. de 2026 \u00e0s 09:00, Ana <ana@x.com> escreveu:",
+    "Em resposta ao que voc\u00ea escreveu:", "El lun, 5 ene 2026, Ana escribi\u00f3:",
+    "Le lun. 5 janv. 2026 \u00e0 09:00, Ana a \u00e9crit :", "Le rapport que vous avez \u00e9crit :", "Le rapport que Ana a \u00e9crit :", "El informe que Ana escribi\u00f3:",
+    "Le lun. 5 janv. 2026, Ana a \u00e9crit:", "ana@x.com> escreveu:", "support@x.com> a \u00e9crit :",
+    "-----Original Message-----", "-----Mensagem original-----", "-----Message d'origine-----",
+    "________________", "From: ana@x.com", "From: my side it works", "From: Ana Souza", "Sent: Monday 2026",
+    "De: Maria Souza", "Enviado: segunda 2026", "De: 10/09 a 15/09", "De : Marie Dupont",
+    "Envoy\u00e9 : lundi 5 janvier 2026", "Date: 5 Jan 2026", "Fecha: 5 enero 2026", "De: ana@x.com",
+    "> quoted line", "  > indented quote", "--", "-- ", "Regards,", "Regards, Ana", "Thanks for the reply.",
+    "Thanks, \u017canetta", "Thanks, \u0141ukasz", "Best regards", "Warm wishes, Jos\u00e9",
+    "Thanks, Jose\u0301", "Thanks, \u0301x", "Kind regards and thanks a lot very much", "Cheers",
+    "Atenciosamente,", "Obrigado pelo retorno, mas ainda n\u00e3o consigo entrar.", "Obrigada.",
+    "Saludos cordiales", "Gracias de antemano", "Cordialement,", "Merci pour votre aide, mais non.",
+    "Merci d'avance", "Bonne journ\u00e9e", "Sent from my iPhone", "Enviado do meu celular",
+    "Enviado do meu celular o comprovante ontem.", "Envoy\u00e9 depuis mon iPhone",
+    "Sent from my Samsung Galaxy smartphone using Outlook 365", "Get Outlook for iOS",
+    "Obter o Outlook para Android", "This email and its contents are confidential and intended solely for you.",
+    "This email and its contents are\nconfidential and intended solely for you.", "Is this confidential?",
+    "Confidential: I need a refund.", "If you have received this email in error please delete it.",
+    "Esta mensagem \u00e9 confidencial e de uso exclusivo do destinat\u00e1rio.",
+    "preciso do contrato confidencial", "Antes de imprimir, pense no meio ambiente.",
+    "antes de imprimir o boleto, confira o valor", "Ha recibido este mensaje por error.",
+    "Ce message est confidentiel et destin\u00e9 \u00e0 son destinataire.", "le contrat confidentiel",
+    "Vous avez re\u00e7u ce message par erreur.", "Usage exclusif du destinataire.",
+    "The account is locked\nThis email is confidential and intended solely for the addressee.",
+    "Please help. This message is confidential and privileged. Thank you.",
+    "\u0130f you received this message in error", "TH\u0130S EMAIL IS CONF\u0130DENT\u0130AL AND INTENDED SOLELY",
+    "this email is confidential and intended solely", "t\u0131his", "\u017f\u00e9nt from my iPhone",
+    "Em\u00a0seg, 1 de jan de 2024 escreveu:", "On\u3000Monday 5 Jan 2026 Ana wrote:",
+    "Le\u202flun. 5 janv. 2026, Ana a \u00e9crit :", "-----Original\u00a0Message-----",
+    "Thank\u00a0you John", "Thank you\u3000John", "Sent\u00a0from my iPhone", "Sent from\u202fmy iPhone",
+    "Ce\u00a0message est confidentiel", "This\u2009email is confidential and intended solely",
+    "Em\x0eseg, 1 de jan de 2024 escreveu:", "Thank\x0eyou John", "Sent from my iPhone using x\x0f", "\x0e", "\x0f", "\x7f",
+    "This email is confidential\u0663 and intended solely", "This email is confidential\u00a0and intended solely",
+    "Sent from my iPhone using x\u0663", "Sent from my iPhone using x\uff11", "Sent from my iPhone \u0663",
+    "\u212aind regards", "REGARDS, ANA", "\u00a0Regards,\u00a0", "\u2028", "\x85", "\x1c", "a\u2028b",
+    "\u0661\u0662/\u0661\u0663 5 jan Ana escribi\u00f3:", "El \u0661\u0662 Ana escribi\u00f3:",
+    "This email\u0301 is confidential and intended solely", "\U0001d400 confidential and intended solely",
+    "\u4f60\u597d\uff0c\u8bf7\u9000\u6b3e\u3002", "x" * 70, "", " ", "\t", "a    b\t\tc",
+]
+EMAIL_JOINERS = ["\n", "\n", "\n", "\n\n", "\r\n", " ", "\n \n", "\\n", "\r", "\n\u00a0\n"]
+
+
+def email_fuzz_family(rng):
+    """clean_email_body and email_state over random runs of the corpus' own fragments.
+
+    The shared corpus is hand-built from the module's reasoning; this joins its rules, its
+    near-misses and the Unicode oddities (dotless i, long s, Kelvin, NEL, LS, FS, astral, marks,
+    non-ASCII digits) in orders nobody wrote down, at three budgets.
+    """
+    from laya import email as email_mod
+
+    cases = []
+    for _ in range(1500):
+        parts = [rng.choice(EMAIL_FRAGMENTS) for _ in range(rng.randrange(1, 16))]
+        body = parts[0]
+        for part in parts[1:]:
+            body += rng.choice(EMAIL_JOINERS) + part
+        budget = rng.choice([3000, 3000, 3000, 200, 40, 1, 0, -3])
+        case = {"body": body, "max_chars": budget,
+                "result": email_mod.clean_email_body(body, max_chars=budget)}
+        cases.append(case)
+    return {"cases": cases}
+
+# ---------------------------------------------------------------- router
+# laya/router.py's routing half, run through the real Router. The probe corpus is the one the .NET
+# port records (laya-dotnet/tools/routing_cases.py); only its inputs are used, every answer here is
+# recorded from Python now.
+ROUTER_TD = {
+    "agent_trace_observability": ["action", "needs_review", "outcome", "risk", "urgency"],
+    "customer_service": ["action", "category", "churn_risk", "needs_human", "urgency"],
+    "invoice_processing": ["discrepancy_severity", "disposition", "duplicate", "matches_order", "urgency"],
+    "security_incidents": ["credential_compromise", "disposition", "severity", "true_positive", "urgency"],
+}
+
+NAME_CASES = [
+    "english", "multilingual", "typed-decisions", "en", "laya", "default", "multi", "ml", "laya-multilingual",
+    "typed", "typed_decisions", "laya-typed-decisions", "decisions", "EN", "  English ", "\tML\n", "Typed_Decisions",
+    "TYPED-DECISIONS", "typed decisions", "", " ", "auto", "papers", "english/", "../english", "x" * 300,
+    "\u00a0en\u00a0", "\u2003en\u2003", "\u3000english\u3000", "\u200ben", "en\u200b", "\u212a", "K", "\u0130N",
+    "ENGLİSH", "\uff25\uff2e", "\uff45\uff4e", "ΣΑΣ", "ΑΣ", "Σ", "english\u0307", "ﬁ", "ǅ", "ß", "ẞ",
+    "it's", 'say "hi"', "it's \"x\"", "x\u200by", "\x07", "\U0001f600", "\ud7ff", "\ue000", "\n", "a\nb",
+    "multilingual\x00", "ml ", " ml", "MULTI", "Laya", "LAYA-TYPED-DECISIONS", "typed_decisions ", "decision",
+]
+
+CODE_CASES = [
+    "en", "EN", "En", "en-US", "en_US", "en_US.UTF-8", "en.UTF-8", "eng", "ENG", "english", "English", " EN ",
+    "de", "de-DE", "de_DE.UTF-8", "fr", "zh_CN", "zh-Hans-CN", "pt-BR", "hi", "ar", "qq", "it's", "x\u200by",
+    "", " ", "   ", "\t", ".", ".UTF-8", "-", "_", "-en", "_en", "C", "c", "C.UTF-8", "c.utf-8", "POSIX", "posix",
+    "POSIX.UTF-8", "und", "UND", "und-Latn", "zxx", "mul", "mul-x", "en-", "en_", "en-.x", "e", "n", "english-us",
+    "English_US", "eng-US", "ENGLISH.UTF-8", "en\u00a0", "\u00a0en", "\u200ben", "\uff45\uff4e", "\u212a",
+    "\u0130", "i\u0307", "ΣΑΣ", "x" * 500, "en" + "-x" * 100, "e\u0301n", "\U0001f600", "C\u200b", "c-utf8",
+    "c_utf8", "posix_x", "Mul", "none", "None", "null", "0", "1", "True",
+]
+
+ROUTER_FRAGMENTS = [
+    "I was charged twice, please refund the duplicate payment on my invoice.",
+    "Please review the error and send me the details of this and what you would like to do.",
+    "Der Kunde wurde zweimal belastet und moechte eine Rueckerstattung fuer die Rechnung die nicht korrekt ist",
+    "Eu nao consigo entrar na minha conta e depois eu nao sei mais o que fazer com isso tudo.",
+    "Le client a ete facture deux fois et demande un remboursement",
+    "Müşteriden iki kez ücret alındı ve para iadesi istiyor lütfen yardım",
+    "Klient został obciążony dwukrotnie i chce zwrot pieniędzy za fakturę",
+    "Gătește-mi o rețetă de sarmale de post pentru mâine.",
+    "žluťoučký kůň úpěl ďábelské ódy", "hej min vän", "Hello", "refund me", "12345", "12345 6789", "", "   ", "\n",
+    "मुझसे दो बार शुल्क लिया गया", "二重に請求されました", "客户被重复扣款要求退款", "두 번 청구되었습니다",
+    "تم خصم المبلغ مرتين", "Հայերեն", "ՀԱՅԵՐԵՆ", "ลูกค้าถูกเรียกเก็บเงินสองครั้ง", "С клиента дважды сняли деньги",
+    "Ο πελάτης χρεώθηκε δύο φορές", "MON DES EST LA", "os.path = nao consigo entrar na minha conta",
+    "Please send the receipt to Владимир Иванов today", "ok ㄅㄆㄇㄈㄉㄊㄋㄌㄍㄎ", "Please " + "ありがとう" * 4,
+    "\U0001f600 \U0001f600", "ＡＢＣＤ hello", "x\u200by z", "it's don't \"quoted\"", "a\u0007b nao consigo entrar",
+    "Quiero cancelar mi pedido por favor ahora", "Ich kann mich nicht in mein Konto einloggen",
+    "Care este ora in Tokyo?", "Cât e ora acum la Tokyo",
+]
+
+
+def _router_decision(decision):
+    det = decision["detection"]
+    return {
+        "model": decision["model"], "repo": decision["repo"], "reason": decision["reason"],
+        "workflow": decision["workflow"],
+        "detection": None if det is None else {
+            "script": det["script"], "language": det["language"], "is_english": det["is_english"],
+            "language_undecided": det["language_undecided"], "non_latin_fraction": det["non_latin_fraction"],
+            "diacritic_rate": det["diacritic_rate"], "mixed_segment": det["mixed_segment"]},
+    }
+
+
+def _router_build(kwargs):
+    """The Router for these kwargs, or the text of what Router() refused."""
+    from laya.router import Router
+    try:
+        return Router(**kwargs), None
+    except ValueError as refused:
+        return None, str(refused)
+
+
+def _router_route(router, route_kwargs):
+    try:
+        return {"decision": _router_decision(router.route(**route_kwargs))}
+    except ValueError as refused:
+        return {"error": str(refused)}
+
+
+def _router_questions(rng):
+    ids = [i for ids in ROUTER_TD.values() for i in ids] + ["x", "y", "urgency", "Urgency", "", "id with space"]
+    ids = sorted(set(ids))
+    pools = [list(v) for v in ROUTER_TD.values()]
+    for _ in range(40):
+        pool = rng.choice(pools)
+        pick = rng.sample(pool, rng.randint(max(0, len(pool) - 2), len(pool)))
+        if rng.random() < 0.4:
+            pick.append(rng.choice(ids))
+        pick = list(dict.fromkeys(i for i in pick if i.strip()))
+        pools.append(pick)
+    return pools
+
+
+def _noul_questions(ids):
+    return {i: {"type": "noul", "instructions": "x"} for i in ids}
+
+
+def _mutate_text(rng, text):
+    ops = [lambda t: t.upper(), lambda t: t.lower(), lambda t: " " + t + "\t", lambda t: t[::-1],
+           lambda t: t + "\u200b", lambda t: t + "\n" + t, lambda t: t * 3, lambda t: t.title(),
+           lambda t: t.replace(" ", "_"), lambda t: t.replace("-", "_"), lambda t: "\u00a0" + t]
+    return rng.choice(ops)(text)
+
+
+def _router_state(rng):
+    frag = lambda: rng.choice(ROUTER_FRAGMENTS)  # noqa: E731
+    shape = rng.randrange(7)
+    if shape == 0:
+        return frag()
+    if shape == 1:
+        return {"body": frag()}
+    if shape == 2:
+        return {"subject": frag(), "body": frag()}
+    if shape == 3:
+        return [frag(), frag()]
+    if shape == 4:
+        return "\n".join([frag() for _ in range(rng.randint(2, 5))])
+    if shape == 5:
+        return {"note": frag() * rng.randint(1, 40), "body": frag()}
+    return _mutate_text(rng, frag())
+
+
+def router_family(rng):
+    """Router naming, workflow match, question signature, route and route_batch, all from Python."""
+    import copy
+
+    sys.path.insert(0, os.path.join(HERE, "..", "..", "laya-dotnet", "tools"))
+    try:
+        import routing_cases
+    finally:
+        sys.path.pop(0)
+    from laya import router as pyrouter
+    from laya.agent import Agent
+    from laya.common import _resolve_noul_labels, render_criterion, render_options
+    from laya.router import Router
+
+    names = []
+    for name in NAME_CASES + [_mutate_text(rng, rng.choice(NAME_CASES[:16])) for _ in range(200)]:
+        record = {"name": name, "canonical": pyrouter.canonical_name(name)}
+        try:
+            record["normalised"] = pyrouter.normalise_name(name)
+        except ValueError as refused:
+            record["error"] = str(refused)
+        spec = pyrouter.resolve_model_spec(name)
+        record["spec"] = None if spec is None else list(spec)
+        names.append(record)
+
+    codes = [{"code": c, "english": pyrouter._english_from_code(c)}
+             for c in CODE_CASES + [_mutate_text(rng, rng.choice(CODE_CASES[:30])) for _ in range(200)]]
+
+    workflows = []
+    for ids in list(ROUTER_TD.values()) + _router_questions(rng) + [[], ["urgency"]]:
+        shuffled = list(ids)
+        rng.shuffle(shuffled)
+        workflows.append({"ids": shuffled, "workflow": pyrouter.match_typed_decisions_workflow(_noul_questions(shuffled))})
+
+    signatures = []
+    for cid, qid, definition in QUESTION_CASES:
+        try:
+            Agent._check_question(qid, copy.deepcopy(definition))
+        except ValueError:
+            continue
+        internal = Agent._to_internal(copy.deepcopy(definition))
+        render = json.dumps([internal["t"], internal["ins"], render_options(internal),
+                             [str(k) for k in internal["crit"]] if internal["t"] == "choice" else
+                             [render_criterion(c) for c in internal["crit"]] if internal["t"] == "score" else
+                             list(_resolve_noul_labels(internal.get("labels"))),
+                             internal.get("option_order")], ensure_ascii=False)
+        signatures.append({"case": cid, "questions": {qid: definition}, "render": render,
+                           "signature": pyrouter._question_schema({qid: definition})})
+    for _ in range(30):
+        picks = rng.sample([d for _, _, d in QUESTION_CASES if _accepted(d)], 3)
+        questions = {"q%d" % i: copy.deepcopy(d) for i, d in enumerate(picks)}
+        signatures.append({"case": "multi", "questions": questions,
+                           "signature": pyrouter._question_schema(questions)})
+        reordered = dict(reversed(list(questions.items())))
+        signatures.append({"case": "multi-reversed", "questions": reordered,
+                           "signature": pyrouter._question_schema(reordered)})
+
+    routes = []
+    for label, router_kwargs, route_kwargs in routing_cases.ROUTE_CASES:
+        router, refused = _router_build(router_kwargs)
+        record = {"case": label, "router": router_kwargs, "route": route_kwargs}
+        record.update({"router_error": refused} if refused else _router_route(router, route_kwargs))
+        routes.append(record)
+
+    # Router() arguments Python refuses, and a state a Router sees in every position.
+    for bad in ("bogus", "", "Papers", " english/ "):
+        routes.append({"case": "default-%r" % (bad,), "router": {"default": bad}, "route": {"state": "x"},
+                       "router_error": _router_build({"default": bad})[1]})
+    for key in ("en", " ML ", "Laya", "typed_decisions"):
+        kwargs = {"models": {key: "/srv/laya-models/a"}, "standalone_repos": key == "en"}
+        router, _ = _router_build(kwargs)
+        route = {"state": "x", "model": key}
+        routes.append(dict({"case": "models-alias-%r" % key, "router": kwargs, "route": route},
+                           **_router_route(router, route)))
+    # "~" expands to a home directory that differs per machine; the Go tests pin it against $HOME.
+    for source in ("/abs/~/x", "x~", "a~b", ""):
+        kwargs = {"models": {"english": source}}
+        router, _ = _router_build(kwargs)
+        route = {"state": "x", "model": "english"}
+        routes.append(dict({"case": "path-%r" % source, "router": kwargs, "route": route},
+                           **_router_route(router, route)))
+    for sub in ("", None, "sub", "a/b"):
+        kwargs = {"models": {"multilingual": ["org/repo", sub]}}
+        router, _ = _router_build(kwargs)
+        route = {"state": "x", "model": "ml"}
+        routes.append(dict({"case": "pair-%r" % (sub,), "router": kwargs, "route": route},
+                           **_router_route(router, route)))
+
+    questions_pool = _router_questions(rng)
+    for _ in range(900):
+        kwargs = {}
+        if rng.random() < 0.3:
+            kwargs["default"] = rng.choice(["english", "en", "ML", "typed", "multilingual", "Laya"])
+        if rng.random() < 0.3:
+            kwargs["auto_task_detection"] = True
+        if rng.random() < 0.2:
+            kwargs["standalone_repos"] = True
+        if rng.random() < 0.25:
+            kwargs["lang_guess"] = rng.choice(CODE_CASES)
+        route = {"state": _router_state(rng)}
+        if rng.random() < 0.4:
+            route["questions"] = _noul_questions(rng.choice(questions_pool))
+        if rng.random() < 0.15:
+            route["model"] = rng.choice(NAME_CASES)
+        if rng.random() < 0.12:
+            route["task"] = rng.choice(NAME_CASES + ["typed_decisions", "Typed-Decisions", "TYPED_DECISIONS"])
+        if rng.random() < 0.3:
+            route["lang"] = rng.choice(CODE_CASES)
+        if rng.random() < 0.25:
+            route["lang_guess"] = rng.choice(CODE_CASES)
+        router, refused = _router_build(kwargs)
+        record = {"case": "fuzz", "router": kwargs, "route": route}
+        record.update({"router_error": refused} if refused else _router_route(router, route))
+        routes.append(record)
+
+    batches = []
+    for _ in range(60):
+        router_kwargs = {"auto_task_detection": rng.random() < 0.5}
+        router = Router(**router_kwargs)
+        requests = []
+        for _ in range(rng.randint(0, 6)):
+            request = {"state": _router_state(rng), "questions": _noul_questions(rng.choice(questions_pool))}
+            if rng.random() < 0.3:
+                request["model"] = rng.choice(NAME_CASES[:14])
+            if rng.random() < 0.3:
+                request["lang"] = rng.choice(CODE_CASES)
+            if rng.random() < 0.2:
+                request["lang_guess"] = rng.choice(CODE_CASES)
+            if rng.random() < 0.1:
+                request["task"] = rng.choice(["typed-decisions", "TYPED_decisions", "english", "nope"])
+            requests.append(request)
+        record = {"router": router_kwargs, "requests": requests}
+        try:
+            record["decisions"] = [_router_decision(d) for d in router.route_batch(requests)]
+        except ValueError as refused:
+            record["error"] = str(refused)
+        batches.append(record)
+    for index, state in ((0, None), (2, None)):
+        requests = [{"state": "hello there my friend", "questions": {}} for _ in range(index)] + \
+                   [{"state": state, "questions": {}}]
+        try:
+            Router().route_batch(requests)
+        except TypeError as refused:
+            batches.append({"router": {}, "requests": requests, "error": str(refused)})
+    batches.append({"router": {}, "requests": [], "decisions": []})
+
+    refused = sum(1 for r in routes if "error" in r or "router_error" in r)
+    if len(routes) < 1000 or refused < 40 or len(names) < 250:
+        raise AssertionError("the router cases stopped covering enough (%d routes, %d refused)"
+                             % (len(routes), refused))
+    hooks, hook_batches = router_hooks_family(rng)
+    return {"names": names, "codes": codes, "workflows": workflows, "signatures": signatures,
+            "routes": routes, "batches": batches, "hooks": hooks, "hook_batches": hook_batches,
+            "timeout_text": [{"seconds": x, "text": "%g" % x} for x in TIMEOUT_TEXT_VALUES]}
+
+
+# Python's %g on a timeout: six significant digits, exponent form below 1e-4 and from 1e6.
+TIMEOUT_TEXT_VALUES = [0.1234567, 1234.567, 123456.7, 1234567.0, 12345678.9, 0.0001, 0.00012345678, 0.00001234567, 1e-07,
+                       0.5, 1.0, 30.0, 100000.0, 999999.5, 999999.4, 1000000.0, 0.1, 0.05, 2.5, 3600.0, 1e9,
+                       0.30000000000000004, 1.0000005, 1.0000004, 0.99999949, 7.0000001]
+
+ROUTER_HOOK_MODELS = ["english", "multilingual", "typed-decisions"]
+
+
+def _hook_class(name, events, behaviour, log, run_ids):
+    """A hook object whose class is called `name` and which implements only `events`."""
+    from laya.router import RouteDecision, _repo_str
+
+    def on_route(self, ctx):
+        run_ids.append(ctx.run_id)
+        log.append({"hook": name, "event": "on_route", "model": ctx.decision["model"],
+                    "reason": ctx.decision["reason"], "states": [x if isinstance(x, str) else "<%s>" % type(x).__name__ for x in ctx.states],
+                    "questions": list(ctx.questions), "run_id_len": len(ctx.run_id),
+                    "run_id_shared": ctx.run_id == run_ids[0], "router_is_self": ctx.router is not None})
+        kind, _, arg = behaviour.partition(":")
+        if kind in ("replace", "replace_raise"):
+            ctx.decision = RouteDecision(model=arg, repo=_repo_str(ctx.router.models.get(arg)),
+                                         reason="replaced by %s" % name, detection=None, workflow=None)
+        if kind == "suffix":
+            ctx.decision = RouteDecision(dict(ctx.decision, reason=ctx.decision["reason"] + "|" + name))
+        if kind in ("raise", "replace_raise"):
+            raise RuntimeError("boom from %s" % name)
+        if kind == "sleep":
+            time.sleep(float(arg))
+
+    def other(self, ctx):
+        log.append({"hook": name, "event": "other"})
+
+    on_route.__qualname__ = name + ".on_route"
+    other.__qualname__ = name + ".other"
+    methods = {event: (on_route if event == "on_route" else other) for event in events}
+    return type(name, (), methods)()
+
+
+def _router_hooks_case(label, router_kwargs, chain, call_kwargs, route_kwargs, requests=None):
+    import warnings
+
+    from laya import hooks as pyhooks
+    from laya.router import Router
+
+    log, run_ids, objects = [], [], {"default": [], "installed": [], "call": []}
+    for spec in chain:
+        objects[spec["where"]].append(_hook_class(spec["name"], spec["events"], spec["behaviour"], log, run_ids))
+    record = {"case": label, "router": router_kwargs, "chain": chain, "call": call_kwargs, "route": route_kwargs}
+    if requests is not None:
+        record["requests"] = requests
+    pyhooks.clear_default_hooks()
+    try:
+        for hook in objects["default"]:
+            pyhooks.add_default_hook(hook)
+        try:
+            router = Router(**dict(router_kwargs, hooks=objects["installed"]))
+        except ValueError as refused:
+            record["router_error"] = str(refused)
+            return record
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            try:
+                if requests is None:
+                    record["decision"] = _router_decision(
+                        router.route(hooks=objects["call"], **call_kwargs, **route_kwargs))
+                else:
+                    record["decisions"] = [_router_decision(d) for d in router.route_batch(
+                        requests, hooks=objects["call"], **call_kwargs)]
+            except Exception as refused:  # noqa: BLE001 -- the text is the golden
+                record["error"] = {"type": type(refused).__name__, "message": str(refused)}
+        record["warnings"] = [str(w.message) for w in caught]
+    finally:
+        pyhooks.clear_default_hooks()
+    record["calls"] = log
+    return record
+
+
+def router_hooks_family(rng):
+    """on_route through the real Router: order, replacement, raise, warn, timeout, per-call overrides."""
+    out = []
+
+    def hook(name, where="installed", behaviour="ok", events=("on_route",)):
+        return {"name": name, "where": where, "events": list(events), "behaviour": behaviour}
+
+    en = {"state": "I was charged twice, please refund the duplicate payment on my invoice.",
+          "questions": _noul_questions(["urgency"])}
+    de = {"state": "Der Kunde wurde zweimal belastet und moechte eine Rueckerstattung fuer die Rechnung",
+          "questions": _noul_questions(["urgency"])}
+    td = {"state": "x", "questions": _noul_questions(ROUTER_TD["customer_service"])}
+    fixed = [
+        ("no-hooks", {}, [], {}, en),
+        ("observe", {}, [hook("Seen")], {}, en),
+        ("observe-multilingual", {}, [hook("Seen")], {}, de),
+        ("replace", {}, [hook("Pin", behaviour="replace:multilingual")], {}, en),
+        ("replace-typed", {}, [hook("Pin", behaviour="replace:typed-decisions")], {}, de),
+        ("second-hook-sees-the-replacement", {},
+         [hook("A", behaviour="replace:multilingual"), hook("B")], {}, en),
+        ("last-replacement-wins", {},
+         [hook("A", behaviour="replace:multilingual"), hook("B", behaviour="replace:typed-decisions")], {}, en),
+        ("suffix-chain-keeps-order", {}, [hook("A", behaviour="suffix"), hook("B", behaviour="suffix"),
+                                          hook("C", behaviour="suffix")], {}, en),
+        ("defaults-then-installed-then-call", {},
+         [hook("Call1", "call", "suffix"), hook("Inst1", "installed", "suffix"), hook("Def1", "default", "suffix"),
+          hook("Inst2", "installed", "suffix"), hook("Call2", "call", "suffix"), hook("Def2", "default", "suffix")],
+         {}, en),
+        ("hook-without-on-route-is-skipped", {}, [hook("Other", events=["on_predict_end"]), hook("Seen")], {}, en),
+        ("hook-with-several-events", {}, [hook("Many", events=["on_route", "on_load", "on_evict", "on_error"])], {}, en),
+        ("raise", {}, [hook("Bad", behaviour="raise")], {}, en),
+        ("raise-stops-the-chain", {}, [hook("A"), hook("Bad", behaviour="raise"), hook("C")], {}, en),
+        ("raise-warns-and-continues", {"hooks_raise": False},
+         [hook("A"), hook("Bad", behaviour="raise"), hook("C")], {}, en),
+        ("replace-then-raise-raises", {}, [hook("Bad", behaviour="replace_raise:multilingual")], {}, en),
+        ("replace-then-raise-keeps-the-replacement-when-warned", {"hooks_raise": False},
+         [hook("Bad", behaviour="replace_raise:multilingual"), hook("C")], {}, en),
+        ("call-overrides-raise-to-warn", {}, [hook("Bad", behaviour="raise"), hook("C")], {"hooks_raise": False}, en),
+        ("call-overrides-warn-to-raise", {"hooks_raise": False}, [hook("Bad", behaviour="raise")],
+         {"hooks_raise": True}, en),
+        ("call-hook-raises", {}, [hook("Bad", "call", "raise")], {}, en),
+        ("default-hook-raises", {}, [hook("Bad", "default", "raise"), hook("C")], {}, en),
+        ("timeout-raises", {"hooks_timeout": 0.1}, [hook("Slow", behaviour="sleep:0.6")], {}, en),
+        ("timeout-stops-the-chain", {"hooks_timeout": 0.1},
+         [hook("A"), hook("Slow", behaviour="sleep:0.6"), hook("C")], {}, en),
+        ("timeout-text-keeps-six-significant-digits", {"hooks_timeout": 0.1234567}, [hook("Slow", behaviour="sleep:0.6")],
+         {}, en),
+        ("timeout-text-per-call-shorter", {}, [hook("Slow", behaviour="sleep:0.6")], {"hooks_timeout": 0.1049999}, en),
+        ("timeout-warns-and-continues", {"hooks_timeout": 0.1, "hooks_raise": False},
+         [hook("A"), hook("Slow", behaviour="sleep:0.6"), hook("C")], {}, en),
+        ("timeout-does-not-trip-a-fast-hook", {"hooks_timeout": 5.0}, [hook("A", behaviour="replace:multilingual")], {}, en),
+        ("call-timeout-overrides-router", {}, [hook("Slow", behaviour="sleep:0.6")], {"hooks_timeout": 0.1}, en),
+        ("call-timeout-loosens-router", {"hooks_timeout": 0.1}, [hook("Slow", behaviour="sleep:0.3")],
+         {"hooks_timeout": 5.0}, en),
+        ("call-timeout-zero", {}, [hook("A")], {"hooks_timeout": 0}, en),
+        ("call-timeout-negative", {}, [hook("A")], {"hooks_timeout": -1}, en),
+        ("call-timeout-zero-with-no-hooks", {}, [], {"hooks_timeout": 0}, en),
+        ("call-timeout-zero-after-a-route-error", {}, [hook("A")], {"hooks_timeout": 0}, dict(en, model="nope")),
+        ("router-timeout-zero", {"hooks_timeout": 0}, [], {}, en),
+        ("router-timeout-negative", {"hooks_timeout": -0.5}, [], {}, en),
+        ("route-error-runs-no-hook", {}, [hook("A")], {}, dict(en, model="nope")),
+        ("explicit-model-then-hook-replaces", {}, [hook("Pin", behaviour="replace:english")], {}, dict(de, model="ml")),
+        ("workflow-states-and-questions-seen", {"auto_task_detection": True}, [hook("Seen")], {}, td),
+        ("empty-questions-seen", {}, [hook("Seen")], {}, {"state": "hello there my friend"}),
+        ("unserialised-hooks", {"hooks_concurrent": False}, [hook("A", behaviour="suffix"), hook("B", behaviour="suffix")],
+         {}, en),
+    ]
+    for label, router_kwargs, chain, call_kwargs, route_kwargs in fixed:
+        out.append(_router_hooks_case(label, router_kwargs, chain, call_kwargs, route_kwargs))
+
+    behaviours = ["ok", "ok", "ok", "suffix", "suffix", "replace:english", "replace:multilingual",
+                  "replace:typed-decisions", "raise", "replace_raise:multilingual", "sleep:0.6"]
+    event_sets = [["on_route"], ["on_route"], ["on_route"], ["on_route", "on_load"], ["on_predict_end"], ["on_error"]]
+    questions_pool = _router_questions(rng)
+    for i in range(300):
+        chain = [hook("H%d" % j, rng.choice(["default", "installed", "installed", "call"]),
+                      rng.choice(behaviours), rng.choice(event_sets)) for j in range(rng.randint(1, 4))]
+        router_kwargs, call_kwargs = {}, {}
+        if rng.random() < 0.3:
+            router_kwargs["hooks_raise"] = rng.random() < 0.5
+        if rng.random() < 0.3:
+            router_kwargs["hooks_timeout"] = rng.choice([0.1, 5.0])
+        if rng.random() < 0.2:
+            router_kwargs["hooks_concurrent"] = rng.random() < 0.5
+        if rng.random() < 0.3:
+            call_kwargs["hooks_raise"] = rng.random() < 0.5
+        if rng.random() < 0.2:
+            call_kwargs["hooks_timeout"] = rng.choice([0.1, 5.0, 0, -1])
+        if any(h["behaviour"].startswith("sleep") for h in chain) and "hooks_timeout" not in call_kwargs:
+            router_kwargs.setdefault("hooks_timeout", 0.05)
+        if rng.random() < 0.25:
+            router_kwargs["auto_task_detection"] = True
+        route_kwargs = {"state": _router_state(rng)}
+        if rng.random() < 0.5:
+            route_kwargs["questions"] = _noul_questions(rng.choice(questions_pool))
+        if rng.random() < 0.1:
+            route_kwargs["model"] = rng.choice(["english", "ml", "typed", "nope"])
+        if rng.random() < 0.2:
+            route_kwargs["lang"] = rng.choice(CODE_CASES[:30])
+        out.append(_router_hooks_case("fuzz-%d" % i, router_kwargs, chain, call_kwargs, route_kwargs))
+
+    batches = []
+    for i in range(40):
+        chain = [hook("H%d" % j, rng.choice(["default", "installed", "call"]),
+                      rng.choice(behaviours[:10]), ["on_route"]) for j in range(rng.randint(1, 3))]
+        router_kwargs, call_kwargs = {}, {}
+        if rng.random() < 0.3:
+            router_kwargs["hooks_raise"] = rng.random() < 0.5
+        if rng.random() < 0.3:
+            call_kwargs["hooks_raise"] = rng.random() < 0.5
+        if rng.random() < 0.2:
+            call_kwargs["hooks_timeout"] = rng.choice([5.0, 0])
+        requests = []
+        for _ in range(rng.randint(0, 4)):
+            request = {"state": _router_state(rng), "questions": _noul_questions(rng.choice(questions_pool))}
+            if rng.random() < 0.2:
+                request["model"] = rng.choice(["english", "typed"])
+            requests.append(request)
+        batches.append(_router_hooks_case("batch-%d" % i, router_kwargs, chain, call_kwargs, {}, requests=requests))
+    batches.append(_router_hooks_case("batch-hook-sees-each-request", {}, [hook("Seen", behaviour="suffix")], {}, {},
+                                      requests=[{"state": "one", "questions": {}}, {"state": "two", "questions": {}}]))
+    batches.append(_router_hooks_case("batch-timeout-applies-to-every-request", {}, [hook("Slow", behaviour="sleep:0.6")],
+                                      {"hooks_timeout": 0.1}, {}, requests=[{"state": "one", "questions": {}}]))
+    return out, batches
+
+
+def _accepted(definition):
+    import copy
+
+    from laya.agent import Agent
+    try:
+        Agent._check_question("q", copy.deepcopy(definition))
+    except ValueError:
+        return False
+    return True
+
+
 def build():
     import tokenizers
 
@@ -952,6 +1778,17 @@ def build():
         "answers_fuzz": decode_fuzz_family(rng),
         "marker_refusals": marker_refusals_family(rng),
         "predict_plan": predict_plan_family(rng),
+        "calibration": calibration_family(),
+        "shortlist_order": shortlist_order_family(rng),
+        # `router` stays ahead of `email_fuzz`. Both draw from this one shared `rng`, so whichever
+        # runs first fixes the other's inputs: #1311 recorded `router.signatures` with nothing
+        # between it and `predict_plan`, and `router/golden_test.go` pins how many of those 107
+        # signatures come out byte-identical to Python's. `email_fuzz` has no such constant, only
+        # a case count, so it is the one that may be re-drawn. `calibration_family` takes no rng
+        # and `shortlist_order_family`/`email_fold_family` consume no draws, so they are free.
+        "router": router_family(rng),
+        "email_fold": email_fold_family(rng),
+        "email_fuzz": email_fuzz_family(rng),
     }
 
 

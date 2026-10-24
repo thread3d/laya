@@ -161,13 +161,18 @@ func entropyConfidence(p []float64) float64 {
 	return math.Min(1, math.Max(0, 1-h/math.Log(float64(len(p)))))
 }
 
-// binned applies the histogram-binning map, but only without a language override and only for a
-// bucket the map was fitted for.
+// binned applies the histogram-binning map, but only without a language override.
 func binned(t *Temperatures, typ schema.Type, k int, confidence float64, override bool) float64 {
-	if t == nil || len(t.Binning) == 0 || override {
+	if t == nil || override {
 		return confidence
 	}
-	bins, ok := t.Binning[Bucket(typ, k)]
+	return ApplyBinning(confidence, Bucket(typ, k), t.Binning)
+}
+
+// ApplyBinning is laya's apply_binning_map: confidence recalibrated through the bucket's bins, or
+// unchanged when the map has no entry for the bucket.
+func ApplyBinning(confidence float64, bucket string, m map[string]Bins) float64 {
+	bins, ok := m[bucket]
 	if !ok || len(bins.Values) == 0 {
 		return confidence
 	}

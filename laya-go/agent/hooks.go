@@ -1,7 +1,8 @@
 package agent
 
 // Hooks are laya/hooks.py for the three events a single agent raises: OnPredictStart, OnPredictEnd
-// and OnError. on_route, on_load and on_evict belong to the router and are not ported. Python's
+// and OnError. on_route lives in package router, which runs it through the shared internal/hookrun; on_load and
+// on_evict are not ported yet. Python's
 // AsyncHook has no counterpart: a hook here is a plain method, and one that needs to wait runs
 // its own goroutines (the agent itself waits for the method to return, bounded by
 // WithHookTimeout).
@@ -37,12 +38,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"math"
-	"reflect"
-	"strconv"
 	"sync"
 	"time"
 
+	"github.com/NandhaKishorM/laya/laya-go/internal/hookrun"
 	"github.com/NandhaKishorM/laya/laya-go/schema"
 )
 
@@ -135,14 +134,15 @@ func aggregateUsage(results []schema.Prediction) HookUsage {
 // --- options ---
 
 type options struct {
-	installed  []Hook
-	timeout    time.Duration
-	raise      bool
-	concurrent bool
-	warn       func(string)
-	err        error
-	langTemps  map[string]any    // WithLangTemperatures
-	sha256     map[string]string // WithExpectedSHA256
+	installed   []Hook
+	timeout     time.Duration
+	raise       bool
+	concurrent  bool
+	warn        func(string)
+	err         error
+	langTemps   map[string]any    // WithLangTemperatures
+	sha256      map[string]string // WithExpectedSHA256
+	calibration []byte            // WithCalibration
 }
 
 // WithInstalledHooks installs hooks on the agent, as AddHook does after Open.
@@ -179,12 +179,7 @@ func WithConcurrentHooks() Option { return func(o *options) { o.concurrent = tru
 func WithHookWarnings(sink func(msg string)) Option { return func(o *options) { o.warn = sink } }
 
 // validateTimeout is hooks.validate_timeout: positive and finite.
-func validateTimeout(seconds float64) error {
-	if math.IsNaN(seconds) || math.IsInf(seconds, 0) || seconds <= 0 {
-		return fmt.Errorf("hooks_timeout must be a positive finite number or None; got %s", strconv.FormatFloat(seconds, 'g', -1, 64))
-	}
-	return nil
-}
+func validateTimeout(seconds float64) error { return hookrun.ValidateTimeout(seconds) }
 
 // WithHooks adds hooks to one call, after the defaults and the installed ones.
 func WithHooks(hooks ...Hook) CallOption {
@@ -282,9 +277,8 @@ type hookState struct {
 	installed []Hook
 	timeout   time.Duration
 	raise     bool
-	serial    bool
+	lock      *hookrun.Lock // nil when hooks run concurrently
 	warn      func(string)
-	sem       chan struct{} // the serial lock, a channel so a waiter can give up
 	done      chan struct{} // closed by Close
 	closeOnce sync.Once
 
@@ -294,7 +288,10 @@ type hookState struct {
 
 func newHookState(o options) *hookState {
 	h := &hookState{installed: append([]Hook(nil), o.installed...), timeout: o.timeout, raise: o.raise,
-		serial: !o.concurrent, warn: o.warn, sem: make(chan struct{}, 1), done: make(chan struct{})}
+		warn: o.warn, done: make(chan struct{})}
+	if !o.concurrent {
+		h.lock = new(hookrun.Lock)
+	}
 	if h.warn == nil {
 		h.warn = func(msg string) { log.Print(msg) }
 	}
@@ -376,10 +373,7 @@ func (a *Agent) Hooks() []Hook {
 	return append([]Hook(nil), a.hk.installed...)
 }
 
-func sameHook(a, b Hook) bool {
-	ta, tb := reflect.TypeOf(a), reflect.TypeOf(b)
-	return ta == tb && ta.Comparable() && a == b
-}
+func sameHook(a, b Hook) bool { return hookrun.Same(a, b) }
 
 // composeHooks is the hooks of one call, in order.
 func (a *Agent) composeHooks(c call) []Hook {
@@ -408,86 +402,16 @@ var (
 	evError = hookEvent{"on_error", Hook.OnError}
 )
 
-func hookName(h Hook) string {
-	t := reflect.TypeOf(h)
-	for t.Kind() == reflect.Pointer {
-		t = t.Elem()
-	}
-	return t.Name()
-}
-
-// dispatch runs one event over the hooks in order, as hooks.dispatch.
+// dispatch runs one event over the hooks in order.
 func (a *Agent) dispatch(ctx context.Context, ev hookEvent, hooks []Hook, pc *PredictContext) error {
-	for _, h := range hooks {
-		err := a.callHook(ctx, ev, h, pc)
-		if err == nil {
-			continue
-		}
-		if a.hk.raise {
-			return err
-		}
-		a.hk.warn(fmt.Sprintf("laya: hook %s.%s failed: %s", hookName(h), ev.name, err))
-	}
-	return nil
-}
-
-// callHook runs one hook in its own goroutine, so a timeout can stop the wait for a started
-// hook; Close and the caller's context only end a wait for the serial lock before OnPredictStart. Under the serial lock the lock covers the wait, not the goroutine, as in Python.
-func (a *Agent) callHook(ctx context.Context, ev hookEvent, h Hook, pc *PredictContext) error {
 	hk := a.hk
-	if hk.serial {
-		// OnError and OnPredictEnd report on work already done: they wait for the lock however
-		// the call ends, as Python's always run.
-		var closed <-chan struct{}
-		if ev.name == evStart.name {
-			closed = hk.done
-		} else {
-			ctx = context.WithoutCancel(ctx)
-		}
-		select {
-		case hk.sem <- struct{}{}:
-			defer func() { <-hk.sem }()
-		case <-closed:
-			return ErrClosed
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+	run := hookrun.Run{Lock: hk.lock, ErrQuit: ErrClosed, Detached: ev.name != evStart.name,
+		Policy: hookrun.Policy{Timeout: hk.timeout, Raise: hk.raise, Warn: hk.warn}}
+	if ev.name == evStart.name {
+		run.Quit = hk.done // OnError and OnPredictEnd report on work already done: they wait for the lock however the call ends
 	}
-	res := make(chan error, 1) // buffered: an abandoned hook still finishes without blocking
-	go func() {
-		returned := false
-		defer func() {
-			r := recover()
-			switch {
-			case returned:
-			case r == nil: // runtime.Goexit, e.g. t.FailNow: no return and no panic
-				res <- fmt.Errorf("laya: hook %s exited without returning", hookName(h))
-			default:
-				if err, ok := r.(error); ok {
-					res <- err
-				} else {
-					res <- fmt.Errorf("%v", r)
-				}
-			}
-		}()
-		ev.call(h, pc)
-		returned = true
-		res <- nil
-	}()
-	var expired <-chan time.Time
-	if hk.timeout > 0 {
-		t := time.NewTimer(hk.timeout)
-		defer t.Stop()
-		expired = t.C
-	}
-	// Once started, a hook is waited for until it returns or times out: abandoning it on Close
-	// or on the caller's context would leave it racing the next hook and the call's results.
-	select {
-	case err := <-res:
-		return err
-	case <-expired:
-		return fmt.Errorf("laya: hook %s exceeded %gs", hookName(h), hk.timeout.Seconds())
-	}
+	return run.Dispatch(ctx, ev.name, len(hooks), func(i int) string { return hookrun.Name(hooks[i]) },
+		func(i int) { ev.call(hooks[i], pc) })
 }
 
 // attached is an error that keeps the message and identity of the first failure and carries a

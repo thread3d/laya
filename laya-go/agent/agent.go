@@ -69,7 +69,7 @@ type Agent struct {
 }
 
 // Option adjusts an Agent at Open: WithInstalledHooks, WithHookTimeout, WithHookErrors,
-// WithConcurrentHooks, WithHookWarnings, WithLangTemperatures and WithExpectedSHA256.
+// WithConcurrentHooks, WithHookWarnings, WithLangTemperatures, WithExpectedSHA256 and WithCalibration.
 type Option func(*options)
 
 // Open loads rl_agent_config.json and the tokenizer from checkpoint, a directory holding a
@@ -110,6 +110,11 @@ func open(checkpoint fs.FS, s infer.Session, o options) (*Agent, error) {
 	cfg, temps, err := loadConfig(checkpoint, o.langTemps)
 	if err != nil {
 		return nil, err
+	}
+	if len(o.calibration) > 0 {
+		if temps, err = applyCalibration(&cfg, temps, o.calibration); err != nil {
+			return nil, &ConfigError{Field: calibrationField, Err: err}
+		}
 	}
 	tok, err := tokenizer.LoadFS(checkpoint, ".")
 	if err != nil {

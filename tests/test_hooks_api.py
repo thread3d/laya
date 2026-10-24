@@ -183,6 +183,25 @@ check("serialized calibration cuts preserve accepted membership",
       [decide_reliability(score, *_precise_cuts) for score in _precise_scores],
       ["VERIFY", "ACCEPT"])
 
+# Invalid calibration evidence raises at the public boundary instead of fitting a gate.
+for _name, _scores, _labels, _kwargs, _error in (
+    ("empty", [], [], {}, ValueError),
+    ("unmatched labels", [0.9, 0.9], [True], {}, ValueError),
+    ("unmatched scores", [0.9], [True, False], {}, ValueError),
+    ("nonfinite score", [0.9, float("nan")], [True, False], {}, ValueError),
+    ("nonboolean labels", [0.9, 0.9], [2, 0], {}, TypeError),
+    ("invalid target", [0.9], [False], {"target_accuracy": -0.1}, ValueError),
+    ("invalid escalation target", [0.9], [False], {"max_escalate_accuracy": float("nan")}, ValueError),
+):
+    try:
+        calibrate_reliability(_scores, _labels, **_kwargs)
+    except _error:
+        check_true("calibrate_reliability rejects " + _name, True)
+    except Exception as _exc:
+        check_true("calibrate_reliability rejects " + _name, False, repr(_exc))
+    else:
+        check_true("calibrate_reliability rejects " + _name, False, "did not raise")
+
 # --------------------------------------------------------------- predict surfaces
 from laya.mcp.remote import RemoteRouter  # noqa: E402
 

@@ -1717,7 +1717,7 @@
     },
     "latin_profile": {
       "language": "en",
-      "english_hits": 9,
+      "english_hits": 11,
       "diacritic_rate": 0.0,
       "looks_non_english": false
     },
@@ -2380,7 +2380,7 @@
     },
     "latin_profile": {
       "language": "en",
-      "english_hits": 3,
+      "english_hits": 4,
       "diacritic_rate": 0.0,
       "looks_non_english": false
     },
@@ -3246,7 +3246,7 @@
     },
     "latin_profile": {
       "language": "en",
-      "english_hits": 2,
+      "english_hits": 3,
       "diacritic_rate": 0.0,
       "looks_non_english": false
     },
@@ -5524,7 +5524,7 @@
     },
     "latin_profile": {
       "language": "en",
-      "english_hits": 4,
+      "english_hits": 5,
       "diacritic_rate": 0.0,
       "looks_non_english": false
     },

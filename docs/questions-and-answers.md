@@ -112,6 +112,14 @@ disagreement with the model. If you want the label, take the argmax of `probabil
 `answer_confidence`'s counterpart from the legend — do not round `score` and assume it is the
 label. `legend` exists so you never have to guess which index means what.
 
+## Probability precision
+
+On `choice` and `score` answers, `probabilities` are rounded independently to four decimal places.
+They need not sum exactly to 1: three equally likely options return `0.3333` each, totalling
+`0.9999`. The returned values are not renormalized after rounding. If your consumer requires a
+unit sum, allow a rounding tolerance that accounts for the number of options, or normalize a copy
+of the distribution before validating it.
+
 ## Reading confidence
 
 Every answer carries two confidence numbers, and they measure different things.

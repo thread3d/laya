@@ -11,7 +11,6 @@ import (
 	"github.com/NandhaKishorM/laya/laya-go/internal/decode"
 	"github.com/NandhaKishorM/laya/laya-go/internal/pyjson"
 	"github.com/NandhaKishorM/laya/laya-go/internal/pyvalue"
-	"github.com/NandhaKishorM/laya/laya-go/internal/unicodedata"
 )
 
 // configFile is the checkpoint file the configuration is read from.
@@ -70,6 +69,8 @@ type Config struct {
 	// Warnings are what loading changed without failing, such as temperatures outside
 	// [0.5, 5] that were clamped.
 	Warnings []string
+
+	identity pyjson.Object // the file without its temperature fields, for a calibration's check
 }
 
 // LoadConfig reads and checks rl_agent_config.json from the root of checkpoint, as ONNXAgent
@@ -100,7 +101,8 @@ func loadConfig(checkpoint fs.FS, langs map[string]any) (Config, *decode.Tempera
 		}
 		return nil, false
 	}
-	cfg := Config{MaxLen: defaultMaxLen, HeadMaxLen: defaultHeadMaxLen, OptionLayout: layoutSequential}
+	cfg := Config{MaxLen: defaultMaxLen, HeadMaxLen: defaultHeadMaxLen, OptionLayout: layoutSequential,
+		identity: configIdentity(obj)}
 	if raw, ok := get("option_layout"); ok {
 		if layout, isString := raw.(string); !isString || layout != layoutSequential {
 			return Config{}, nil, &ConfigError{Field: "option_layout",
@@ -185,22 +187,15 @@ func loadConfig(checkpoint fs.FS, langs map[string]any) (Config, *decode.Tempera
 }
 
 // sameNumber is float(raw) == applied: false for anything float() refuses. A string is read as
-// the string rule of decode's toFloat (internal/decode/temperature.go), which this mirrors: stripped,
-// and without the x and p spellings of a Go hex float, which Python's float() rejects.
+// by decode.PyFloat. A bool is never the applied number.
 func sameNumber(raw any, applied float64) bool {
 	switch x := raw.(type) {
 	case string:
-		s := unicodedata.Strip(x)
-		if strings.ContainsAny(s, "xXpP_") {
-			return false
-		}
-		f, err := strconv.ParseFloat(s, 64)
-		return err == nil && f == applied
+		f, ok := decode.PyFloat(x)
+		return ok && f == applied
 	case json.Number:
 		f, err := strconv.ParseFloat(string(x), 64)
 		return err == nil && f == applied
-	case bool:
-		return (x && applied == 1) || (!x && applied == 0)
 	}
-	return false
+	return false // a bool is no number to clamp_temperature
 }

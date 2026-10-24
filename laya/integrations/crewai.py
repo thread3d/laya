@@ -196,12 +196,24 @@ def _call_remote(
     opener = urllib.request.build_opener(_SameOriginRedirectHandler())
     try:
         with opener.open(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+            parsed = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"Laya server error {e.code}: {body}") from e
     except Exception as e:
         raise RuntimeError(f"Failed to connect to Laya server at {url}: {e}") from e
+    # A remote laya-serve answers with a JSON object, but `json.loads` accepts any top-level value:
+    # a gateway, a mis-pointed `base_url`, or a proxy error page can reply with a bare array, string,
+    # number or `true`/`null`. Consumers read the result with `res.get("answers", …)` (the delegation
+    # lookup and the guardrail screen), so a non-object leaks ``AttributeError: 'list' object has no
+    # attribute 'get'`` instead of the ``RuntimeError`` every other remote failure here already
+    # raises. The check sits after the ``try`` so it is not swallowed by the catch-all above.
+    if not isinstance(parsed, dict):
+        raise RuntimeError(
+            f"Malformed decision response from Laya server at {url}: "
+            f"expected a JSON object, got {type(parsed).__name__}"
+        )
+    return parsed
 
 
 _DEFAULT_ROUTER = None

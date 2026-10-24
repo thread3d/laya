@@ -473,8 +473,8 @@ func TestClampWarningsMatchPython(t *testing.T) {
 		// A bucket and a type entry both clamped: Python lists buckets first.
 		{"buckets before types", `{"temperature": [1.0, 9, 1.0], "temperature_by_options": {"choice:11+": 0.1006}}`,
 			"choice:11+=0.1006 -> 0.5, temperature[1]=9 -> 5"},
-		// float(False) is 0.0, not the 1.0 applied; float(True) is 1.0 and is quiet.
-		{"a bool temperature", `{"temperature": [false, true, 1.0]}`, "temperature[0]=False -> 1"},
+		// A bool is no number to clamp_temperature, so both spellings are reported.
+		{"a bool temperature", `{"temperature": [false, true, 1.0]}`, "temperature[0]=False -> 1, temperature[1]=True -> 1"},
 		// float("2.0") is 2.0, applied unchanged; float("9") is 9.0, clamped to 5.
 		{"numeric strings", `{"temperature": ["2.0", "9", 1.0]}`, "temperature[1]='9' -> 5"},
 	}
@@ -489,7 +489,7 @@ func TestClampWarningsMatchPython(t *testing.T) {
 			}
 		})
 	}
-	for _, quiet := range []string{`{"temperature": ["2.0", " 1.5 ", 1]}`, `{"temperature": [true, 1, 1]}`} {
+	for _, quiet := range []string{`{"temperature": ["2.0", " 1.5 ", 1]}`} {
 		if cfg, err := agent.LoadConfig(toyCheckpoint(quiet)); err != nil || len(cfg.Warnings) != 0 {
 			t.Errorf("%s: %v, %q, want no warning", quiet, err, cfg.Warnings)
 		}

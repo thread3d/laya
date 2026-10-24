@@ -36,7 +36,7 @@
 // # Scope
 //
 // Shipped: hooks, the min_confidence gate, per-language temperatures (WithLangTemperatures,
-// selected by WithLanguage) and digest checks (WithExpectedSHA256, LAYA_SHA256_DIGESTS). Not here
-// yet: the calibration file and the router. PredictLong ports predict_long for aggregate="auto"
+// selected by WithLanguage) and digest checks (WithExpectedSHA256, LAYA_SHA256_DIGESTS) and the calibration
+// payload (WithCalibration, CalibrationPayload; the fitters are not here). Not here yet: the router. PredictLong ports predict_long for aggregate="auto"
 // and applies neither the gate nor hooks. Without overrides WithLanguage does nothing.
 package agent

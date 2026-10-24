@@ -94,33 +94,33 @@ The shipped checkpoints work zero-shot, but fine-tuning on decisions from your o
 
 **[nandhakishorm.github.io/laya](https://nandhakishorm.github.io/laya/)**: guides for [prediction hooks](https://nandhakishorm.github.io/laya/hooks/), [schema-driven decisions](https://nandhakishorm.github.io/laya/structured/), [Docker](https://nandhakishorm.github.io/laya/docker/) and [LangChain and LangGraph](https://nandhakishorm.github.io/laya/langchain/), plus a full [API reference](https://nandhakishorm.github.io/laya/reference/).
 
-## What's new in 0.4.13
+## What's new in 0.4.14
 
-* **`OptionStabilityHook`'s rename probe kept the option's meaning.** Renaming
-  `{"approve": None, "reject": None}` to letters sent the model bare `A` and `B`, so a probe
-  described as meaning-preserving was measuring a question the model could not read; the list form
-  `["approve", "reject"]` had always kept the text. The label is now carried into the description,
-  as the list form does (#1286, issue #1285). Separately, `soft_stability` is reported unrounded
-  and `calibrate_reliability` no longer quantizes its candidate cutoffs, so replaying a reported
-  score reproduces the decision the hook made (#1289, issue #1288). The hook is also ported to
-  TypeScript, with a 128-case fixture recorded from the Python reference (#1290).
-* **Language detection can say why.** `analyse(state, explain=True)` adds a `diagnostic` naming the
-  branch that decided and, for an override, which nested value triggered it: a German message under
-  `payload.customer` now reports that path rather than only the verdict. `laya --explain` exposes it
-  on the routing path. Opt-in, and the default result is byte-identical (#1284, issue #1276).
-* **Four fail-closed type guards.** A remote decision body that is valid JSON but not an object
-  leaked `AttributeError` past the fail-closed branch in the tool selector and in agno, taking the
-  `fallback_tool` down with it (#1293, #1296). `bool` subclasses `int`, so a JSON `"minimum": true`
-  became a score bound of 1 and `"answer_confidence": true` a confidence of 1.0; both are now
-  refused (#1294, #1295).
-* **`predict_batch` in the Python HTTP SDK**, one `POST /v1/systemone/batch` for a list of states,
-  results in input order, no splitting and no fallback to single requests (#1297).
-* **The Rust and .NET SDKs match the Python package exactly** in routing, language detection,
-  email, float rounding and config parsing, and Rust gains `predict_long` (#1292, #1291). Every
-  routing golden in both regenerates byte-identically from this Python tree.
-* **Decoding is a little cheaper.** The softmax normalises in place and `answer_confidence` uses a
-  native clamp rather than NumPy's scalar dispatcher, which is 3.8x on that helper (#1299). All 30
-  real-weight decision rows are unchanged.
+* **Plain English questions stop going to the multilingual checkpoint.** Nothing in "Why hasn't my
+  card been delivered?" was on the 34-word English function list, so it read as undecided and took
+  the router default. 82 closed-class words are now on that list: question words, auxiliaries,
+  what `_WORD` leaves of a contraction, and common determiners and connectives. That is 589 of the
+  2,974 MASSIVE en-US test rows, and on the rows that move the English checkpoint answers better
+  (283 against 214 head to head, sign test p=0.002). Content words stay out, because a foreign
+  sentence borrows those. No row moves off the English checkpoint, and 15 of 148,700 non-English
+  MASSIVE rows move onto it, 11 of them English titles (#1315). All four SDKs carry the same list.
+* **A Go SDK you can route with.** `laya-go` gains the routing half of `laya.router` with
+  `Route`/`RouteBatch` and `on_route` hooks, the `laya.email` port, presets and the embedding
+  shortlist, a calibration payload installed at `Open`, and runnable quickstart and benchmark
+  samples (#1310, #1311, #1308, #1307, #1306, #1309).
+* **Four more fail-closed guards in the integrations.** A remote decision body that is valid JSON
+  but not an object now raises instead of leaking `AttributeError` in LangChain, CrewAI and
+  LlamaIndex (#1301). A probability that is not a real number, or is a bool, routes to the
+  `fallback_tool` rather than raising out of `float()` (#1300), and the guardrail score rail
+  degrades instead of crashing on a malformed `probabilities` block (#1302).
+* **`calibrate_reliability` refuses evidence it cannot fit**: mismatched lengths, a score outside
+  [0, 1], a non-finite score, and a label that is not a boolean (#1314). NumPy booleans and reals
+  count, since `preds == gold` is how correctness is usually computed.
+* **`probabilities` are rounded independently and need not sum to 1.** Three equally likely options
+  come back as `0.3333` each, totalling `0.9999`. Now documented in both the in-process and HTTP
+  references, where a strict unit-sum check would have been written against it (#1305).
+* **pydecide joins Community Tools.** Local inference is its default now, and hosted backends have
+  to be asked for by name rather than appearing because an API key is in the environment (#1304).
 
 Earlier releases are in the [GitHub releases](https://github.com/NandhaKishorM/laya/releases).
 
@@ -1791,6 +1791,7 @@ Commands, per-language detail and the two harness fixes this needed are in
 * **[laya-Ascend](https://github.com/zzhdbw/laya-Ascend)**: Laya on Huawei Ascend NPUs through `torch-npu`, with a CPU vs NPU benchmark (34x to 71x faster at batch size 1), a setup guide, and Snake and Tetris demos.
 * **[laya-apple](https://github.com/tc3oliver/laya-apple)**: a correctness-validated Laya runtime for Apple silicon that uses the MLX GPU and the Apple Neural Engine, with automatic routing and concurrent heterogeneous serving.
 * **[stuntd](https://github.com/bladedevoff/stuntd)**: runs Laya locally behind the Jev API (`POST /v1/systemone`, no key) and trains a head per decision on the frozen encoder from your own labelled rows, with a calibrated confidence threshold (a 12-label intent task: 89.5% zero-shot to 100% trained).
+* **[pydecide](https://github.com/gopaljigaur/decide)**: a Python client (`pip install "pydecide[mlx]"`) for typed `Choice`, `Score` and `Noul` questions answered by `laya` or `laya-mlx` in process. Local inference is the default, even when hosted API keys are set; server backends require explicit configuration. An answer below the confidence threshold comes back marked on the route, or raises carrying the rejected answer if you ask it to. Also serves `POST /v1/systemone`, so a Jev client can point at local Laya unchanged.
 
 ---
 

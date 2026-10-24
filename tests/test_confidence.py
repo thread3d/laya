@@ -2566,6 +2566,38 @@ for _qid in ("q", "r", "s"):
 check_true("jev_public/served noul carries no field",
            "x_jev_confidence" not in _served["n"], _served["n"].keys())
 
+# --- probability precision: both decoders round independently, not to a unit sum (#555) ------
+from laya.agent import Agent  # noqa: E402
+from laya.onnx_agent import ONNXAgent  # noqa: E402
+
+for _cls in (Agent, ONNXAgent):
+    _agent = _cls.__new__(_cls)  # no checkpoint, model or ONNX session
+    _agent.temperature = [1.0, 1.0, 1.0]
+    _agent.temperature_by_options = {}
+    for _k, _value, _total in ((3, 0.3333, 0.9999), (6, 0.1667, 1.0002)):
+        for _qtype in ("choice", "score"):
+            _labels = ["o%d" % i for i in range(_k)]
+            _crit = dict.fromkeys(_labels) if _qtype == "choice" else _labels
+            _answer = _agent._decode_answers(
+                np.zeros((1, _k)), np.array([[1.0, 0.0]]), [{"markers": list(range(_k))}],
+                ["q"], {"q": {"t": _qtype, "crit": _crit}}, 0)["q"]
+            _probs = list(_answer["probabilities"].values())
+            _name = "rounding/%s/%s/k=%d" % (_cls.__name__, _qtype, _k)
+            check(_name + "/four decimal places", _probs, [_value] * _k)
+            check_true(_name + "/non-unit sum", close(sum(_probs), _total), repr(_probs))
+
+for _page in ("questions-and-answers.md", "http-api.md"):
+    _text = _prose(_read_page(os.path.join(DOC_ROOT, "docs", _page)))
+    check_true("rounding/docs/%s explains precision" % _page,
+               bool(_re.search(r"`probabilities`.*?rounded independently to four decimal places", _text)))
+    check_true("rounding/docs/%s qualifies the unit sum" % _page,
+               "need not sum exactly to 1" in _text)
+
+_tournament = _prose(_read_page(os.path.join(DOC_ROOT, "docs", "http-api.md")).split(
+    "### Large choices:", 1)[1].split("## Limits", 1)[0])
+check_true("rounding/docs/tournament does not promise an exact unit sum",
+           "need not sum exactly to 1" in _tournament)
+
 print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
 for f in FAIL:
     print("  FAIL", f)

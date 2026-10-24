@@ -37,3 +37,17 @@ func Example() {
 		fmt.Println(intent.(*schema.ChoiceAnswer).Choice, p.Usage.InputTokens, p.Usage.Truncated)
 	}
 }
+
+// ExampleWithCalibration is compiled and not run: it writes a calibration payload and installs it.
+func ExampleWithCalibration() {
+	var session infer.Session // from the onnx package
+	payload, err := agent.CalibrationPayload{Temperature: [3]float64{1.5, 2, 0.75}}.MarshalJSON()
+	if err != nil {
+		log.Fatal(err)
+	}
+	a, err := agent.Open(os.DirFS("checkpoints/english"), session, agent.WithCalibration(payload))
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer a.Close()
+}

@@ -846,3 +846,27 @@ func wireLabels(q *Question, labels any) *QuestionError {
 	q.falseLabel, q.trueLabel, q.customLabels = f, t, true
 	return nil
 }
+
+// Subset returns the choice question reduced to the options at indices, in the order given: the
+// criteria of laya's _subset_criteria. Labels and descriptions are kept as they were. The
+// option order is not kept, because an order has one slot per option and no longer fits; callers
+// that care compare OptionOrder before and after. indices must be non-empty, in range and
+// distinct.
+func (q Question) Subset(indices []int) (Question, error) {
+	if q.typ != TypeChoice {
+		return Question{}, refuse("only a choice question has options to subset, not %s", q.typ)
+	}
+	if len(indices) == 0 {
+		return Question{}, &QuestionError{Reason: reasonChoiceEmpty}
+	}
+	seen := make([]bool, len(q.options))
+	opts := make([]choiceOption, len(indices))
+	for i, ix := range indices {
+		if ix < 0 || ix >= len(q.options) || seen[ix] {
+			return Question{}, refuse("subset index %d at position %d is out of range or repeated", ix, i)
+		}
+		seen[ix] = true
+		opts[i] = q.options[ix]
+	}
+	return Question{typ: TypeChoice, instructions: q.instructions, options: opts}, nil
+}

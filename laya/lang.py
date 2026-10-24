@@ -57,7 +57,26 @@ _SCRIPT_RANGES = [
 _STOP = {
     "en": {"the", "and", "is", "are", "was", "were", "to", "of", "in", "for", "with", "that",
            "this", "it", "you", "have", "has", "not", "but", "on", "at", "be", "as", "from",
-           "will", "can", "would", "there", "their", "what", "which", "please", "we", "i"},
+           "will", "can", "would", "there", "their", "what", "which", "please", "we", "i",
+           # Question words, auxiliaries, pronouns and connectives. Without them a plain request
+           # such as "Why hasn't my card been delivered?" matched no word above, stayed undecided
+           # and took the router default, the multilingual checkpoint. Each one, added alone,
+           # moved none of the 101,650 non-English MASSIVE validation rows to the English
+           # checkpoint. Words that did stay out: `over` (Dutch, Danish, Norwegian), `just` and
+           # `under` (Swedish), `still` (Norwegian), `he` (Spanish, Afrikaans, Finnish), `had`
+           # (Dutch), `or` and `cant` (Welsh), `us` (`us dollar`), and `about`, `up`, `out`
+           # (English titles and loanwords inside other languages). `also` is German, so it
+           # stays out too.
+           # `doesn`, `isn` and the rest are what `_WORD` leaves of a contraction; `doesnt` is how
+           # it is typed without the apostrophe.
+           "how", "why", "when", "where", "who", "whom", "does", "done", "doing", "been", "being",
+           "could", "should", "might", "must", "shall", "doesn", "didn", "isn", "aren", "wasn",
+           "weren", "haven", "hasn", "couldn", "wouldn", "won", "dont", "wont", "didnt", "doesnt",
+           "isnt", "wasnt", "havent", "ive", "youre", "thats", "whats", "any", "some", "many",
+           "much", "every", "each", "these", "those", "both", "few", "they", "them", "she", "him",
+           "his", "our", "your", "yours", "into", "onto", "between", "after", "before", "through",
+           "during", "without", "within", "down", "if", "nor", "than", "then", "because", "while",
+           "until", "here", "only", "very", "too", "ever", "never", "always", "already", "yet"},
     "fr": {"le", "la", "les", "des", "une", "est", "pour", "dans", "que", "qui", "avec", "sur",
            "pas", "plus", "nous", "vous", "être", "cette", "mais", "sont", "ont", "aux", "ce",
            "et", "du", "au", "ou", "je", "tu", "il", "elle", "ils", "elles", "mon", "ton",

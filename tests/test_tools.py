@@ -420,6 +420,59 @@ finally:
     laya.integrations.tools.urllib.request.build_opener = _original_build_opener_8b
 
 
+# --------------------------------------------------------------- 8c. Non-Numeric / Boolean Probability
+# `probabilities` is read from the same remote body and every value is fed to float() after the
+# malformed-response guards above. A non-numeric value -- a string like "high", None, a nested
+# object -- raises a raw ValueError/TypeError that defeats the fallback_tool path meant to absorb
+# malformed decisions; a boolean silently reads as 1.0 because bool subclasses int. select() must
+# fail closed like a malformed answer does, while still accepting the numeric values (and numeric
+# strings) it accepted before.
+def _probs_agent(probabilities):
+    return MockLayaAgent(lambda s, q: make_mock_response(
+        "tool_0", confidence=0.93, probabilities=probabilities))
+
+
+BAD_PROBABILITIES = [
+    {"tool_0": "high", "tool_1": 0.05},
+    {"tool_0": None},
+    {"tool_0": {}},
+    {"tool_0": True},
+    {"tool_0": 0.5, "tool_1": False},
+]
+
+for _i, _probs in enumerate(BAD_PROBABILITIES):
+    # no fallback: must raise RuntimeError, never leak a raw ValueError/TypeError
+    try:
+        LayaToolSelector(tools=tools_list, agent=_probs_agent(_probs)).select("Query")
+        FAIL.append(f"badprob/raises_{_i}: expected RuntimeError")
+    except RuntimeError as _e:
+        check_true(f"badprob/runtimeerror_{_i}",
+                   "Malformed probability in decision answer" in str(_e))
+    except (ValueError, TypeError) as _e:
+        FAIL.append(f"badprob/leaked_{_i}: raw {type(_e).__name__} ({_e})")
+    # with fallback: must route to the fallback tool, never raise
+    try:
+        _dec = LayaToolSelector(tools=tools_list, agent=_probs_agent(_probs),
+                                fallback_tool=fallback_tool).select("Query")
+        check(f"badprob/fallback_{_i}", _dec.is_fallback, True)
+        check(f"badprob/fallback_empty_{_i}", _dec.probabilities, {})
+    except (ValueError, TypeError) as _e:
+        FAIL.append(f"badprob/fallback_leaked_{_i}: raw {type(_e).__name__} ({_e})")
+
+# Numeric probabilities (float, int, or numeric string) must still map to tool names normally.
+_ok_floats = LayaToolSelector(
+    tools=tools_list,
+    agent=_probs_agent({"tool_0": 0.7, "tool_1": 0.2, "tool_2": 0.1})).select("Query")
+check("badprob/floats_still_map", _ok_floats.probabilities,
+      {"web_search": 0.7, "calculate_tax": 0.2, "db_lookup": 0.1})
+check("badprob/floats_not_fallback", _ok_floats.is_fallback, False)
+_ok_strings = LayaToolSelector(
+    tools=tools_list,
+    agent=_probs_agent({"tool_0": "0.7", "tool_1": "0.2", "tool_2": "0.1"})).select("Query")
+check("badprob/numeric_strings_still_map", _ok_strings.probabilities,
+      {"web_search": 0.7, "calculate_tax": 0.2, "db_lookup": 0.1})
+
+
 # --------------------------------------------------------------- 9. Controls Signatures Check
 params = inspect.signature(LayaToolSelector.__init__).parameters
 for ctrl in PREDICT_CONTROLS:

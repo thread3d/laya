@@ -259,6 +259,57 @@ check_true("guard/score_fallback_flagged",
            harm_result({"type": "score", "score": 1.5, "confidence": 0.5})["passed"] is False)
 check_true("guard/score_fallback_passes", harm_result({"type": "score", "score": 0.53, "confidence": 0.5})["passed"])
 
+# --------------------------------------------------------------- 3b. Guard probabilities are robust to a malformed answer
+#
+# `score_violation_probability` reads `probabilities` (and `score`) straight from a decision answer,
+# so both are arbitrary remote/caller JSON. Before the guard, a non-mapping `probabilities` raised at
+# `len`/`.get`; a value that is not a real number raised inside `float`; and a boolean read as
+# 0.0/1.0 because `bool` subclasses `int` -- each of which crashed or mis-scored the guardrail screen.
+# A distribution that is not a mapping of real numbers now falls back to the same normalised expected
+# level the empty path uses; a numeric (and numeric-string) distribution sums exactly as before.
+from laya.integrations._guard import score_violation_probability
+
+_VALID = {"0": 0.10, "1": 0.15, "2": 0.30, "3": 0.45}
+check_true("guardprob/valid_distribution",
+           abs(score_violation_probability({"probabilities": _VALID}, 4) - 0.75) < 1e-9)
+_STRINGS = {"0": "0.10", "1": "0.15", "2": "0.30", "3": "0.45"}
+check_true("guardprob/numeric_strings_still_sum",
+           abs(score_violation_probability({"probabilities": _STRINGS}, 4) - 0.75) < 1e-9)
+
+# Each malformed distribution has no usable probabilities, so the answer's own score of 1.5 stands in:
+# score / (k - 1) = 1.5 / 3 = 0.5. None of these may raise.
+_BAD_DISTRIBUTIONS = {
+    "list": {"probabilities": [0.1, 0.2, 0.3, 0.4], "score": 1.5},
+    "str": {"probabilities": "0.3,0.45", "score": 1.5},
+    "int": {"probabilities": 5, "score": 1.5},
+    "value_str": {"probabilities": {"0": 0.1, "1": 0.1, "2": "high", "3": 0.4}, "score": 1.5},
+    "value_none": {"probabilities": {"0": 0.1, "1": 0.1, "2": None, "3": 0.4}, "score": 1.5},
+    "value_bool": {"probabilities": {"0": 0.1, "1": 0.1, "2": True, "3": False}, "score": 1.5},
+}
+for _label, _ans in _BAD_DISTRIBUTIONS.items():
+    try:
+        _got = score_violation_probability(_ans, 4)
+        check_true("guardprob/%s_uses_score_fallback" % _label, abs(_got - 0.5) < 1e-9)
+    except Exception as _e:
+        check_true("guardprob/%s_uses_score_fallback" % _label, False, "%s: %s" % (type(_e).__name__, _e))
+
+# A bool score is not a level, and a non-numeric score is not one either: both read as 0.0.
+for _label, _bad_score in (("bool_score_is_zero", True), ("nonnumeric_score_is_zero", "1.5")):
+    try:
+        check("guardprob/" + _label, score_violation_probability({"score": _bad_score}, 4), 0.0)
+    except Exception as _e:
+        check_true("guardprob/" + _label, False, "%s: %s" % (type(_e).__name__, _e))
+
+# The same malformed answer must also survive the live screen path rather than raising out of
+# guard.screen() -- the guardrail degrades to a decision instead of dying.
+_bad_screen = {"type": "score", "score": 1.5, "confidence": 0.5,
+               "probabilities": {"0": 0.1, "1": 0.1, "2": True, "3": False}}
+try:
+    check_true("guardprob/screen_survives_bad_probabilities",
+               isinstance(harm_result(_bad_screen)["passed"], bool))
+except Exception as _e:
+    check_true("guardprob/screen_survives_bad_probabilities", False, "%s: %s" % (type(_e).__name__, _e))
+
 # `threshold` is a probability: above 1 no question could ever be flagged, so reject it.
 for bad in (1.5, -0.1):
     rejected = False
@@ -325,6 +376,54 @@ with patch("urllib.request.build_opener") as mock_build_opener:
     req = call_args[0][0]
     check("remote/url", req.full_url, "http://localhost:8000/v1/systemone")
     check("remote/auth", req.headers.get("Authorization"), "Bearer sk-crew-key")
+
+
+# --------------------------------------------------------------- 4b. Non-Object Remote Response
+#
+# A remote laya-serve body is arbitrary JSON: a gateway, a mis-pointed `base_url`, or a proxy error
+# page can answer with a top-level array, string, number or `true`/`null`. `json.loads` accepts each
+# of those and both consumers read the result with `res.get("answers", …)`, so before the guard a
+# non-object leaked `AttributeError: 'list' object has no attribute 'get'` past the fail-closed path
+# instead of the `RuntimeError` every other remote failure raises here. `_call_remote` and the public
+# `route()` are both driven so a regression at either layer is caught.
+from laya.integrations.crewai import _call_remote as _crewai_call_remote
+
+_CREWAI_NON_OBJECT_BODIES = [
+    ([], "list"),
+    ([{"answers": {"delegation": {"choice": "agent_1"}}}], "list-of-objects"),
+    ("unauthorized", "str"),
+    (None, "null"),
+    (123, "int"),
+    (True, "bool"),
+]
+for _body, _label in _CREWAI_NON_OBJECT_BODIES:
+    with patch("urllib.request.build_opener") as _m:
+        _m.return_value.open.return_value = DummyHTTPResponse(_body)
+        try:
+            _crewai_call_remote("http://localhost:8000", "s", {"q": {}})
+            check_true("nonobj/%s/_call_remote raises" % _label, False, "no error raised")
+        except RuntimeError as exc:
+            check_true("nonobj/%s/malformed" % _label, "Malformed decision response" in str(exc))
+            check_true("nonobj/%s/names object" % _label, "expected a JSON object" in str(exc))
+        except Exception as exc:
+            check_true("nonobj/%s/_call_remote raises" % _label, False, type(exc).__name__)
+
+        try:
+            LayaCrewRouter(base_url="http://localhost:8000", api_key="k").route(
+                "Analyze codebase", agents)
+            check_true("nonobj/%s/route raises" % _label, False, "no error raised")
+        except RuntimeError as exc:
+            check_true("nonobj/%s/route malformed" % _label,
+                       "Malformed decision response" in str(exc))
+        except Exception as exc:
+            check_true("nonobj/%s/route surfaces RuntimeError" % _label, False, type(exc).__name__)
+
+# Positive control: a well-formed object body still routes -- the guard does not over-reject.
+with patch("urllib.request.build_opener") as _m:
+    _m.return_value.open.return_value = DummyHTTPResponse(remote_response)
+    check("nonobj/object still routes",
+          LayaCrewRouter(base_url="http://localhost:8000").route(
+              "Analyze codebase", agents).agent_index, 1)
 
 
 # --------------------------------------------------------------- 5. Per-call decision controls

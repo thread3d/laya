@@ -1776,6 +1776,69 @@ check("routing/with the de hint no German query is read as English",
       _on_english(_DE_ALL, lang_guess="de"), [])
 
 
+# --------------------------------------------------------------- Non-Object Remote Response
+#
+# A remote laya-serve body is arbitrary JSON: a gateway, a mis-pointed `base_url`, or a proxy error
+# page can answer with a top-level array, string, number or `true`/`null`. `json.loads` accepts each
+# of those and the consumers read the result with `result.get("answers", …)`, so before the guard a
+# non-object leaked `AttributeError: 'list' object has no attribute 'get'` past the fail-closed path
+# instead of the `RuntimeError` every other remote failure raises here. `_call_remote` is driven
+# directly so the check is independent of whether langchain-core is installed in this run.
+class _RawBodyResponse:
+    def __init__(self, raw):
+        self._data = raw.encode("utf-8")
+
+    def read(self):
+        return self._data
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+
+class _RawBodyOpener:
+    def __init__(self, raw):
+        self._raw = raw
+
+    def open(self, req, timeout=10.0):
+        return _RawBodyResponse(self._raw)
+
+
+_NON_OBJECT_BODIES_LC = [
+    "[]",
+    '[{"answers": {"q": {"choice": "a"}}}]',
+    '"unauthorized"',
+    "null",
+    "123",
+    "true",
+]
+_orig_build_opener_lc = langchain_module.urllib.request.build_opener
+try:
+    for _raw in _NON_OBJECT_BODIES_LC:
+        langchain_module.urllib.request.build_opener = (lambda *a, _r=_raw: _RawBodyOpener(_r))
+        try:
+            langchain_module._call_remote("http://localhost:8000", "s", {"q": {}})
+            check_true("nonobj/%s/raises" % _raw, False, "no error raised")
+        except RuntimeError as _e:
+            check_true("nonobj/%s/malformed" % _raw,
+                       "Malformed decision response" in str(_e))
+            check_true("nonobj/%s/names object" % _raw,
+                       "expected a JSON object" in str(_e))
+        except Exception as _e:
+            check_true("nonobj/%s/raises" % _raw, False, type(_e).__name__)
+    # Positive control: a well-formed object body passes straight through -- the guard does not
+    # over-reject.
+    _obj_body = json.dumps({"answers": {"q": {"choice": "a"}}})
+    langchain_module.urllib.request.build_opener = lambda *a: _RawBodyOpener(_obj_body)
+    check("nonobj/object passes through",
+          langchain_module._call_remote("http://localhost:8000", "s", {"q": {}}),
+          {"answers": {"q": {"choice": "a"}}})
+finally:
+    langchain_module.urllib.request.build_opener = _orig_build_opener_lc
+
+
 # --------------------------------------------------------------- Summary
 print(f"PASS: {len(PASS)}")
 print(f"FAIL: {len(FAIL)}")

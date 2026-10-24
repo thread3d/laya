@@ -104,6 +104,8 @@ jobs:
           --only tokenizer_ids.json --only decode_text.json
           --only sequences.json --only decode.json --only window_plan.json
           --only predict_long.json --only confidence_gate.json --only hooks.json
+          --only presets.json --only shortlist.json
+          --only email.json
       - name: Regenerate laya-go's own golden from Python
         env:
           LAYA_FIXTURE_CHECKPOINTS: ${{ github.workspace }}/laya-java/.work/checkpoints
@@ -128,11 +130,14 @@ jobs:
           LAYA_GO_FIXTURES: ${{ github.workspace }}/.go-goldens
           LAYA_CHECKPOINTS: ${{ github.workspace }}/laya-java/.work/checkpoints
         run: go test -race -count=1 -json ./... > "$RUNNER_TEMP/go-test.json"
-      # Exactly the measured count (1603 tests and subtests, on both Go versions): dropping a
-      # case fails here, and adding one means raising this number.
+      # A FLOOR, not the exact count. Each of #1306, #1307, #1308, #1310 and #1311 measured its
+      # own total against main alone (1754, 1667, 1742, 3462, 3869 against main's 1603); merged
+      # they add up to roughly 4223, which no single run has confirmed. 3869 is the highest
+      # number any of them measured, so it still catches a package going missing. Raise it to the
+      # count this lane actually reports, and restore "exactly", on the next green run.
       - name: No test was skipped
         if: ${{ !cancelled() }}
-        run: python laya-go/scripts/check_test_json.py "$RUNNER_TEMP/go-test.json" --min-tests 1603
+        run: python laya-go/scripts/check_test_json.py "$RUNNER_TEMP/go-test.json" --min-tests 3869
 
       # go.mod declares go 1.22, so that is what a consumer may build with.
       - name: Run the tests on the oldest supported Go
@@ -144,7 +149,7 @@ jobs:
         run: go test -count=1 -json ./... > "$RUNNER_TEMP/go-test-oldest.json"
       - name: No test was skipped on the oldest Go either
         if: ${{ !cancelled() }}
-        run: python laya-go/scripts/check_test_json.py "$RUNNER_TEMP/go-test-oldest.json" --min-tests 1603
+        run: python laya-go/scripts/check_test_json.py "$RUNNER_TEMP/go-test-oldest.json" --min-tests 3869
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ failure() }}
@@ -296,6 +301,11 @@ jobs:
         run: |
           go install "honnef.co/go/tools/cmd/staticcheck@$STATICCHECK_VERSION"
           "$(go env GOPATH)/bin/staticcheck" ./...
+      - name: samples staticcheck
+        working-directory: laya-go/samples
+        run: |
+          go install "honnef.co/go/tools/cmd/staticcheck@$STATICCHECK_VERSION"
+          "$(go env GOPATH)/bin/staticcheck" ./...
       - name: onnx builds and tests without cgo
         working-directory: laya-go/onnx
         run: CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go test ./...
@@ -326,6 +336,12 @@ jobs:
 
       - name: govulncheck (onnx module)
         working-directory: laya-go/onnx
+        run: |
+          go install "golang.org/x/vuln/cmd/govulncheck@$GOVULNCHECK_VERSION"
+          "$(go env GOPATH)/bin/govulncheck" ./...
+
+      - name: govulncheck (samples module)
+        working-directory: laya-go/samples
         run: |
           go install "golang.org/x/vuln/cmd/govulncheck@$GOVULNCHECK_VERSION"
           "$(go env GOPATH)/bin/govulncheck" ./...

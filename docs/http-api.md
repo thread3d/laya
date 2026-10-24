@@ -190,6 +190,11 @@ The sample is one answer this server gave, verbatim: the request above, the cach
 checkpoint on CPU. `answers` and `usage` are the keys Jev clients decode; `model` is the constant
 name of the decision head, and the checkpoint that answered is in `routing`.
 
+`probabilities` on `choice` and `score` answers are rounded independently to four decimal places
+and need not sum exactly to 1, just as in the [in-process API](questions-and-answers.md#probability-precision).
+For strict unit-sum validation, allow a rounding tolerance that accounts for the number of options,
+or normalize a copy of the distribution.
+
 | answer type | keys |
 |---|---|
 | `choice` | `choice` (the argmax option), `probabilities` per option, `x_jev_confidence` |
@@ -312,7 +317,7 @@ The answer keeps the Jev shape, so the official SDK parses it:
 
 - `probabilities` names every option, in criteria order. The finalists carry the final round's
   probabilities and an option eliminated in an earlier round carries `0.0`, so `choice` is still
-  the argmax and the values still sum to 1;
+  the argmax, but the rounded values need not sum exactly to 1;
 - `x_tournament` lists the `finalists` and the number of `rounds`, so a caller can tell an
   eliminated option from one the final round scored. Under `LAYA_JEV_STRICT` it is not sent;
 - `confidence` and `answer_confidence` are the final round's, over the finalists;

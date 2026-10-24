@@ -93,6 +93,23 @@ func NewTemperatures(byType []any, byOptions map[string]any, byLanguage map[stri
 	return t, nil
 }
 
+// Calibrated is t with the type and bucket tables and the binning map replaced, as
+// apply_calibration_payload does: language overrides stay as Open resolved them. byType holds
+// three raw values; every value is clamped.
+func (t *Temperatures) Calibrated(byType []any, byOptions map[string]any, binning map[string]Bins) *Temperatures {
+	out := &Temperatures{ByOptions: make(map[string]float64, len(byOptions)), Binning: binning}
+	if t != nil {
+		out.ByLanguage = t.ByLanguage
+	}
+	for i, v := range byType {
+		out.ByType[i] = Clamp(v)
+	}
+	for bucket, v := range byOptions {
+		out.ByOptions[bucket] = Clamp(v)
+	}
+	return out
+}
+
 // primarySubtag is lang.split("-")[0].lower().
 func primarySubtag(lang string) string {
 	primary, _, _ := strings.Cut(lang, "-")
@@ -223,12 +240,7 @@ func toFloat(v any) (float64, bool) {
 		f, _ := new(big.Float).SetInt(x).Float64()
 		return f, true
 	case string:
-		s := unicodedata.Strip(x)
-		if strings.ContainsAny(s, "xXpP_") { // Go reads hex floats and Python does not
-			return 0, false
-		}
-		f, err := strconv.ParseFloat(s, 64)
-		return f, err == nil
+		return PyFloat(x)
 	}
 	rv := reflect.ValueOf(v)
 	switch rv.Kind() {
@@ -239,6 +251,36 @@ func toFloat(v any) (float64, bool) {
 	}
 	return 0, false
 }
+
+// PyFloat is float(s) for a string: surrounding space, Unicode decimal digits, single underscores
+// between digits, and a signed nan, inf or infinity in any case. Go's hex floats are refused. A
+// value past the float range is infinite, as in Python.
+func PyFloat(s string) (float64, bool) {
+	s = unicodedata.DecimalASCII(unicodedata.StripNumeric(s))
+	if strings.ContainsAny(s, "xXpP") {
+		return 0, false
+	}
+	if strings.Contains(s, "_") {
+		var b strings.Builder
+		for i := 0; i < len(s); i++ {
+			if s[i] == '_' {
+				if i == 0 || i+1 == len(s) || !isDigit(s[i-1]) || !isDigit(s[i+1]) {
+					return 0, false
+				}
+				continue
+			}
+			b.WriteByte(s[i])
+		}
+		s = b.String()
+	}
+	if u := strings.TrimLeft(s, "+-"); len(s)-len(u) == 1 && strings.EqualFold(u, "nan") {
+		return math.NaN(), true
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	return f, err == nil || isRange(err)
+}
+
+func isDigit(c byte) bool { return c >= '0' && c <= '9' }
 
 func isRange(err error) bool {
 	ne, ok := err.(*strconv.NumError)

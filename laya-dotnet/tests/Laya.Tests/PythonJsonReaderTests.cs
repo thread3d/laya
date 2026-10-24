@@ -554,13 +554,21 @@ public sealed class WarnOnceTests
 
     // One un-optimized call site shared by every thread: a jitted-and-re-jitted lambda may report a different IL offset.
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining | System.Runtime.CompilerServices.MethodImplOptions.NoOptimization)]
-    private static void LoadFromOneSite() => LayaConfig.Parse(Config);
+    private static void LoadFromOneSite() => LayaConfig.Parse(TempConfig("0.25"));
 
+    // xunit runs other classes (ConfigFieldTypeTests) in parallel and they warn about temperature[0]=0.2 from their
+    // own threads while this listener is attached, so this test counts only a value no other test uses, and a
+    // foreign warning from another thread is raised on purpose to prove it is not counted.
     [Fact]
     public void ConcurrentLoadsWarnOnce()
     {
         WarnOnce.Reset();
-        var messages = Capturing(() => Parallel.For(0, 32, _ => LoadFromOneSite()), "temperature[0]=0.2 ", anyThread: true);
+        var messages = Capturing(() =>
+        {
+            var foreign = Task.Run(() => LayaConfig.Parse("{\"temperature\": [0.2, 1, 1], \"temperature_by_options\": {\"x\": 9}}"));
+            Parallel.For(0, 32, _ => LoadFromOneSite());
+            foreign.Wait();
+        }, "temperature[0]=0.25 ", anyThread: true);
         Assert.Single(messages);
     }
 

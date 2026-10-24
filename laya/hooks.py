@@ -12,6 +12,7 @@ import asyncio
 import contextvars
 import inspect
 import math
+import numbers
 import random
 import string
 import threading
@@ -19,6 +20,8 @@ import time
 import uuid
 import warnings
 import zlib
+import numpy as np
+
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol, Sequence, Tuple, Union
@@ -657,10 +660,35 @@ def calibrate_reliability(
     If no cutoff reaches `target_accuracy`, accept is returned as 1.01 (accept nothing).
     Cutoffs use the supplied scores without rounding, matching the hook's reported
     `soft_stability` and runtime comparison. Equal scores are evaluated together.
+
+    Scores and correctness labels must have equal, nonzero lengths. Scores and
+    accuracy targets must be finite real numbers in [0, 1], excluding bool;
+    invalid lengths or values raise ValueError. Correctness labels must be
+    booleans or TypeError is raised. Invalid evidence is never filtered or coerced.
+
+    "Real number" and "boolean" mean the NumPy scalars too, because `correct` is
+    normally computed, not written out: `preds == gold` on a NumPy or pandas column
+    yields `np.bool_`, which is a boolean by every meaning except `isinstance(x, bool)`.
+    `numbers.Real` covers `np.float32` and `np.int64` and still excludes `np.bool_`,
+    so the two checks stay disjoint. `soft_scores` and `correct` must be sized; a
+    generator raises TypeError, since a length mismatch has to be detectable.
     """
-    pairs = sorted(zip(soft_scores, correct))
-    if not pairs:
+    if len(soft_scores) != len(correct):
+        raise ValueError("soft_scores and correct must have the same length")
+    if len(soft_scores) == 0:
         raise ValueError("cannot calibrate reliability on empty scores/correct pairs")
+    for name, value in (("target_accuracy", target_accuracy), ("max_escalate_accuracy", max_escalate_accuracy)):
+        if (isinstance(value, (bool, np.bool_)) or not isinstance(value, numbers.Real)
+                or not (0.0 <= value <= 1.0) or not math.isfinite(value)):
+            raise ValueError("%s must be a finite number in [0, 1], got %r" % (name, value))
+    for i, score in enumerate(soft_scores):
+        if (isinstance(score, (bool, np.bool_)) or not isinstance(score, numbers.Real)
+                or not (0.0 <= score <= 1.0) or not math.isfinite(score)):
+            raise ValueError("soft_scores[%d] must be a finite number in [0, 1], got %r" % (i, score))
+    for i, label in enumerate(correct):
+        if not isinstance(label, (bool, np.bool_)):
+            raise TypeError("correct[%d] must be a bool, got %r" % (i, label))
+    pairs = sorted(zip(soft_scores, correct))
     cuts = sorted({s for s, _ in pairs})
 
     accept = 1.01
@@ -677,7 +705,9 @@ def calibrate_reliability(
         below = [c for s, c in pairs if s < t]
         if below and sum(below) / len(below) <= max_escalate_accuracy:
             escalate = t
-    return accept, escalate
+    # The cutoffs are thresholds a caller stores and replays, so hand back plain floats: a
+    # `np.float32` score would otherwise travel into a JSON report as a NumPy scalar.
+    return float(accept), float(escalate)
 
 
 def _seed_of(state: Any) -> str:

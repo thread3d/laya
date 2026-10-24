@@ -102,6 +102,10 @@ def render_unicode():
         ("space", "Python's str.isspace().", lambda cp: chr(cp).isspace()),
         ("printable", "Python's str.isprintable(), which is what repr leaves unescaped.",
          lambda cp: chr(cp).isprintable()),
+        ("mark", "The Mn, Mc and Me categories, which laya/email.py spells unicodedata.category(ch)\n"
+         "// startswith(\"M\").", lambda cp: unicodedata.category(chr(cp)).startswith("M")),
+        ("initial", "The Lu, Lt and Lo categories: a letter that is not lowercase.",
+         lambda cp: unicodedata.category(chr(cp)) in ("Lu", "Lt", "Lo")),
         ("title", "The Lt category: cased, but neither upper nor lower, so str.isupper() on a\n"
          "// string holding one is false.", lambda cp: unicodedata.category(chr(cp)) == "Lt"),
     ]

@@ -103,6 +103,13 @@ for label, text in [("english", "Please refund the duplicate charge"), ("hindi",
     check("analyse/keys " + label, set(analyse(text)), _KEYS)
 # A 0-0 tie between non-English stopword lists is no evidence for any of them
 check("latin_lang/zero tie invents nothing", guess_latin_language("Cât e ora acum la Tokyo"), None)
+# Plain English made of question words, auxiliaries and contractions used to match no English
+# function word at all, so it stayed undecided and took the router default (multilingual).
+for text in ["Why hasn't my card been delivered?",
+             "How long does a card delivery take?",
+             "Where should my refund show up?"]:
+    check("latin_lang/english question words " + text, guess_latin_language(text), "en")
+    check("route/english question words " + text, Router().route(text).model, "english")
 
 # Known limitation, kept visible on purpose: Romanian short enough to carry no diacritics and an
 # English function word ("in") still reads as English. A real LID model is the fix, not more
@@ -716,6 +723,9 @@ for text in [
 from laya.lang import _STOP  # noqa: E402
 check("latin_lang/bn list shares no word with another list",
       sorted(w for w in _STOP.get("bn", ()) for lg, words in _STOP.items() if lg != "bn" and w in words), [])
+check("latin_lang/en list shares only in, is, as, was with another list",
+      sorted({w for w in _STOP["en"] for lg, words in _STOP.items() if lg != "en" and w in words}),
+      ["as", "in", "is", "was"])
 check("latin_lang/romanian with ei stays romanian",
       guess_latin_language("Ei nu sunt de acord cu factura, vreau o corecție"), "ro")
 
