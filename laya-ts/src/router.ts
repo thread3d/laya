@@ -604,6 +604,10 @@ export class Router extends HookRegistry {
     const active = composeHooks(this.hooks, opts.hooks, opts.onPredictStart, opts.onPredictEnd);
     const raiseErrors = opts.hooksRaise ?? this.hooksRaise;
     const hasStart = active.some((h) => typeof h.onPredictStart === "function");
+    // The per-call token-budget overrides seed the context, so a start hook can read and rewrite
+    // them exactly as it can `states`/`questions`; the values it leaves are what reaches the agent
+    // below. Python's Router.predict builds its context the same way (router.py: `PredictContext(
+    // ..., max_len=max_len, head_max_len=head_max_len)`).
     const ctx = new PredictContext({
       states: [state],
       questions: questions as Record<string, unknown>,
@@ -611,6 +615,8 @@ export class Router extends HookRegistry {
       model: null,
       agent: null,
       router: this,
+      maxLen: opts.maxLen ?? null,
+      headMaxLen: opts.headMaxLen ?? null,
     });
     try {
       // Per-call hooks apply to the whole call, including onRoute inside route().
@@ -648,6 +654,10 @@ export class Router extends HookRegistry {
         const effectiveLang = opts.lang ?? detected ?? null;
         const agentOpts: PredictOptions = { lang: effectiveLang };
         if (mc !== null) agentOpts.minConfidence = mc;
+        // Forwarded only when set, as Python does: an absent override means "the agent's own
+        // config", and `null`/`undefined` must not overwrite a deployment's configured budget.
+        if (ctx.maxLen !== null && ctx.maxLen !== undefined) agentOpts.maxLen = ctx.maxLen;
+        if (ctx.headMaxLen !== null && ctx.headMaxLen !== undefined) agentOpts.headMaxLen = ctx.headMaxLen;
         markDefaultsRan(agentOpts);
         const result = (await agent.systemOne(
           ctx.states[0],
