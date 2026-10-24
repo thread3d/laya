@@ -146,7 +146,14 @@ function enumField(path: string, name: string, values: unknown[], description: u
     throw new SchemaError(`${path}: ${values.length} options exceeds MAX_OPTIONS=${MAX_OPTIONS}`);
   }
   if (values.length === 0) throw new SchemaError(`${path}: 'enum' must not be empty`);
-  if (values.every((v) => typeof v === "boolean")) return noulField(name, description);
+  // Python's `_enum_field` takes the noul shortcut only for exactly two DISTINCT booleans
+  // (`all(isinstance(v, bool) ...) and len(set(values)) == 2`). Without the distinctness test a
+  // one-value enum became a noul here and a one-option choice there -- a different question type
+  // and a different projected value type (boolean vs "true") from the documented mapping -- and
+  // `[true, true]` became a noul instead of the duplicate-label SchemaError both SDKs promise.
+  if (values.length === 2 && values.every((v) => typeof v === "boolean") && values[0] !== values[1]) {
+    return noulField(name, description);
+  }
   const options: [string, unknown][] = values.map((v) => [v == null ? "null" : String(v), v]);
   if (new Set(options.map(([label]) => label)).size !== options.length) {
     throw new SchemaError(`${path}: enum values produce duplicate choice labels`);
