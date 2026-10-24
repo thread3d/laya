@@ -371,7 +371,7 @@ Rather than refuse a large batch, the endpoint **splits** it: when that product 
 inside the budget, and `Router.predict_batch` runs the batch in several passes. Every state is still
 answered and the response is unchanged. A request whose rows already fit is passed no `batch_size` at
 all, so it behaves exactly as before -- which matters because batch shape can move floating-point
-results. A `batch_size` the caller sends always wins: it asked for a shape.
+results. A `batch_size` the caller sends may make a pass *smaller* than that plan -- it asked for a shape -- but never larger: the budget is a property of one forward pass, so a value above the plan is capped at it.
 
 At the default, 256 rows go through in one pass -- 64 states of 4 questions, or 8 of 32. Larger
 batches are split, and raising `max_len` makes each pass narrower rather than costing 16 times the

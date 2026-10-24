@@ -1543,17 +1543,19 @@ def create_app(router: Optional[Any] = None):
         if min_confidence is not None:
             call_kwargs["min_confidence"] = min_confidence
         batch_size = _validate_batch_size_param(body)
+        # The token budget is a property of ONE forward pass, so the caller may shape the passes but
+        # never widen one past the budget: a body is capped at 64 states x 64 questions x 8192 tokens,
+        # and a caller-supplied `batch_size` used to be forwarded verbatim, so `batch_size=10**18`
+        # meant "collate all of it at once" and opted out of the only guard that bounds a pass. Take
+        # the smaller of the two. `planned` is `None` when the request already fits, which is the
+        # case where nothing was going to be passed anyway.
+        planned = _batch_chunk_size(
+            len(states), len(questions) if isinstance(questions, dict) else 0,
+            body.get("max_len"))
         if batch_size is not None:
-            call_kwargs["batch_size"] = batch_size
-        else:
-            # The caller's own `batch_size` always wins -- they asked for a shape. Otherwise split the
-            # batch so one forward pass stays inside the token budget. `None` when it already fits, so
-            # nothing is passed and the call is the one it has always been.
-            planned = _batch_chunk_size(
-                len(states), len(questions) if isinstance(questions, dict) else 0,
-                body.get("max_len"))
-            if planned is not None:
-                call_kwargs["batch_size"] = planned
+            call_kwargs["batch_size"] = batch_size if planned is None else min(batch_size, planned)
+        elif planned is not None:
+            call_kwargs["batch_size"] = planned
         sort_by_length = _validate_sort_by_length_param(body)
         if sort_by_length:
             # Only `True` is forwarded: `predict_batch`'s own default is `False`, and an attached

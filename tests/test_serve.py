@@ -2010,15 +2010,39 @@ def test_batch_a_raised_max_len_chunks_harder(monkeypatch):
     assert _sent_batch_size(wide_fake) == max(1, rows_per_pass // (rows // 8))
 
 
-def test_batch_an_explicit_batch_size_is_never_overridden(monkeypatch):
-    """The caller asked for a shape. Planning one on top would silently change what they requested."""
+def test_batch_an_explicit_batch_size_shapes_a_pass_but_cannot_widen_one(monkeypatch):
+    """The caller asked for a shape, not for an unbounded pass.
+
+    `batch_size` is the only knob that decides what ONE forward pass collates, and the plan above is
+    the only thing that keeps that pass inside `LAYA_MAX_BATCH_TOKENS`. Forwarding the caller's value
+    verbatim made the budget opt-out: `batch_size=10**18` on a 4 KB body meant one pass over 524 288
+    tokens (64 states x 8192) with every documented limit satisfied. A smaller value still wins,
+    because asking for a *narrower* pass is asking for less work than the plan allows.
+    """
     import laya.serve as serve_mod
 
+    rows_that_do_not_fit = {"states": ["hi"] * serve_mod.MAX_BATCH_STATES,
+                            "questions": _noul_questions(serve_mod.MAX_QUESTIONS)}
+    planned = serve_mod._batch_chunk_size(serve_mod.MAX_BATCH_STATES, serve_mod.MAX_QUESTIONS, None)
+    assert planned is not None and planned < serve_mod.MAX_BATCH_STATES
+
+    # Narrower than the plan: the caller's own shape.
+    client, fake = _batch_env_client(monkeypatch)
+    r = client.post("/v1/systemone/batch", json={**rows_that_do_not_fit, "batch_size": 1})
+    assert r.status_code == 200, r.text
+    assert _sent_batch_size(fake) == 1
+
+    # Wider than the plan, including absurdly wider: capped at the plan.
+    for asked in (planned + 1, 7 if 7 > planned else planned + 1, 10 ** 18):
+        client, fake = _batch_env_client(monkeypatch)
+        r = client.post("/v1/systemone/batch", json={**rows_that_do_not_fit, "batch_size": asked})
+        assert r.status_code == 200, r.text
+        assert _sent_batch_size(fake) == planned, (asked, planned)
+
+    # A batch that already fits is passed no plan at all, so the caller's value is forwarded as-is.
     client, fake = _batch_env_client(monkeypatch)
     r = client.post("/v1/systemone/batch",
-                    json={"states": ["hi"] * serve_mod.MAX_BATCH_STATES,
-                          "questions": _noul_questions(serve_mod.MAX_QUESTIONS),
-                          "batch_size": 7})
+                    json={"states": ["hi"] * 8, "questions": _noul_questions(2), "batch_size": 7})
     assert r.status_code == 200, r.text
     assert _sent_batch_size(fake) == 7
 
