@@ -1026,6 +1026,13 @@ export class Router extends HookRegistry {
    * Run onPredictEnd for every started per-request context and raise the first hook
    * failure, if any. Elapsed and usage are stamped on every context before any end hook
    * runs, so one request's end hooks never inflate another request's elapsed time.
+   *
+   * The end hooks run in REVERSE start order, because every request started before any
+   * ended: a hook that opens something in start and closes it in end (a tracing span, an
+   * `AsyncLocalStorage` frame, an in-flight counter) must unwind the last one first, or it
+   * closes the wrong frame and every request after the first inherits a corrupted context.
+   * Python's `Router.predict_batch` ends its contexts the same way and says so
+   * (`laya/router.py::_end_contexts`).
    */
   private _endContexts(active: Hook[], contexts: PredictContext[], raiseErrors: boolean): void {
     for (const ctx of contexts) {
@@ -1033,7 +1040,7 @@ export class Router extends HookRegistry {
       if (ctx.results !== null) ctx.usage = aggregateUsage(ctx.results);
     }
     let firstError: unknown = null;
-    for (const ctx of contexts) {
+    for (const ctx of [...contexts].reverse()) {
       try {
         dispatch(active, "onPredictEnd", ctx, { raiseErrors });
       } catch (hookErr) {
