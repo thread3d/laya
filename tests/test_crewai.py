@@ -813,6 +813,68 @@ for _surface, _go in (("router", lambda **kw: LayaCrewRouter(base_url="http://lo
 
 # --------------------------------------------------------------- Results Summary
 print(f"PASS: {len(PASS)}")
+
+# ------------------------------------------------------ 4c. Malformed NESTED decision fields
+#
+# #1301 refuses a top-level non-object and #1321 refuses a non-object `answers`. One level below
+# those, both consumers still trusted every nested value: `answers` was iterated with `.items()`,
+# each answer was used as a dict, `choice` with `.startswith`, and `noul` compared with `>=`. A
+# well-formed object whose `answers` is a list, whose answer is a string, or whose `noul` is a
+# string/null/bool raised AttributeError/TypeError out of the fail-closed path -- and a `true` read
+# as 1.0 because bool subclasses int, i.e. a spurious full-probability violation.
+_CREWAI_NESTED_ROUTE = [
+    ({"answers": []}, "answers-list"),
+    ({"answers": {"delegation": "agent_1"}}, "answer-str"),
+    ({"answers": {"delegation": None}}, "answer-null"),
+    ({"answers": {"delegation": {"choice": ["agent_1"]}}}, "choice-list"),
+]
+for _body, _label in _CREWAI_NESTED_ROUTE:
+    with patch("urllib.request.build_opener") as _m:
+        _m.return_value.open.return_value = DummyHTTPResponse(_body)
+        try:
+            LayaCrewRouter(base_url="http://localhost:8000").route(
+                "Analyze codebase", agents)
+            check_true("nested/%s/route raises" % _label, False, "no error raised")
+        except RuntimeError as exc:
+            check_true("nested/%s/route malformed" % _label,
+                       "Malformed decision response" in str(exc))
+        except Exception as exc:
+            check_true("nested/%s/route is RuntimeError" % _label, False, type(exc).__name__)
+
+_CREWAI_NESTED_SCREEN = [
+    ({"answers": []}, "answers-list"),
+    ({"answers": {"harm_severity": "nope"}}, "answer-str"),
+    ({"answers": {"harm_severity": {"type": "noul", "noul": "high"}}}, "noul-str"),
+    ({"answers": {"harm_severity": {"type": "noul", "noul": None}}}, "noul-null"),
+    ({"answers": {"harm_severity": {"type": "noul", "noul": True}}}, "noul-bool"),
+]
+for _body, _label in _CREWAI_NESTED_SCREEN:
+    with patch("urllib.request.build_opener") as _m:
+        _m.return_value.open.return_value = DummyHTTPResponse(_body)
+        try:
+            LayaTaskGuard(base_url="http://localhost:8000").screen(
+                "Summarize the annual shareholder meeting")
+            check_true("nested/%s/screen raises" % _label, False, "no error raised")
+        except RuntimeError as exc:
+            check_true("nested/%s/screen malformed" % _label,
+                       "Malformed decision response" in str(exc))
+        except Exception as exc:
+            check_true("nested/%s/screen is RuntimeError" % _label, False, type(exc).__name__)
+
+# Positive controls: a well-formed body is read exactly as before, on both surfaces.
+with patch("urllib.request.build_opener") as _m:
+    _m.return_value.open.return_value = DummyHTTPResponse(
+        {"answers": {"delegation": {"choice": "agent_2", "answer_confidence": 0.95}}})
+    check("nested/well-formed route still routes",
+          LayaCrewRouter(base_url="http://localhost:8000").route(
+              "Analyze codebase", agents).agent_index, 2)
+with patch("urllib.request.build_opener") as _m:
+    _m.return_value.open.return_value = DummyHTTPResponse(
+        {"answers": {"harm_severity": {"type": "noul", "noul": 0.0, "confidence": 0.9}}})
+    check_true("nested/well-formed screen still passes",
+               LayaTaskGuard(base_url="http://localhost:8000").screen(
+                   "Summarize the annual shareholder meeting") is not None)
+
 print(f"FAIL: {len(FAIL)}")
 for f in FAIL:
     print(f"  - {f}")

@@ -799,6 +799,59 @@ check("gate/missing confidence still passes", kept.agent_index, 2)
 
 # ---------------------------------------------------------------- Results Summary
 print(f"PASS: {len(PASS)}")
+
+# ------------------------------------------------------ 5c. Malformed NESTED decision fields
+#
+# The same one-level-deeper shapes as the CrewAI adapter (#1321 guards `answers` itself; these are
+# the fields below it). `route` reads `choice` with `.startswith` and `screen` compares `noul` with
+# `>=`, so a string/null/bool there raised out of the fail-closed path -- or, for `true`, read as a
+# full-probability violation.
+_AGNO_NESTED_ROUTE = [
+    ({"answers": []}, "answers-list"),
+    ({"answers": {"delegation": "agent_1"}}, "answer-str"),
+    ({"answers": {"delegation": None}}, "answer-null"),
+    ({"answers": {"delegation": {"choice": ["agent_1"]}}}, "choice-list"),
+]
+for _body, _label in _AGNO_NESTED_ROUTE:
+    with patch("urllib.request.build_opener") as _m:
+        _m.return_value.open.return_value = DummyHTTPResponse(_body)
+        try:
+            LayaAgnoRouter(base_url="http://localhost:8000").route(
+                "Write a Python function to reverse a string", agents)
+            check_true("nested/%s/route raises" % _label, False, "no error raised")
+        except RuntimeError as exc:
+            check_true("nested/%s/route malformed" % _label,
+                       "Malformed decision response" in str(exc))
+        except Exception as exc:
+            check_true("nested/%s/route is RuntimeError" % _label, False, type(exc).__name__)
+
+_AGNO_NESTED_SCREEN = [
+    ({"answers": []}, "answers-list"),
+    ({"answers": {"harm_severity": "nope"}}, "answer-str"),
+    ({"answers": {"harm_severity": {"type": "noul", "noul": "high"}}}, "noul-str"),
+    ({"answers": {"harm_severity": {"type": "noul", "noul": None}}}, "noul-null"),
+    ({"answers": {"harm_severity": {"type": "noul", "noul": True}}}, "noul-bool"),
+]
+for _body, _label in _AGNO_NESTED_SCREEN:
+    with patch("urllib.request.build_opener") as _m:
+        _m.return_value.open.return_value = DummyHTTPResponse(_body)
+        try:
+            LayaAgnoGuardrail(base_url="http://localhost:8000").screen(
+                "Summarize the quarterly report")
+            check_true("nested/%s/screen raises" % _label, False, "no error raised")
+        except RuntimeError as exc:
+            check_true("nested/%s/screen malformed" % _label,
+                       "Malformed decision response" in str(exc))
+        except Exception as exc:
+            check_true("nested/%s/screen is RuntimeError" % _label, False, type(exc).__name__)
+
+with patch("urllib.request.build_opener") as _m:
+    _m.return_value.open.return_value = DummyHTTPResponse(
+        {"answers": {"delegation": {"choice": "agent_0", "answer_confidence": 0.9}}})
+    check("nested/well-formed route still routes",
+          LayaAgnoRouter(base_url="http://localhost:8000").route(
+              "Write a Python function to reverse a string", agents).agent_index, 0)
+
 print(f"FAIL: {len(FAIL)}")
 for f in FAIL:
     print(f"  - {f}")

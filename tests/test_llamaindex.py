@@ -790,6 +790,66 @@ for _label, _cls, _extra, _run in SURFACES:
 
 # --------------------------------------------------------------- Results Summary
 print(f"PASS: {len(PASS)}")
+
+# ------------------------------------------------------ 9c. Malformed NESTED decision fields
+#
+# One level below the non-object refusal above. The selectors read
+# `res.get("answers", {}).get(...)`, use `choice` with `.startswith`, and the multi-selector sorts
+# and thresholds `probabilities`, so a string probability raised TypeError from `sorted` and a
+# `true` ranked first as 1.0 -- a malformed body could win a selection instead of being refused.
+with patch("urllib.request.build_opener") as _m:
+    _m.return_value.open.return_value = DummyHTTPResponse({"answers": []})
+    for _what, _call in (
+        ("single", lambda: LayaSingleSelector(base_url="http://localhost:8000").select(
+            tools, "Query via remote server")),
+        ("multi", lambda: LayaMultiSelector(base_url="http://localhost:8000",
+                                            probability_threshold=0.3).select(
+            tools, "Compare both vector docs")),
+        ("router", lambda: LayaQueryRouter(
+            query_engines=engines,
+            descriptions={"vector": "Semantic search", "sql": "Relational SQL"},
+            base_url="http://localhost:8000").route("Run a query")),
+    ):
+        try:
+            _call()
+            check_true("nested/answers-list/%s raises" % _what, False, "no error raised")
+        except RuntimeError as exc:
+            check_true("nested/answers-list/%s malformed" % _what,
+                       "Malformed decision response" in str(exc))
+        except Exception as exc:
+            check_true("nested/answers-list/%s is RuntimeError" % _what, False, type(exc).__name__)
+
+_LLAMA_NESTED = [
+    ({"answers": {"selector": "choice_0"}}, "single", "answer-str"),
+    ({"answers": {"selector": {"choice": ["choice_0"]}}}, "single", "choice-list"),
+    ({"answers": {"selector": {"choice": "choice_0", "probabilities": {"choice_0": "90%"}}}},
+     "multi", "prob-str"),
+    ({"answers": {"selector": {"choice": "choice_0", "probabilities": {"choice_0": True}}}},
+     "multi", "prob-bool"),
+    ({"answers": {"route": {"choice": [1]}}}, "router", "route-choice-list"),
+]
+for _body, _surface, _label in _LLAMA_NESTED:
+    _surfaces = {
+        "single": lambda: LayaSingleSelector(base_url="http://localhost:8000").select(
+            tools, "Query via remote server"),
+        "multi": lambda: LayaMultiSelector(base_url="http://localhost:8000",
+                                           probability_threshold=0.3).select(
+            tools, "Compare both vector docs"),
+        "router": lambda: LayaQueryRouter(
+            query_engines=engines,
+            descriptions={"vector": "Semantic search", "sql": "Relational SQL"},
+            base_url="http://localhost:8000").route("Run a query"),
+    }
+    with patch("urllib.request.build_opener") as _m:
+        _m.return_value.open.return_value = DummyHTTPResponse(_body)
+        try:
+            _surfaces[_surface]()
+            check_true("nested/%s raises" % _label, False, "no error raised")
+        except RuntimeError as exc:
+            check_true("nested/%s malformed" % _label, "Malformed decision response" in str(exc))
+        except Exception as exc:
+            check_true("nested/%s is RuntimeError" % _label, False, type(exc).__name__)
+
 print(f"FAIL: {len(FAIL)}")
 for f in FAIL:
     print(f"  - {f}")
