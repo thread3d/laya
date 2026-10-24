@@ -639,13 +639,13 @@ export class Router extends HookRegistry {
           checkQuestion(qid, qdef);
         }
         // Python parity (router.py predict): the request's language also shapes the answer
-        // distribution through the agent's lang_temperatures. An explicit lang wins;
-        // otherwise forward the language the router detected for the routing decision.
-        // TS analyse() names English "en" where Python's analyse returns None (it only
-        // ever names non-English), so a detected "en" forwards as null — in Python only an
-        // explicit lang="en" can select an "en" override.
+        // distribution through the agent's lang_temperatures. An explicit lang wins; otherwise
+        // forward the language the router detected for the routing decision, "en" included --
+        // Python's `analyse` names English "en" too (laya/lang.py, `_latin_profile`), and
+        // `lang_temperatures` may carry an "en" entry, so replacing it with null made that
+        // override dead code on this path while the same agent honoured it when called directly.
         const detected = decision.detection?.language;
-        const effectiveLang = opts.lang ?? (detected && detected !== "en" ? detected : null);
+        const effectiveLang = opts.lang ?? detected ?? null;
         const agentOpts: PredictOptions = { lang: effectiveLang };
         if (mc !== null) agentOpts.minConfidence = mc;
         markDefaultsRan(agentOpts);
@@ -900,12 +900,9 @@ export class Router extends HookRegistry {
             continue;
           }
           // An explicit `lang` wins; otherwise forward the language the router detected for the
-          // routing decision. TS analyse() names English "en" where Python's returns None (it
-          // only ever names non-English), so a detected "en" forwards as null — in Python only
-          // an explicit lang="en" can select an "en" override. Same rule as `predict`.
+          // routing decision, "en" included, exactly as `predict` and Python's predict_batch do.
           const detectedLang = decisions[i].detection?.language ?? null;
-          const effectiveLang =
-            requests[i].lang ?? (detectedLang && detectedLang !== "en" ? detectedLang : null);
+          const effectiveLang = requests[i].lang ?? detectedLang;
           const langKey = hasLangOverrides ? effectiveLang : null;
           const schema = questionSchema(ctx.questions);
           const found = questionGroups.find(
