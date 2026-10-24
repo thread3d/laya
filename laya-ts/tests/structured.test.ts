@@ -546,3 +546,59 @@ describe("structured/decideBatch", () => {
 });
 
 
+
+// `DecideBatchOptions` documents that anything it does not read itself is forwarded to the
+// runner, hooks included. On a Router-like runner the call used to spread those options into the
+// request objects and pass no third argument, so `Router.predictBatch` -- which reads hooks from
+// its options argument, not from each request -- never ran them: tracing and metrics hooks
+// observed nothing on the batch path while firing on the single-request and Agent paths.
+describe("structured/decideBatch Router hook forwarding", () => {
+  const provider = () => ({
+    async runEncoder(b: any) {
+      const n = b?.inputIds?.length ?? 1;
+      return { lastHidden: Array.from({ length: n }, () => [[1, 0], [0, 1]]) };
+    },
+    async runHead(_h: any, batch?: any) {
+      const n = batch?.inputIds?.length ?? 1;
+      return {
+        logits: Array.from({ length: n }, () => [2, 0, 1, 0]),
+        act: Array.from({ length: n }, () => [3, 0]),
+      };
+    },
+  });
+
+  const routerWithAgent = () =>
+    new Router({ default: "english", loader: () => new Agent({ provider: provider() } as any) } as any);
+
+  it("fires per-call hooks through decide() and decideBatch() on a Router", async () => {
+    const fired: string[] = [];
+    const hook = {
+      onPredictStart(ctx: any) {
+        fired.push(String(ctx.states[0]));
+      },
+    };
+    await decide(routerWithAgent(), "single", SCHEMA, { hooks: [hook] });
+    expect(fired).toEqual(["single"]);
+
+    fired.length = 0;
+    await decideBatch(routerWithAgent(), ["s1", "s2"], SCHEMA, { hooks: [hook] });
+    expect(fired).toEqual(["s1", "s2"]);
+  });
+
+  it("forwards the plain-callable form too, and does not put hooks on the request objects", async () => {
+    const fired: string[] = [];
+    const router = routerWithAgent();
+    const calls: any[] = [];
+    // Record what reaches the router's own predictBatch, then run the real one.
+    const realBatch = router.predictBatch.bind(router);
+    (router as any).predictBatch = (requests: any[], batchSize: any, opts: any) => {
+      calls.push({ requests, batchSize, opts });
+      return realBatch(requests, batchSize, opts);
+    };
+    await decideBatch(router, ["s1"], SCHEMA, { onPredictStart: (ctx) => fired.push(String(ctx.states[0])) });
+    expect(fired).toEqual(["s1"]);
+    expect(calls).toHaveLength(1);
+    expect("onPredictStart" in calls[0].requests[0]).toBe(false);
+    expect(typeof calls[0].opts.onPredictStart).toBe("function");
+  });
+});
