@@ -376,6 +376,32 @@ def test_large_choice_is_refused_without_a_tournament(monkeypatch):
     assert fake.calls == []
 
 
+def test_tournament_refuses_unhashable_choice_labels_as_a_422(monkeypatch):
+    # A large choice is narrowed by elimination, and `_tournament_plan` reads the criteria labels
+    # (deduping them through a set) BEFORE `router.predict`, so core's `_check_question` -- which
+    # refuses a non-scalar label with a ValueError naming the question, as the no-tournament group=None
+    # case below already shows -- has not run yet. A `criteria` written as a list of JSON arrays used to
+    # leak the set-dedup `TypeError` through the endpoint's catch-all and answer 500 "inference failed".
+    client, fake = _tournament_client(monkeypatch, "2")
+    req = {"state": "I was charged twice, please refund one.",
+           "questions": {"queue": {"type": "choice", "instructions": "Which queue?",
+                                   "criteria": [["a", 1], ["b", 2], ["c", 3]]}}}
+    r = client.post("/v1/systemone", json=req)
+    assert r.status_code == 422, r.text
+    assert "queue" in r.json()["detail"]
+    assert fake.calls == []  # refused while planning, before any prediction
+
+
+def test_tournament_plan_names_the_question_on_unhashable_labels():
+    from laya import serve
+    with pytest.raises(ValueError, match="queue"):
+        serve._tournament_plan({"queue": {"type": "choice",
+                                          "criteria": [["a", 1], ["b", 2], ["c", 3]]}}, 2)
+    # Positive control: string-labelled criteria still plan (the guard is not over-strict).
+    assert serve._tournament_plan(
+        {"queue": {"type": "choice", "criteria": ["a", "b", "c"]}}, 2) == {"queue": ["a", "b", "c"]}
+
+
 def test_tournament_answers_a_large_choice_in_the_jev_shape(monkeypatch):
     client, fake = _tournament_client(monkeypatch, "16")
     r = client.post("/v1/systemone", json=_large_req(128))

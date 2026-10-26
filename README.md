@@ -94,6 +94,19 @@ The shipped checkpoints work zero-shot, but fine-tuning on decisions from your o
 
 **[nandhakishorm.github.io/laya](https://nandhakishorm.github.io/laya/)**: guides for [prediction hooks](https://nandhakishorm.github.io/laya/hooks/), [schema-driven decisions](https://nandhakishorm.github.io/laya/structured/), [Docker](https://nandhakishorm.github.io/laya/docker/) and [LangChain and LangGraph](https://nandhakishorm.github.io/laya/langchain/), plus a full [API reference](https://nandhakishorm.github.io/laya/reference/).
 
+## What's new in 0.4.16
+
+* **Rust and .NET answer batches, and abstain, the way Python does.** `predict_batch` and the
+  router batch APIs are ported to both, grouping by checkpoint and question schema and restoring
+  input order (#1358, #1359). The `min_confidence` abstention gate and `jev_confidence` follow, so
+  a low-confidence answer abstains identically in every port (#1362, #1363). Both sets are checked
+  against goldens recorded from the Python package rather than hand-written tables.
+* **Four inputs are now refused where they enter instead of failing later.** A non-numeric or
+  overflowing `hooks_timeout` is a `ValueError` at the call (#1365), an unhashable tournament
+  choice label is a 422 rather than a 500 (#1366), a question or batch file that cannot be read
+  names the file and exits 2 rather than printing a traceback (#1367), and an answer that is not
+  an object is left out of a structured projection rather than ending the call (#1368).
+
 ## What's new in 0.4.15
 
 * **A stalled upload can no longer take the server down.** Admission is taken before the request

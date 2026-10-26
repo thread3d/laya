@@ -334,6 +334,16 @@ def _call_remote(
             f"Malformed decision response from Laya server at {url}: "
             f"expected a JSON object, got {type(parsed).__name__}"
         )
+    # `parsed` is an object now, but its `answers` field is the same arbitrary JSON: a gateway can
+    # answer `{"answers": []}`. Both consumers read it as `res.get("answers", {})` and then call
+    # `.get("delegation", …)` / `.items()` on it, so a non-object there leaks AttributeError past the
+    # same fail-closed paths -- this is the guard above one level deeper. A missing `answers` is left
+    # alone: that is the no-decision case the consumers already handle, not a malformed one.
+    if "answers" in parsed and not isinstance(parsed["answers"], dict):
+        raise RuntimeError(
+            f"Malformed decision response from Laya server at {url}: "
+            f"'answers' must be a JSON object, got {type(parsed['answers']).__name__}"
+        )
     return parsed
 
 

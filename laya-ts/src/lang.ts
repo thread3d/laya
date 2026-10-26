@@ -501,8 +501,25 @@ function nonLatinCarries(nonLatin: number, nNonLatin: number): boolean {
     (nonLatin >= NON_LATIN_MIN_FRACTION && nNonLatin >= NON_LATIN_MIN_LETTERS);
 }
 
+// Python's round(x, 4) rounds the exact binary value of the double, breaking a tie to the even
+// digit. Math.round instead rounds `x * 10000`, which differs in two ways: it breaks a tie away
+// from zero, and the multiplication invents a tie where the double is not one. Both are reachable
+// from a ratio of small counts. 1 diacritic in 32 characters is 0.03125 exactly, and Python
+// reports 0.0312 where Math.round reported 0.0313. 1 in 4000 is 0.00025 only to the decimal
+// reader -- the double is 0.0002500000000000000052, above the halfway point, so Python reports
+// 0.0003 while `0.00025 * 10000` lands on 2.5 exactly and a tie rule would report 0.0002. So the
+// digits are taken from the double's own decimal expansion, where "tie" means what it means to
+// Python, and only a real tie consults the parity of the digit before it.
 function round4(x: number): number {
-  return Math.round(x * 10000) / 10000;
+  const [whole, fraction = ""] = x.toFixed(20).split(".");
+  const kept = Number(whole + fraction.slice(0, 4).padEnd(4, "0"));
+  const rest = fraction.slice(4);
+  const first = rest.charAt(0);
+  const tail = rest.slice(1).replace(/0+$/, "");
+  if (first > "5" || (first === "5" && (tail.length > 0 || kept % 2 === 1))) {
+    return (kept + 1) / 10000;
+  }
+  return kept / 10000;
 }
 
 function analyseText(text: string): AnalyseResult {
@@ -645,7 +662,20 @@ export function analyse(state: unknown): AnalyseResult {
       best = det;
     }
   }
-  return best ?? result;
+  if (!best) return result;
+  // The value pass answers `language` and `isEnglish` for the state, and leaves the script fields
+  // to the state. Returning `best` whole answered `script`, `scriptProfile` and `nonLatinFraction`
+  // from one leaf instead: a long English note above a short Russian message is 98.6% Latin, and
+  // the result said `script: "cyrillic"` with a profile of `{cyrillic: 1}` -- a description of the
+  // leaf that contradicts `scriptProfile(stateText(state))` for the same input, and that a caller
+  // reading `analyse(state).script` to report the language of a ticket cannot tell from the
+  // `isEnglish` flag beside it. Python's `analyse` overrides the same two fields and no others.
+  return {
+    ...result,
+    language: best.language,
+    isEnglish: false,
+    languageUndecided: best.languageUndecided,
+  };
 }
 
 export function isEnglish(state: unknown): boolean {

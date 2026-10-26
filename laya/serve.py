@@ -292,7 +292,16 @@ def _tournament_plan(questions: Any, group: int) -> Optional[Dict[str, List[str]
             continue
         criteria = question.get("criteria")
         if isinstance(criteria, (dict, list)) and len(criteria) > group:
-            large[qid] = [label for label, _ in _criteria_items(criteria)]
+            # `_criteria_items` de-duplicates its labels through a set, so an unhashable label -- a
+            # `criteria` written as a list of JSON arrays/objects -- raises a bare `TypeError` here.
+            # This plan runs before `router.predict`, so core's `Agent._check_question` (which refuses
+            # a non-scalar label with a `ValueError` naming the question) has not seen it yet, and the
+            # `TypeError` fell through the endpoint's catch-all to a 500. Refuse it as the same
+            # `ValueError` the sibling duplicate/empty-label paths already raise, so it is a 422.
+            try:
+                large[qid] = [label for label, _ in _criteria_items(criteria)]
+            except TypeError as error:
+                raise ValueError("question %r: %s" % (qid, error)) from None
     if not large:
         return None
     unmappable = [qid for qid, labels in large.items() if not all(isinstance(label, str) for label in labels)]

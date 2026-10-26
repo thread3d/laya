@@ -108,7 +108,23 @@ jobs:
     name: parity (${{ matrix.name }})
     runs-on: ubuntu-latest
     continue-on-error: true   # advisory: see the header
-    timeout-minutes: 60
+    # 120, not 60, for the reason rust.yml's parity job went to 240: the suites replay every
+    # golden through real ONNX inference and the case count only goes up. At 60 the
+    # typed-decisions cell hit the wall on the 0.4.16 release commit and GitHub recorded it as
+    # CANCELLED, which reads like a superseded run rather than a budget failure. Its test step
+    # had run for 34 minutes and printed no result summary, so that cell verified nothing while
+    # the lane stayed green on `continue-on-error`.
+    #
+    # Measured on a478221b, where #1358 added about 50 batch cases per checkpoint:
+    #   english          52m   passed, with 8 minutes to spare
+    #   typed-decisions  60m   killed mid-test-run
+    #   multilingual     13m   passed
+    #   router           26m   failed on setup-dotnet, not on time
+    # english being that close is the same warning typed-decisions already acted on.
+    #
+    # Per-checkpoint sharding is already here, so the next lever if these grow again is splitting
+    # the replay classes off the tokenizer and shape sweeps rather than more headroom.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       # One cell at a time. Every cell that needs weights fetches them from the same Hugging

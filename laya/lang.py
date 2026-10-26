@@ -12,6 +12,7 @@ decided from the text, never from the Unicode database the host happens to ship 
 The Latin-script language guess is a stopword/diacritic heuristic and is explicitly best-effort:
 pass an explicit model or `lang=` when you already know the language.
 """
+import bisect
 import re
 import unicodedata
 from collections import Counter
@@ -46,6 +47,15 @@ _SCRIPT_RANGES = [
     ("kana", ((0x3040, 0x309F), (0x30A0, 0x30FF), (0x31F0, 0x31FF))),
     ("han", ((0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xF900, 0xFAFF))),
 ]
+
+_FLATTENED_RANGES = sorted(
+    ((lo, hi, script) for script, ranges in _SCRIPT_RANGES for lo, hi in ranges),
+    key=lambda item: item[0],
+)
+_STARTS = [lo for lo, hi, script in _FLATTENED_RANGES]
+_ENDS = [hi for lo, hi, script in _FLATTENED_RANGES]
+_SCRIPTS = [script for lo, hi, script in _FLATTENED_RANGES]
+_bisect_right = bisect.bisect_right
 
 # Letters the running interpreter's Unicode database may not know (see `_is_letter`).
 #
@@ -429,10 +439,10 @@ def _script_counts(text: str) -> Dict[str, int]:
         if cp < 0x02B0 or 0x1E00 <= cp <= 0x1EFF or 0xFF21 <= cp <= 0xFF3A or 0xFF41 <= cp <= 0xFF5A:
             latin += 1                                   # Latin, IPA Extensions, Ext-Additional, fullwidth
             continue
-        for name, ranges in _SCRIPT_RANGES:
-            if any(lo <= cp <= hi for lo, hi in ranges):
-                counts[name] = counts.get(name, 0) + 1
-                break
+        idx = _bisect_right(_STARTS, cp) - 1
+        if idx >= 0 and cp <= _ENDS[idx]:
+            name = _SCRIPTS[idx]
+            counts[name] = counts.get(name, 0) + 1
         else:
             # An alphabetic character no range claims used to be counted nowhere, so text
             # written only in an unlisted script produced a total of 0 and was reported as
@@ -510,9 +520,9 @@ def _script_of(ch: str) -> Optional[str]:
     cp = ord(ch)
     if cp < 0x0250 or 0x1E00 <= cp <= 0x1EFF or 0xFF21 <= cp <= 0xFF3A or 0xFF41 <= cp <= 0xFF5A:
         return None
-    for name, ranges in _SCRIPT_RANGES:
-        if any(lo <= cp <= hi for lo, hi in ranges):
-            return name
+    idx = _bisect_right(_STARTS, cp) - 1
+    if idx >= 0 and cp <= _ENDS[idx]:
+        return _SCRIPTS[idx]
     return None
 
 

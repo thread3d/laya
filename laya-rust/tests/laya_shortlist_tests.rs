@@ -285,14 +285,9 @@ fn scores_are_clipped_to_the_documented_range() {
         .with("intent", Question::choice("Pick one", criteria).unwrap())
         .unwrap();
 
-    let result = LayaShortlist::predict(
-        &FirstLabelPredictor,
-        json!("pick me"),
-        &questions,
-        embed,
-        2,
-    )
-    .unwrap();
+    let result =
+        LayaShortlist::predict(&FirstLabelPredictor, json!("pick me"), &questions, embed, 2)
+            .unwrap();
     let scores = result.shortlist().unwrap()["intent"]
         .scores
         .as_ref()
