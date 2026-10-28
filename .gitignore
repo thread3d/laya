@@ -66,6 +66,8 @@ uv.lock
 
 # agent process docs (specs/plans) - not shipped
 docs/superpowers/
+# local working specs and plans; root-anchored so a future module/specs/ is not swallowed
+/specs/
 
 # credentials - never commit
 .env
