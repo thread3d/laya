@@ -37,6 +37,23 @@ describe("lang", () => {
     expect(a.isEnglish).toBe(false);
     expect(a.language).toBe(null);
   });
+  // Vietnamese: no stopword list of its own, so NON_EN_DIACRITICS is the only signal that keeps
+  // it off the English checkpoint -- and the tone-marked letters are precomposed codepoints the
+  // set did not hold, so everyday sentences carried a diacritic rate of 0.0 and read as English.
+  // Expectations generated with Python's laya.lang.analyse on the same inputs.
+  it("counts Vietnamese tone-marked letters as non-English", () => {
+    const a = analyse("Cảm ơn bạn nhiều nhẻ");
+    expect(a.diacriticRate).toBeCloseTo(0.25, 5);
+    expect(a.isEnglish).toBe(false);
+    expect(a.language).toBe(null);
+    const b = analyse("Mình muốn hỏi về đơn hàng đã đặt");
+    expect(b.diacriticRate).toBeCloseTo(0.3438, 4);
+    expect(b.isEnglish).toBe(false);
+  });
+  it("keeps English with Vietnamese loanwords and names English", () => {
+    expect(isEnglish("The pho was great and the banh mi was the best in town")).toBe(true);
+    expect(isEnglish("Please help Nguyễn with the invoice for the last order")).toBe(true);
+  });
   it("still routes plain english without a schwa to english", () => {
     const a = analyse("the quick brown fox");
     expect(a.diacriticRate).toBe(0);

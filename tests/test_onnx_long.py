@@ -22,6 +22,7 @@ import numpy as np  # noqa: E402
 from laya.agent import Agent  # noqa: E402
 from laya.common import window_budget  # noqa: E402
 from laya.hooks import OptionStabilityHook  # noqa: E402
+from _long_attribution import check_long_attribution
 from laya.onnx_agent import ONNXAgent  # noqa: E402
 
 PASS, FAIL = [], []
@@ -100,6 +101,9 @@ def _bare_onnx():
     a._hooks_mutex = threading.Lock()
     a.lang_temperatures = {}
     return a
+
+
+check_long_attribution(_bare_onnx, check)
 
 
 QUESTIONS = {

@@ -71,15 +71,14 @@ public sealed partial class PredictParityTests(AllEnginesFixture fixture)
     [MemberData(nameof(AllSuccessCases))]
     public void ReproducesTheRecordedAnswers(LayaCheckpoint checkpoint, GoldenCaseInfo info)
     {
-        var engine = fixture.Require(checkpoint);
         var golden = GoldenData.For(checkpoint);
         using var doc = golden.Load(info);
         var root = doc.RootElement;
+        var engine = fixture.RequireFor(checkpoint, root);
 
         var state     = GoldenData.ToClr(root.GetProperty("state"));
         var questions = GoldenData.BuildQuestions(root.GetProperty("questions"));
-        var result    = engine.Predict(state, questions,
-                                       new LayaPredictOptions { MinConfidence = ConfidenceGateTests.MinConfidenceOf(root) });
+        var result    = engine.Predict(state, questions, CallOptions.Predict(root));
         var expected  = root.GetProperty("result");
 
         Assert.Equal(expected.GetProperty("model").GetString(), result.Model);
@@ -131,18 +130,18 @@ public sealed partial class PredictParityTests(AllEnginesFixture fixture)
     /// Not run in CI or locally until an <c>onnx-split/</c> export exists — see the class remarks.
     /// </summary>
     [Theory]
+    [Trait(TestArtifacts.LayoutTrait, TestArtifacts.SplitOnly)]
     [MemberData(nameof(AllSuccessCasesSplit))]
     public void ReproducesTheRecordedAnswersSplit(LayaCheckpoint checkpoint, GoldenCaseInfo info)
     {
-        var engine = fixture.RequireSplit(checkpoint);
         var golden = GoldenData.For(checkpoint);
         using var doc = golden.Load(info);
         var root = doc.RootElement;
+        var engine = fixture.RequireFor(checkpoint, root, split: true);
 
         var state     = GoldenData.ToClr(root.GetProperty("state"));
         var questions = GoldenData.BuildQuestions(root.GetProperty("questions"));
-        var result    = engine.Predict(state, questions,
-                                       new LayaPredictOptions { MinConfidence = ConfidenceGateTests.MinConfidenceOf(root) });
+        var result    = engine.Predict(state, questions, CallOptions.Predict(root));
         var expected  = root.GetProperty("result");
 
         Assert.Equal(expected.GetProperty("model").GetString(), result.Model);
@@ -193,7 +192,7 @@ public sealed partial class PredictParityTests(AllEnginesFixture fixture)
         var state     = GoldenData.ToClr(root.GetProperty("state"));
         var questions = GoldenData.BuildQuestions(root.GetProperty("questions"));
 
-        var options = new LayaPredictOptions { MinConfidence = ConfidenceGateTests.MinConfidenceOf(root) };
+        var options = CallOptions.Predict(root);
         var error = Assert.Throws<ArgumentException>(() => engine.Predict(state, questions, options));
         // ArgumentException appends the parameter name, so the recorded text is a prefix of the
         // message rather than all of it.

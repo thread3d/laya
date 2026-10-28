@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from laya.common import QTYPES, TEMP_MAX, TEMP_MIN, clamp_temperature, temp_bucket  # noqa: E402
 from laya.lang import analyse, detect_script, guess_latin_language, is_english, state_text  # noqa: E402
+from laya.lang import NON_EN_DIACRITIC_RATE  # noqa: E402
 from laya.lang import _non_english_segment  # noqa: E402
 from laya.router import (  # noqa: E402
     BUNDLE_REPO,
@@ -2284,6 +2285,36 @@ except TypeError as _exc:
 except Exception as _exc:  # noqa: BLE001
     FAIL.append("route validation/questions not dict: raised %s instead of TypeError: %s" %
                 (type(_exc).__name__, _exc))
+
+
+# --------------------------------------------------------------------- Vietnamese
+# Vietnamese is a Latin-script language with no stopword list of its own, so the non-English
+# diacritic set is the only signal that keeps it off the English checkpoint -- but every
+# tone-marked Vietnamese letter (`ả`, `ạ`, `ề`, `ơ`, `ư`, ...) is a precomposed codepoint the
+# set did not hold, and it already claimed Vietnamese coverage through `đ` alone. Everyday
+# sentences carried a diacritic rate of 0.0 and routed to the English checkpoint.
+for text in [
+    "Cảm ơn bạn nhiều nhẻ",
+    "Cảm ơn bạn rất nhiều",
+    "Mình muốn hỏi về đơn hàng đã đặt",
+    "Cho tôi xin hoàn tiền cho đơn hàng này",
+    "CẢM ƠN BẠN RẤT NHIỀU",
+]:
+    check("latin/vietnamese diacritic rate " + text[:24],
+          analyse(text)["diacritic_rate"] > NON_EN_DIACRITIC_RATE, True)
+    check("is_english/vietnamese " + text[:24], is_english(text), False)
+    check("route/vietnamese " + text[:24], _r_lat.route(text).model, "multilingual")
+# English must not move: Vietnamese dishes and names that made it into English (`pho`,
+# `banh mi`, `ao dai`) are plain ASCII, and an accented Vietnamese surname in an otherwise
+# English sentence is one loanword, not a Vietnamese state (#337 rescue).
+for text in [
+    "The pho was great and the banh mi was the best in town",
+    "The ao dai show at the cafe was wonderful",
+    "Thanks Nguyen for the meal we had last night",
+    "Please help Nguyễn with the invoice for the last order",
+]:
+    check("is_english/vietnamese control " + text[:24], is_english(text), True)
+    check("route/vietnamese control " + text[:24], _r_lat.route(text).model, "english")
 
 
 # --------------------------------------------------------------------- report

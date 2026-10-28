@@ -188,7 +188,11 @@ def _read_json_object(path: str) -> Dict[str, Any]:
     quality failure -- naming no file at all, exactly the thing this docstring refuses to allow.
     """
     try:
-        with open(path, "r", encoding="utf-8") as handle:
+        # `utf-8-sig`: a checkpoint config or report written by a Windows editor starts with a
+        # UTF-8 BOM, which plain `utf-8` keeps as U+FEFF, so a valid JSON artifact was refused as
+        # "is not valid JSON". The other caller-file readers in this repo open the same way
+        # (laya/train.py, docker/entrypoint.py); a file without a BOM reads identically.
+        with open(path, "r", encoding="utf-8-sig") as handle:
             document = json.load(handle)
     except json.JSONDecodeError as exc:
         raise ValueError("%s is not valid JSON: %s" % (path, exc)) from exc

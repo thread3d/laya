@@ -35,6 +35,7 @@ Mirrors the [Laya Python SDK](https://github.com/NandhaKishorM/laya/blob/main/RE
 - [Reading results](#reading-results)
 - [Long prediction](#long-prediction)
 - [Batch prediction](#batch-prediction)
+- [Per-language temperatures and per-call overrides](#per-language-temperatures-and-per-call-overrides)
 - [Abstention (`min_confidence`)](#abstention-min_confidence)
 - [Thread safety](#thread-safety)
 - [Execution providers and cargo features](#execution-providers-and-cargo-features)
@@ -490,8 +491,9 @@ if let Some(window) = answer.window() {    // None for a single-pass state
   stride are sent, with Python's exact text, to the [`log`](https://docs.rs/log) facade at `warn`
   level with target `laya`. Install any `log` backend (for example `env_logger`) to see them; with
   none installed they are dropped.
-- **Not ported.** Per-call hooks and per-language temperatures are not part of `predict_long`
-  here. As in Python, it takes no `min_confidence`.
+- **Not ported.** Per-call hooks are not part of `predict_long` here. As in Python, it takes no
+  `min_confidence`, `max_len` or `head_max_len`; `LongOptions::lang` selects the per-language
+  temperatures, see [Per-language temperatures](#per-language-temperatures-and-per-call-overrides).
 
 ---
 
@@ -528,9 +530,51 @@ let results = engine.predict_batch(&states, &questions, &options)?;   // results
   `LayaError::NotSupported`.
 - **`min_confidence`.** `BatchOptions::min_confidence` gates every result of the call; see
   [Abstention](#abstention-min_confidence).
-- **Not ported.** Per-call hooks, `lang`, per-request `max_len` / `head_max_len` and the router's
-  `diagnostics` report. `BatchOptions` and `BatchRequest` are `#[non_exhaustive]`
-  so those can be added without breaking callers.
+- **Per-call `lang`, `max_len`, `head_max_len`.** On `BatchOptions` for the engine, and per request
+  on `BatchRequest` for the router; see
+  [Per-language temperatures](#per-language-temperatures-and-per-call-overrides).
+- **Not ported.** Per-call hooks and the router's `diagnostics` report. `BatchOptions` and
+  `BatchRequest` are `#[non_exhaustive]` so those can be added without breaking callers.
+
+---
+
+## Per-language temperatures and per-call overrides
+
+Ports `lang_temperatures`, `lang`, `max_len` and `head_max_len` from Python's `ONNXAgent` and
+`Router`.
+
+- **`LayaOptions::lang_temperatures`.** A table of language code to `LangTemperature` (an optional
+  list of three temperatures, which inherits the checkpoint's own when absent, and optional
+  `temperature_by_options` buckets), built once when the engine is. A router passes it to every
+  engine it builds. Keys are matched as `code.split('-')[0].lower()` (`de-AT` and `DE` both name
+  `de`), the last duplicate wins, and every value is clamped to `[0.5, 5]` exactly as the
+  checkpoint's own are. A value the clamp replaced is named in one warning per language, sent with
+  Python's text to the `log` facade (`warn`, target `laya`). A temperature list that is not three
+  long is `LayaError::InvalidConfig` with Python's `ValueError` text. The same parser is
+  `resolve_lang_temperatures`.
+- **Per-call `lang`.** `PredictOptions::lang`, `BatchOptions::lang` and `LongOptions::lang` select
+  an entry for that call. A language in the table replaces both the checkpoint's bucket map and its
+  per-type temperature (there is no fallback to the checkpoint's bucket); an unknown or empty code
+  changes nothing. This port has no histogram-binning calibration, which Python skips under an
+  override. On `LayaRouter`, the explicit `lang` argument is the language (it also routes), else
+  the language the routing detection found; the fields on the options are not read there (batch-wide ones are refused by `predict_batch`). In
+  `predict_batch` a request's `lang` (else the detected one) joins the grouping key, raw and
+  unnormalised, only when the engine has a table, so a table-less group still shares one pass.
+  `LayaRouter::predict_batch` has no batch-wide `lang`, `max_len` or `head_max_len`, as in Python
+  (`TypeError: Router.predict_batch() got an unexpected keyword argument 'lang'`): the same
+  fields on its `BatchOptions` are refused with `LayaError::NotSupported` and that text.
+- **Per-call `max_len` and `head_max_len`.** `PredictOptions`, `BatchOptions` and `BatchRequest`
+  (setters `max_len` / `head_max_len`) override the checkpoint's budget for that call; `None` keeps
+  it. They are `i64` because Python does no validation: `0` and negative values flow into the same
+  arithmetic and slices, so `max_len` of `0` or below leaves no option marker and the question is
+  `LayaError::NoMarkers` naming the value as written, while a `head_max_len` of `0` or below gives
+  each option four tokens. `predict_long` takes neither, as in Python. In `LayaRouter::predict_batch`
+  requests that ask for different budgets are split into separate forward passes. (A config's own
+  `max_len` / `head_max_len` are still refused at load when negative; see the differences below.)
+- **Attached predictors.** `LayaPredictor::predict_with_options` and `has_lang_temperatures` have
+  defaults, so existing implementors compile. The default drops `lang` and refuses a token-budget
+  override with `LayaError::NotSupported`; Python passes the budget on and the agent raises a
+  `TypeError`.
 
 ---
 
@@ -719,9 +763,12 @@ root looking for `onnx/<checkpoint>/`. Tests whose artifacts are missing print a
 return, rather than failing — a machine with no exported checkpoints still gets a green Tier-1 run.
 
 The advisory [Rust parity lane](../.github/workflows/rust.yml) runs on **every push and PR**,
-with no path filter. It regenerates fixtures from the Python `laya/` at that commit using
-[`tools/regen_golden.py`](tools/regen_golden.py), then runs the whole Cargo workspace.
-Goldens are never cached. A `skip:` diagnostic or ignored test makes the lane red, even when
+with no path filter. It is sharded per checkpoint (english, multilingual, typed-decisions, plus
+a router cell for the tests that load english and multilingual together). Each cell regenerates
+its own checkpoint's goldens, and the routing goldens, from the Python `laya/` at that commit
+using [`tools/regen_golden.py`](tools/regen_golden.py), then runs the Cargo tests with
+`LAYA_TEST_CHECKPOINTS` set to its checkpoints and its own `--min-passed` floor.
+Goldens are never cached; the exports are, per checkpoint. A `skip:` diagnostic or ignored test makes the lane red, even when
 Cargo counts a missing-model early return as a pass. Job-level `continue-on-error` keeps Python
 improvements unblocked; Rust drift needs a follow-up port. This workflow never publishes crates.
 The skip guard runs only after successful Cargo tests; regeneration/build failures retain their
@@ -760,6 +807,11 @@ stamp matches the pinned checkpoint, exporters, toolchain and Python model defin
 The fused exporter is shared with `laya-dotnet/tools/export_onnx.py`; split exports use
 `laya-ts/scripts/export_onnx.py`.
 
+`LAYA_TEST_CHECKPOINTS` (space- or comma-separated subdirectory names, e.g. `english` or
+`"english multilingual"`) limits the model-backed and golden-backed tests to those checkpoints; a
+deselected checkpoint is skipped silently, a selected one with missing artifacts or goldens prints a
+`skip:` line, and an unknown name panics. Unset runs every checkpoint.
+
 Model loads are ~1.3–1.7 GB each; run model-backed tests serially (optionally with `--release`):
 
 ```bash
@@ -781,6 +833,7 @@ invocation that has the `download` feature enabled (the default) with no externa
 | `src/answers.rs` | Typed answer results | `Answer`, `ChoiceAnswer`, `ScoreAnswer`, `NoulAnswer`, `ActionInfo`, `LayaResult`, `Usage`, `ScanUsage`, `StateUsage`, `WindowInfo` |
 | `src/calibration.rs` | Temperature scaling and confidence math | `Calibration` |
 | `src/laya_config.rs` | Parsed `rl_agent_config.json` | `LayaConfig` |
+| `src/lang_temperatures.rs` | Per-language temperature table and its parser | `LangTemperature`, `TemperatureValue`, `LangTemperatures`, `resolve_lang_temperatures` |
 | `src/laya_options.rs` | Engine construction options | `LayaOptions`, `LayaCheckpoint`, `LayaExecutionProvider`, `ArtifactDownloadProgress` |
 | `src/model_artifacts.rs` | Locating/downloading model files | `ModelArtifacts`, `ModelLayout`, `ModelPaths` (the fused/split layout enum and its resolved paths — see [Getting the model](#getting-the-model)) |
 | `src/laya_presets.rs` | Built-in question presets | `LayaPresets` |
@@ -854,7 +907,7 @@ Rust port groups the corresponding functions into a unit struct with associated 
   routing probes and a seeded differential corpus regenerated at that version
   (`tools/regen_golden.py --checkpoint routing`). A later Python change needs them regenerated.
 
-- **Opt-in features are not ported yet:** histogram-binning calibration and per-language
-  temperatures (`lang_temperatures`). `predict_long`, `predict_batch` and the `min_confidence`
-  gate are ported, without hooks or per-language temperatures. They are off by default in
+- **Opt-in features are not ported yet:** histogram-binning calibration and per-call hooks.
+  `predict_long`, `predict_batch`, the `min_confidence` gate, `lang_temperatures` and the per-call
+  `lang`, `max_len` and `head_max_len` are ported, without hooks. They are off by default in
   Python, so default predictions are unaffected. They are planned as follow-ups.

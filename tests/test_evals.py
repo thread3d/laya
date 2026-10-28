@@ -3935,3 +3935,36 @@ def test_chunking_folds_criteria_key_order_on_the_request_form():
                              evaluators=[ChoiceAccuracy()], batch_size=2)
     assert listed_report.config["timing"]["rows_grouped"] == 0, \
         "a reordered list criteria stays positional even for the request form"
+
+
+
+def test_assert_regression_names_incomparable_and_nan_deltas():
+    """The gate must name every delta compare() failed, not just the numeric ones.
+
+    An incomparable coverage definition and a NaN tolerance both fail compare() without
+    `abs(diff) > tolerance` holding, so filtering the message on that comparison alone left
+    `evaluation regressed: {}` with neither the metric nor the reason.
+    """
+    report = EvalReport(config={"coverage_metric_definition": 2}, overall={"aurc": 0.2})
+    baseline = {"config": {"coverage_metric_definition": 1}, "overall": {"aurc": 0.1}}
+    with pytest.raises(AssertionError, match="aurc"):
+        assert_regression(report, baseline)
+
+    with pytest.raises(AssertionError, match="choice_accuracy"):
+        assert_regression(EvalReport(overall={"choice_accuracy": 0.8}),
+                          {"overall": {"choice_accuracy": 0.8}},
+                          {"choice_accuracy": float("nan")})
+
+
+def test_a_short_batch_result_is_an_error_not_a_silent_drop():
+    """A runner that returns fewer results than rows must not under-score the report."""
+    class ShortBatch:
+        def predict(self, state, questions, model=None):
+            return {"answers": {"intent": choice_answer("a")}}
+
+        def predict_batch(self, states, questions, model=None, batch_size=None):
+            return [self.predict(state, questions) for state in states][:-1]
+
+    dataset = Dataset([Example("s%d" % i, Q, {"intent": "a"}) for i in range(4)])
+    with pytest.raises(EvalError, match="4 rows"):
+        evaluate(ShortBatch(), dataset, batch_size=4)

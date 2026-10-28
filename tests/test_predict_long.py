@@ -21,6 +21,7 @@ import numpy as np  # noqa: E402
 import laya.agent as agent_mod
 from laya.agent import Agent, _check_scan_budget, _start_evidence
 from laya.hooks import OptionStabilityHook
+from _long_attribution import check_long_attribution
 
 from laya.onnx_agent import ONNXAgent  # noqa: E402
 
@@ -135,6 +136,8 @@ def make_real_agent():
 
 Q = {"dept": {"type": "choice", "instructions": "?", "criteria": {"a": "x", "b": "y"}},
      "flag": {"type": "noul", "instructions": "?"}}
+
+check_long_attribution(make_real_agent, check)
 
 # 1. fits in one window -> delegates to system_one, no windowing
 a = make_agent(lambda s, q: [])

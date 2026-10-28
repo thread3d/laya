@@ -122,12 +122,36 @@ public sealed class MinConfidence
 
 /// <summary>
 /// Per-call knobs for <see cref="LayaEngine.Predict(object?, QuestionSet, LayaPredictOptions?)"/> and
-/// <see cref="LayaRouter"/>'s matching overload. A class with init-only properties so later per-call
-/// options (<c>lang</c>, <c>max_len</c>, <c>head_max_len</c>) can be added without changing a signature.
-/// <c>PredictLong</c> takes none of these, as Python's <c>predict_long</c> takes no <c>min_confidence</c>.
+/// <see cref="LayaRouter"/>'s matching overload. A class with init-only properties so further per-call
+/// options can be added without changing a signature. <c>PredictLong</c> takes none of these (it has
+/// <see cref="LayaLongOptions"/>), as Python's <c>predict_long</c> takes no <c>min_confidence</c>, <c>max_len</c>
+/// or <c>head_max_len</c>.
 /// </summary>
 public sealed class LayaPredictOptions
 {
+    /// <summary>
+    /// Language of this state (Python <c>lang</c>): selects the entry of <see cref="LayaOptions.LangTemperatures"/>
+    /// whose key is this code's part before the first <c>-</c>, lower-cased, in place of the checkpoint's own
+    /// temperatures. <see langword="null"/>, an empty string, or a language the table does not hold changes nothing.
+    /// On a <see cref="LayaRouter"/> use the <c>lang</c> argument instead (it also routes); setting this there is refused.
+    /// </summary>
+    public string? Lang { get; init; }
+
+    /// <summary>
+    /// Total sequence budget for this call, in place of the checkpoint's <c>max_len</c> (Python <c>max_len</c>);
+    /// <see langword="null"/> keeps the checkpoint's. Python checks nothing, so neither does this: <c>0</c> or a small
+    /// value leaves no room for the options' markers and the call is refused with the "option markers fit" error, and so
+    /// is any negative value (Python's slice then counts from the end and no marker survives).
+    /// </summary>
+    public int? MaxLen { get; init; }
+
+    /// <summary>
+    /// Token budget for the question head (instructions plus options) for this call, in place of the checkpoint's
+    /// <c>head_max_len</c> (Python <c>head_max_len</c>); <see langword="null"/> keeps the checkpoint's. Unchecked, as
+    /// <see cref="MaxLen"/>: <c>0</c> and negative values squeeze each option to 4 tokens and the instruction to 8.
+    /// </summary>
+    public int? HeadMaxLen { get; init; }
+
     /// <summary>
     /// Opt-in abstention threshold (Python <c>min_confidence</c>). <see langword="null"/> writes nothing onto
     /// the answers; otherwise every answer reports <see cref="Answer.Abstention"/> and

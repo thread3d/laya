@@ -13,7 +13,7 @@
 
 mod common;
 
-use common::engines::{self, CHECKPOINTS};
+use common::engines;
 use common::golden_data::{self, CheckpointGoldenData};
 use laya::answers::{Answer, ChoiceAnswer, NoulAnswer, ScoreAnswer};
 use laya::error::LayaError;
@@ -51,7 +51,7 @@ fn assert_close(expected: f64, actual: f64, tolerance: f64, what: &str) {
 fn reproduces_the_recorded_answers() {
     let mut checked_any = false;
 
-    for checkpoint in CHECKPOINTS {
+    for checkpoint in engines::checkpoints() {
         let Some(engine) = engines::load(checkpoint) else {
             continue;
         };
@@ -165,7 +165,7 @@ fn reproduces_the_recorded_answers_for_the_split_layout() {
     // machines will not have one, and that is expected, not a failure.
     let mut checked_any = false;
 
-    for checkpoint in CHECKPOINTS {
+    for checkpoint in engines::checkpoints() {
         let Some(engine) = engines::load_split(checkpoint) else {
             continue;
         };
@@ -248,7 +248,7 @@ fn reproduces_the_recorded_answers_for_the_split_layout() {
 fn rejects_the_same_questions_python_rejects() {
     let mut checked_any = false;
 
-    for checkpoint in CHECKPOINTS {
+    for checkpoint in engines::checkpoints() {
         let Some(engine) = engines::load(checkpoint) else {
             continue;
         };
@@ -277,7 +277,10 @@ fn rejects_the_same_questions_python_rejects() {
             let expected_message = root["error_message"].as_str().unwrap();
             let actual_message = error.to_string();
             // A rejected threshold is Python's ValueError text, whole.
-            if root.get("options").is_some() {
+            if root
+                .get("options")
+                .is_some_and(|options| options.get("min_confidence").is_some())
+            {
                 assert!(
                     matches!(error, LayaError::InvalidMinConfidence(_)),
                     "{}/{case}: expected LayaError::InvalidMinConfidence, got {error:?}",
@@ -315,7 +318,7 @@ fn rejects_the_same_questions_python_rejects() {
 fn answers_the_same_way_when_questions_are_asked_one_at_a_time() {
     // Every question rides in one batch, so a padding or masking mistake could let a question be
     // influenced by its neighbours. Asking them singly has to give the same answers.
-    let Some(engine) = engines::load(LayaCheckpoint::Multilingual) else {
+    let Some(engine) = engines::load_selected(LayaCheckpoint::Multilingual) else {
         return;
     };
     let golden = CheckpointGoldenData::for_checkpoint(LayaCheckpoint::Multilingual.subdir());
@@ -351,7 +354,7 @@ fn answers_the_same_way_when_questions_are_asked_one_at_a_time() {
 fn is_safe_to_call_from_several_threads_at_once() {
     // The engine is documented as shareable and a caller will hold it as a singleton, so the ONNX
     // session mutex and the tokenizer both have to tolerate concurrent use.
-    let Some(engine) = engines::load(LayaCheckpoint::Multilingual) else {
+    let Some(engine) = engines::load_selected(LayaCheckpoint::Multilingual) else {
         return;
     };
     let golden = CheckpointGoldenData::for_checkpoint(LayaCheckpoint::Multilingual.subdir());
@@ -404,7 +407,7 @@ fn warm_predict_latency_is_reported() {
     // Not a parity check: reports the warm (post-warm-up) predict latency for the final report,
     // the way samples/Laya.Sample's Program.cs does with a Stopwatch. Run with `--nocapture` to
     // see the printed line.
-    let Some(engine) = engines::load(LayaCheckpoint::Multilingual) else {
+    let Some(engine) = engines::load_selected(LayaCheckpoint::Multilingual) else {
         return;
     };
     let golden = CheckpointGoldenData::for_checkpoint(LayaCheckpoint::Multilingual.subdir());

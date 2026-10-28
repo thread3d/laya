@@ -162,7 +162,10 @@ class VerifyDigestsTests(unittest.TestCase):
             verify_digests(self.dir, {"absent.bin": self.digest})
 
     def test_escaping_paths_rejected(self):
-        for rel in ("../evil", "..", "a/../../evil", "\\..\\evil", "/absolute/evil", "C:\\absolute\\evil"):
+        for rel in ("../evil", "..", "a/../../evil", "\\..\\evil", "/absolute/evil", "C:\\absolute\\evil",
+                    # drive-anchored but not ntpath-absolute: ntpath.join("C:\\dir", "a", "b:c") == "b:c",
+                    # so on Windows these escape model_dir the same way the absolute ones do
+                    "C:evil", "c:evil", "a/b:c", "C:..\\evil"):
             with self.assertRaises(ValueError, msg=rel):
                 verify_digests(self.dir, {rel: self.digest})
 

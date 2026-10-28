@@ -2476,6 +2476,14 @@ for _name, _answer in (
     ("all-negative-probabilities", _choice(-0.9, -0.1)),
     ("negative-total-near-zero", _choice(-0.61, 0.6)),
     ("negative-score-level", _score(1.5, -0.5, 0.0)),
+    # `float()` and `int()` do not only refuse a value that is not a number, they also refuse one
+    # that is too wide to become one: JSON's grammar has no double limit, so a 400-digit integer
+    # probability arrives as a Python `int` and `float()` raises `OverflowError` out of a function
+    # whose docstring promises no number rather than a made-up one.
+    ("overflowing-integer-probability", _choice(10 ** 400, 1)),
+    ("json-integer-too-wide-for-a-double",
+     _json.loads('{"type":"choice","probabilities":{"a":' + "9" * 400 + ',"b":0.1}}')),
+    ("overflowing-score-level", {"type": "score", "probabilities": {float("inf"): 0.5, 2: 0.5}}),
 ):
     check("jev_confidence/none-for-%s" % _name, jev_confidence(_answer), None)
 

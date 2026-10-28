@@ -1301,6 +1301,15 @@ def evaluate(runner: Any, dataset: Dataset, evaluators: Optional[Sequence[Evalua
                           for offset in range(len(chunk)))
             index += len(chunk)
             continue
+        # One result per row is the batch contract; `zip` below would silently pair the rest of
+        # the chunk with nothing, so a runner that drops a row would score a subset while
+        # `rows_grouped` still counted every row -- a report that under-scores itself, and a
+        # baseline gate that can pass on the subset.
+        results = list(results)
+        if len(results) != len(chunk):
+            raise EvalError(
+                "runner.predict_batch returned %d results for a chunk of %d rows; every row "
+                "needs its own result" % (len(results), len(chunk)))
         elapsed = (time.perf_counter() - started) * 1000.0
         # A chunk is one call, so each of its rows waited all of `elapsed`; the split figure is a
         # throughput share, not a latency, and putting the two in one list made a batched run
@@ -1389,7 +1398,14 @@ def assert_regression(report: EvalReport, baseline: Dict[str, Any],
     """Raise AssertionError when `report` drifts from `baseline` beyond `tolerances`."""
     ok, deltas = report.compare(baseline, tolerances)
     if not ok:
+        # `compare()` fails three shapes, and only the numeric one makes `abs(diff) > tolerance`
+        # true: a missing metric and an incomparable coverage definition both store a NaN diff
+        # (laya/evals.py:928-936), and every comparison with NaN is False, which is exactly why
+        # compare() tests `not abs(diff) <= allowed` (comment at laya/evals.py:946-949). Filtering
+        # on `>` alone dropped both, so the gate raised "evaluation regressed: {}" and lost the
+        # metric and the reason compare() had already computed.
         failed = {m: d for m, d in deltas.items()
-                  if d.get("missing") or abs(d["diff"]) > d["tolerance"]}
+                  if d.get("missing") or d.get("incomparable")
+                  or not abs(d["diff"]) <= d["tolerance"]}
         raise AssertionError("evaluation regressed: %s" % json.dumps(failed, sort_keys=True))
     return deltas

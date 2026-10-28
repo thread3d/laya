@@ -21,6 +21,7 @@ use crate::calibration::Calibration;
 use crate::collator::{CollatedBatch, Collator, SequenceItem};
 use crate::confidence::apply_confidence_gate;
 use crate::error::{LayaError, Result};
+use crate::lang_temperatures::LangTemperatures;
 use crate::laya_config::{Deferred, LayaConfig};
 use crate::laya_options::{LayaCheckpoint, LayaExecutionProvider, LayaOptions};
 use crate::long_prediction::{self, LongOptions};
@@ -108,6 +109,17 @@ pub struct LayaEngine {
     artifacts: ModelArtifacts,
     /// What Python only discovers at prediction time (a `temperature` list shorter than three).
     deferred: Deferred,
+    /// Python's `self.lang_temperatures`: the resolved per-language overrides.
+    lang_temperatures: LangTemperatures,
+}
+
+/// What one call may change about how its states are scored: Python's `lang`, `max_len` and
+/// `head_max_len` arguments, the budgets already resolved against the checkpoint's own.
+#[derive(Clone, Copy)]
+struct CallParams<'a> {
+    lang: Option<&'a str>,
+    max_len: i64,
+    head_max_len: i64,
 }
 
 impl LayaEngine {
@@ -122,7 +134,9 @@ impl LayaEngine {
     #[track_caller]
     pub fn create(options: LayaOptions) -> Result<Self> {
         let artifacts = ModelArtifacts::resolve(&options)?;
-        let (config, deferred) = LayaConfig::load_deferred(&artifacts.config_path)?;
+        let (config, mut deferred) =
+            LayaConfig::load_deferred(&artifacts.config_path, &options.lang_temperatures)?;
+        let lang_temperatures = std::mem::take(&mut deferred.lang_temperatures);
 
         if let Some(expected_checkpoint) = artifacts.checkpoint {
             validate_encoder(
@@ -155,6 +169,7 @@ impl LayaEngine {
             config,
             artifacts,
             deferred,
+            lang_temperatures,
         })
     }
 
@@ -171,6 +186,12 @@ impl LayaEngine {
     /// The loaded checkpoint's configuration.
     pub fn config(&self) -> &LayaConfig {
         &self.config
+    }
+
+    /// The resolved per-language temperatures ([`LayaOptions::lang_temperatures`]); empty when
+    /// none were given.
+    pub fn lang_temperatures(&self) -> &LangTemperatures {
+        &self.lang_temperatures
     }
 
     /// Where the loaded artifacts came from.
@@ -238,7 +259,12 @@ impl LayaEngine {
         }
         let states = [state];
         refuse_null_states(&states)?;
-        let mut results = self.predict_states(&states, questions)?;
+        let params = self.call_params(
+            options.lang.as_deref(),
+            options.max_len,
+            options.head_max_len,
+        );
+        let mut results = self.predict_states(&states, questions, params)?;
         apply_confidence_gate(&mut results, min_confidence);
         results
             .pop()
@@ -263,8 +289,9 @@ impl LayaEngine {
     /// slightly from the original after re-encoding, exactly as in Python. Windows go through the
     /// model together unless [`LongOptions::batch_size`] or the automatic cap chunks them.
     ///
-    /// Per-call hooks and per-language temperatures are not part of this port, and, as in Python,
-    /// `predict_long` takes no `min_confidence`. Errors: [`LayaError::UnsupportedAggregate`],
+    /// Per-call hooks are not part of this port, and, as in Python, `predict_long` takes no
+    /// `min_confidence`, `max_len` or `head_max_len`; [`LongOptions::lang`] selects the
+    /// per-language temperatures for every window. Errors: [`LayaError::UnsupportedAggregate`],
     /// [`LayaError::InvalidWindow`] (no room for the state, or a stride that leaves gaps), plus
     /// everything [`Self::predict`] returns.
     #[track_caller]
@@ -312,6 +339,7 @@ impl LayaEngine {
         )?;
         long_prediction::emit_warnings(&warnings, std::panic::Location::caller());
         let state_ids = SequenceBuilder::encode_state(tokenizer, &state)?;
+        let params = self.call_params(options.lang.as_deref(), None, None);
 
         // `predict` reads the whole room the questions leave, so the default window must not force
         // a scan there; an explicit window still bounds the single pass (Python 3e9bda30).
@@ -321,7 +349,7 @@ impl LayaEngine {
             budget.room
         };
         if state_ids.len() <= one_pass {
-            let single = self.predict_states(&[state], questions)?.remove(0);
+            let single = self.predict_states(&[state], questions, params)?.remove(0);
             let truncated_windows = single.state_usage().is_some_and(|u| u.truncated) as usize;
             return Ok(single.with_scan_usage(ScanUsage {
                 windows: 1,
@@ -347,7 +375,7 @@ impl LayaEngine {
         .unwrap_or(spans.len());
         let mut results = Vec::with_capacity(spans.len());
         for chunk in windows.chunks(cap) {
-            results.extend(self.predict_states(chunk, questions)?);
+            results.extend(self.predict_states(chunk, questions, params)?);
         }
         Ok(long_prediction::aggregate(
             MODEL_NAME, questions, &results, &spans,
@@ -399,17 +427,22 @@ impl LayaEngine {
         if ids.is_empty() {
             return Ok(self.empty_results(states.len()));
         }
+        let params = self.call_params(
+            options.lang.as_deref(),
+            options.max_len,
+            options.head_max_len,
+        );
         batch_prediction::run(
             states.len(),
             options,
             |range| {
                 states[range]
                     .iter()
-                    .map(|state| self.encode_state(state, &ids, questions))
+                    .map(|state| self.encode_state(state, &ids, questions, params))
                     .collect()
             },
             EncodedState::longest_row,
-            |batch| self.infer_encoded(batch, &ids, questions),
+            |batch| self.infer_encoded(batch, &ids, questions, params),
         )
     }
 
@@ -431,10 +464,11 @@ impl LayaEngine {
     /// Scores every question against every state in one collate and one forward pass, returning
     /// one result (with its own state usage) per state, in order. With no questions each result is
     /// empty and carries no state usage. `predict` is this with one state.
-    pub(crate) fn predict_states(
+    fn predict_states(
         &self,
         states: &[Value],
         questions: &QuestionSet,
+        params: CallParams<'_>,
     ) -> Result<Vec<LayaResult>> {
         let ids = question_ids(questions);
         if ids.is_empty() {
@@ -442,9 +476,25 @@ impl LayaEngine {
         }
         let encoded = states
             .iter()
-            .map(|state| self.encode_state(state, &ids, questions))
+            .map(|state| self.encode_state(state, &ids, questions, params))
             .collect::<Result<Vec<_>>>()?;
-        self.infer_encoded(encoded, &ids, questions)
+        self.infer_encoded(encoded, &ids, questions, params)
+    }
+
+    /// `max_len = self.cfg.get("max_len", 512) if max_len is None else max_len`, and the same for
+    /// `head_max_len`: a per-call value is used as given, whatever it is.
+    fn call_params<'a>(
+        &self,
+        lang: Option<&'a str>,
+        max_len: Option<i64>,
+        head_max_len: Option<i64>,
+    ) -> CallParams<'a> {
+        CallParams {
+            lang,
+            max_len: max_len.unwrap_or_else(|| SequenceBuilder::signed(self.config.max_len)),
+            head_max_len: head_max_len
+                .unwrap_or_else(|| SequenceBuilder::signed(self.config.head_max_len)),
+        }
     }
 
     /// The result for a state when there are no questions to answer.
@@ -461,6 +511,7 @@ impl LayaEngine {
         state: &Value,
         ids: &[String],
         questions: &QuestionSet,
+        params: CallParams<'_>,
     ) -> Result<EncodedState> {
         let mut state_usage = StateUsage {
             state_tokens: 0,
@@ -482,12 +533,12 @@ impl LayaEngine {
         // The tokenizer here needs no lock: tokenizers::Tokenizer::encode takes &self.
         for id in ids {
             let question = &questions[id.as_str()];
-            let (seq, markers, stats) = SequenceBuilder::build_with_stats(
+            let (seq, markers, stats) = SequenceBuilder::build_with_overrides(
                 self.tokenizer.as_ref(),
                 state,
                 question,
-                self.config.max_len,
-                self.config.head_max_len,
+                params.max_len,
+                params.head_max_len,
                 truncate_left,
             )?;
             state_usage.state_tokens = stats.tokens;
@@ -507,10 +558,10 @@ impl LayaEngine {
             if markers.len() != expected_markers {
                 return Err(LayaError::NoMarkers {
                     id: id.clone(),
-                    head_max_len: self.config.head_max_len,
+                    head_max_len: params.head_max_len,
                     actual_markers: markers.len(),
                     expected_markers,
-                    max_len: self.config.max_len,
+                    max_len: params.max_len,
                 });
             }
 
@@ -529,6 +580,7 @@ impl LayaEngine {
         encoded: Vec<EncodedState>,
         ids: &[String],
         questions: &QuestionSet,
+        params: CallParams<'_>,
     ) -> Result<Vec<LayaResult>> {
         let state_count = encoded.len();
         let mut items = Vec::with_capacity(ids.len() * state_count);
@@ -564,8 +616,15 @@ impl LayaEngine {
                         "IndexError: list index out of range".to_string(),
                     ));
                 }
-                let temperature =
-                    Calibration::resolve_temperature(&self.config, question.question_type(), k);
+                // A language in the table replaces both the bucket map and the per-type
+                // temperature, with no fallback to the checkpoint's bucket map; there is no
+                // histogram binning in this port to skip for it.
+                let temperature = self
+                    .lang_temperatures
+                    .temperature_for(params.lang, question.question_type(), k)
+                    .unwrap_or_else(|| {
+                        Calibration::resolve_temperature(&self.config, question.question_type(), k)
+                    });
                 let row_start = row * batch.marker_count;
                 let row_logits = &output.logits[row_start..row_start + batch.marker_count];
                 let p = Calibration::probabilities(row_logits, k, temperature);

@@ -554,3 +554,166 @@ MIN_CONFIDENCE_ERROR_CASES = [
     {"name": "min_confidence_bad_key", "state": QUICKSTART_STATE, "questions": CASES[0]["questions"],
      "options": {"min_confidence": {"default": 0.5, "choice:3": 0.5}}},
 ]
+
+
+# ---------------------------------------------------------------------------------------------
+# Per-language temperatures (`lang_temperatures`) and per-call `lang` / `max_len` / `head_max_len`.
+#
+# The cases below are SDK-neutral: the Rust SDK keeps a verbatim copy. A case that carries a
+# `lang_temperatures` table has `resolve_lang_temperatures(table, checkpoint temperature)` set on the
+# torch Agent and on the ONNX shim that records it (dump_golden.py), and the table is recorded in the case
+# JSON, so a port loads its engine with it. One table serves every case, so a port builds one engine per
+# checkpoint. `options` go to `system_one` / `predict_batch` / `predict_long` verbatim.
+# Token budgets are Python's unchecked per-call overrides: `0` and negatives flow into `build_sequence`
+# (a negative `max_len` slices from the end, so no marker survives and the question is refused), and a
+# bool is the int 0 or 1.
+# ---------------------------------------------------------------------------------------------
+
+# Keys are matched on `lang.split("-")[0].lower()` and the last of two keys for one language wins
+# ("sv-SE" is replaced by "SV"). An entry that is null, or has a null `temperature`, inherits the
+# checkpoint's own temperature; either way a hit replaces the checkpoint's per-bucket map as well.
+LANG_TEMPERATURES = {
+    # Own temperature per question type; no buckets, so the checkpoint's bucket map is dropped too.
+    "de": {"temperature": [2.0, 3.0, 1.5]},
+    # A null entry: the checkpoint's temperature, but none of its per-bucket map.
+    "fr": None,
+    # Own buckets, inherited temperature.
+    "es": {"temperature_by_options": {"choice:3-5": 2.5, "noul:2": 0.7}},
+    # Own temperature and a bucket for another question type and size.
+    "pt": {"temperature": [1.2, 4.0, 0.8], "temperature_by_options": {"score:3-5": 2.0, "choice:6-10": 3.0}},
+    # An explicitly null temperature inherits as well; buckets for the sizes LANG_BUCKET_QUESTIONS asks.
+    "it": {"temperature": None, "temperature_by_options": {"choice:2": 3.0, "choice:6-10": 0.6, "score:6-10": 2.0}},
+    # Values the clamp has to move (warned about, then applied as 5.0, 0.5 and 1.0).
+    "nl": {"temperature": [9.0, 0.1, 1.0]},
+    # Two keys for "sv": the later one wins.
+    "sv-SE": {"temperature": [1.5, 1.5, 1.5]},
+    "SV": {"temperature": [3.5, 3.5, 3.5]},
+}
+
+LANG_QUESTIONS = CASES[0]["questions"]
+
+# One question in each size bucket LANG_TEMPERATURES names for "it": choice:2, choice:6-10, score:6-10.
+LANG_BUCKET_QUESTIONS = {
+    "pair": {"type": "choice", "instructions": "Which of the two?",
+             "criteria": {"first": "the first option", "second": "the second option"}},
+    "wide": {"type": "choice", "instructions": "Which department should handle this?",
+             "criteria": {"billing": "invoices and payments", "technical": "bugs and outages",
+                          "account": "logins and seats", "sales": "quotes and upgrades",
+                          "legal": "contracts and privacy", "shipping": "delivery and returns",
+                          "other": "anything else"}},
+    "scale": {"type": "score", "instructions": "How urgent is this request?",
+              "criteria": ["none", "low", "mild", "high", "severe", "critical"]},
+    "flag": {"type": "noul", "instructions": "The customer threatens to cancel the account."},
+}
+
+# `system_one` with a language. Miss, empty and a code that only differs by "_" fall back to the checkpoint.
+LANG_CASES = [
+    {"name": "lang_replace_de", "state": QUICKSTART_STATE, "questions": LANG_QUESTIONS,
+     "lang_temperatures": LANG_TEMPERATURES, "options": {"lang": "de"}},
+    {"name": "lang_region_tag", "state": QUICKSTART_STATE, "questions": LANG_QUESTIONS,
+     "lang_temperatures": LANG_TEMPERATURES, "options": {"lang": "de-AT"}},
+    {"name": "lang_uppercase", "state": QUICKSTART_STATE, "questions": LANG_QUESTIONS,
+     "lang_temperatures": LANG_TEMPERATURES, "options": {"lang": "DE"}},
+    {"name": "lang_miss", "state": QUICKSTART_STATE, "questions": LANG_QUESTIONS,
+     "lang_temperatures": LANG_TEMPERATURES, "options": {"lang": "ja"}},
+    {"name": "lang_empty", "state": QUICKSTART_STATE, "questions": LANG_QUESTIONS,
+     "lang_temperatures": LANG_TEMPERATURES, "options": {"lang": ""}},
+    {"name": "lang_underscore_miss", "state": QUICKSTART_STATE, "questions": LANG_QUESTIONS,
+     "lang_temperatures": LANG_TEMPERATURES, "options": {"lang": "de_DE"}},
+    {"name": "lang_table_without_lang", "state": QUICKSTART_STATE, "questions": LANG_QUESTIONS,
+     "lang_temperatures": LANG_TEMPERATURES},
+    {"name": "lang_inherit_null_entry", "state": QUICKSTART_STATE, "questions": LANG_QUESTIONS,
+     "lang_temperatures": LANG_TEMPERATURES, "options": {"lang": "fr"}},
+    {"name": "lang_own_buckets_inherited_temperature", "state": QUICKSTART_STATE, "questions": LANG_QUESTIONS,
+     "lang_temperatures": LANG_TEMPERATURES, "options": {"lang": "es-MX"}},
+    {"name": "lang_temperature_and_buckets", "state": QUICKSTART_STATE, "questions": LANG_QUESTIONS,
+     "lang_temperatures": LANG_TEMPERATURES, "options": {"lang": "pt"}},
+    {"name": "lang_clamped", "state": QUICKSTART_STATE, "questions": LANG_QUESTIONS,
+     "lang_temperatures": LANG_TEMPERATURES, "options": {"lang": "nl"}},
+    {"name": "lang_last_duplicate_wins", "state": QUICKSTART_STATE, "questions": LANG_QUESTIONS,
+     "lang_temperatures": LANG_TEMPERATURES, "options": {"lang": "sv"}},
+    {"name": "lang_size_buckets", "state": QUICKSTART_STATE, "questions": LANG_BUCKET_QUESTIONS,
+     "lang_temperatures": LANG_TEMPERATURES, "options": {"lang": "it"}},
+    {"name": "lang_size_buckets_checkpoint", "state": QUICKSTART_STATE, "questions": LANG_BUCKET_QUESTIONS,
+     "lang_temperatures": LANG_TEMPERATURES},
+    {"name": "lang_with_min_confidence", "state": QUICKSTART_STATE, "questions": LANG_QUESTIONS,
+     "lang_temperatures": LANG_TEMPERATURES, "options": {"lang": "de", "min_confidence": 0.6}},
+]
+
+# `system_one` with a per-call token budget. LONG_STATE overflows every checkpoint's window at these sizes.
+BUDGET_CASES = [
+    {"name": "budget_max_len", "state": LONG_STATE, "questions": LANG_QUESTIONS, "options": {"max_len": 200}},
+    {"name": "budget_head_max_len", "state": QUICKSTART_STATE, "questions": LANG_QUESTIONS,
+     "options": {"head_max_len": 40}},
+    {"name": "budget_head_squeezed", "state": QUICKSTART_STATE, "questions": LANG_QUESTIONS,
+     "options": {"head_max_len": 30}},
+    {"name": "budget_both", "state": LONG_STATE, "questions": LANG_QUESTIONS,
+     "options": {"max_len": 256, "head_max_len": 96}},
+    {"name": "budget_head_zero", "state": QUICKSTART_STATE, "questions": LANG_QUESTIONS,
+     "options": {"head_max_len": 0}},
+    {"name": "budget_head_negative", "state": QUICKSTART_STATE, "questions": LANG_QUESTIONS,
+     "options": {"head_max_len": -5}},
+    {"name": "budget_head_true", "state": QUICKSTART_STATE, "questions": LANG_QUESTIONS,
+     "options": {"head_max_len": True}},
+    {"name": "budget_head_false", "state": QUICKSTART_STATE, "questions": LANG_QUESTIONS,
+     "options": {"head_max_len": False}},
+    {"name": "budget_with_lang", "state": LONG_STATE, "questions": LANG_QUESTIONS,
+     "lang_temperatures": LANG_TEMPERATURES, "options": {"lang": "pt", "max_len": 200, "head_max_len": 96}},
+]
+
+# A budget that leaves a question's options no room is refused (ValueError), whatever the value is:
+# 0, a negative one, one under the head, and a bool (the int 0 or 1).
+BUDGET_ERROR_CASES = [
+    {"name": "budget_max_len_zero", "state": QUICKSTART_STATE, "questions": LANG_QUESTIONS,
+     "options": {"max_len": 0}},
+    {"name": "budget_max_len_negative", "state": QUICKSTART_STATE, "questions": LANG_QUESTIONS,
+     "options": {"max_len": -1}},
+    {"name": "budget_max_len_tiny", "state": QUICKSTART_STATE, "questions": LANG_QUESTIONS,
+     "options": {"max_len": 12}},
+    {"name": "budget_max_len_true", "state": QUICKSTART_STATE, "questions": LANG_QUESTIONS,
+     "options": {"max_len": True}},
+    {"name": "budget_max_len_false", "state": QUICKSTART_STATE, "questions": LANG_QUESTIONS,
+     "options": {"max_len": False}},
+    {"name": "budget_both_zero", "state": QUICKSTART_STATE, "questions": LANG_QUESTIONS,
+     "options": {"max_len": 0, "head_max_len": 0}},
+]
+
+# `predict_batch` with a language and budgets, applied to every state.
+LANG_BATCH_CASES = [
+    {"name": "batch_lang_region_tag", "states": BATCH_MIXED_STATES, "questions": BATCH_QUESTIONS,
+     "lang_temperatures": LANG_TEMPERATURES, "options": {"lang": "de-AT"}},
+    {"name": "batch_lang_miss", "states": BATCH_MIXED_STATES, "questions": BATCH_QUESTIONS,
+     "lang_temperatures": LANG_TEMPERATURES, "options": {"lang": "ja"}},
+    {"name": "batch_lang_sorted", "states": BATCH_SORT_STATES[:7], "questions": BATCH_QUESTIONS,
+     "lang_temperatures": LANG_TEMPERATURES,
+     "options": {"lang": "pt", "batch_size": 3, "sort_by_length": True}},
+    {"name": "batch_lang_budgets", "states": BATCH_STATES[:5], "questions": BATCH_QUESTIONS,
+     "lang_temperatures": LANG_TEMPERATURES,
+     "options": {"lang": "es", "max_len": 200, "head_max_len": 96, "batch_size": 2}},
+    {"name": "batch_budget_max_len", "states": BATCH_TRUNCATED_STATES, "questions": BATCH_QUESTIONS,
+     "options": {"max_len": 200}},
+    {"name": "batch_budget_head_max_len", "states": BATCH_MIXED_STATES, "questions": BATCH_QUESTIONS,
+     "options": {"head_max_len": 40, "batch_size": 3, "sort_by_length": True}},
+]
+
+LANG_BATCH_ERROR_CASES = [
+    {"name": "batch_budget_max_len_zero", "states": [QUICKSTART_STATE, "ok"], "questions": BATCH_QUESTIONS,
+     "options": {"max_len": 0}, "error_type": "ValueError"},
+    {"name": "batch_budget_max_len_negative", "states": [QUICKSTART_STATE, "ok"], "questions": BATCH_QUESTIONS,
+     "options": {"max_len": -3}, "error_type": "ValueError"},
+]
+
+# `predict_long` with a language (it takes no token budget): a multi-window scan, a state that fits one
+# window, and a miss.
+LANG_LONG_CASES = [
+    {"name": "long_lang_scan", "lang_temperatures": LANG_TEMPERATURES, "questions": LONG_QUESTIONS,
+     "state": ("The agent checked the account and recorded routine status updates. " * 180
+               + QUICKSTART_STATE),
+     "options": {"window": 96, "batch_size": 3, "lang": "de"}},
+    {"name": "long_lang_single_window", "lang_temperatures": LANG_TEMPERATURES, "questions": LONG_QUESTIONS,
+     "state": QUICKSTART_STATE, "options": {"lang": "pt"}},
+    {"name": "long_lang_miss", "lang_temperatures": LANG_TEMPERATURES, "questions": LONG_QUESTIONS,
+     "state": ("The agent checked the account and recorded routine status updates. " * 180
+               + QUICKSTART_STATE),
+     "options": {"window": 96, "batch_size": 3, "lang": "ja"}},
+]

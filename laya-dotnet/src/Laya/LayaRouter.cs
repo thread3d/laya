@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace Laya;
 
 /// <summary>
@@ -25,8 +27,8 @@ public sealed class LayaRouterOptions
 {
     /// <summary>
     /// Template used to build each checkpoint's <see cref="LayaEngine"/>: execution provider,
-    /// thread counts, <see cref="LayaOptions.AllowDownload"/>, cache directory and HuggingFace
-    /// token/repo are all taken from this template. <see cref="LayaOptions.Checkpoint"/> and
+    /// thread counts, <see cref="LayaOptions.AllowDownload"/>, cache directory, HuggingFace
+    /// token/repo, <see cref="LayaOptions.LangTemperatures"/> and <see cref="LayaOptions.Calibration"/> are all taken from this template. <see cref="LayaOptions.Checkpoint"/> and
     /// <see cref="LayaOptions.ModelDirectory"/> on the template are ignored — the router always
     /// resolves each checkpoint through its own <see cref="LayaOptions.Checkpoint"/>-aware path
     /// (<c>LAYA_ONNX_ROOT</c>, cache, or download), the same way <see cref="LayaEngine.Create"/> does.
@@ -183,7 +185,11 @@ public sealed class LayaRouter : ILayaLongPredictor, IDisposable
     }
 
     private static Func<LayaCheckpoint, ILayaPredictor> BuildDefaultFactory(LayaOptions template) => checkpoint =>
-        LayaEngine.Create(new LayaOptions
+        LayaEngine.Create(EngineOptions(template, checkpoint));
+
+    /// <summary>The options of the engine the router builds for <paramref name="checkpoint"/> from its <paramref name="template"/>.</summary>
+    internal static LayaOptions EngineOptions(LayaOptions template, LayaCheckpoint checkpoint) =>
+        new()
         {
             Checkpoint = checkpoint,
             ExecutionProvider = template.ExecutionProvider,
@@ -194,7 +200,10 @@ public sealed class LayaRouter : ILayaLongPredictor, IDisposable
             HuggingFaceToken = template.HuggingFaceToken,
             CacheDirectory = template.CacheDirectory,
             DownloadProgress = template.DownloadProgress,
-        });
+            // agent_kwargs reaches every checkpoint the router builds (router.py:994); each engine resolves it itself.
+            LangTemperatures = template.LangTemperatures,
+            Calibration = template.Calibration,
+        };
 
     // ── name resolution ──────────────────────────────────────────────────────
 
@@ -499,7 +508,25 @@ public sealed class LayaRouter : ILayaLongPredictor, IDisposable
         object? state, QuestionSet questions,
         string? model, string? task, string? lang, LangGuess? langGuess)
         => PredictRouted(state, questions, model, task, lang, langGuess,
-            predictor => predictor.Predict(state, questions));
+            (predictor, decision) => CallPredict(predictor, state, questions, EffectiveLang(lang, decision), null, null));
+
+    // router.py:1367-1369: the language the caller gave, else the one routing detected. A hint (lang_guess) or an explicit
+    // code leaves the detection empty, so only a state that was actually analysed offers one.
+    private static string? EffectiveLang(string? lang, RouteDecision decision) =>
+        lang is null && decision.Detection?.Language is { Length: > 0 } detected ? detected : lang;
+
+    // router.py:1383-1396: the language and any token budget go to the agent; an agent that takes none of them is called
+    // plainly, and one that cannot take a budget is refused (Python's TypeError for the keyword).
+    private static LayaResult CallPredict(
+        ILayaPredictor predictor, object? state, QuestionSet questions, string? lang, int? maxLen, int? headMaxLen)
+    {
+        if (predictor is ILayaCallPredictor engine)
+            return engine.Predict(state, questions, new LayaPredictOptions { Lang = lang, MaxLen = maxLen, HeadMaxLen = headMaxLen });
+        if (maxLen is not null || headMaxLen is not null)
+            throw new NotSupportedException(
+                $"{predictor.GetType().Name}.Predict() got an unexpected keyword argument '{(maxLen is not null ? "max_len" : "head_max_len")}'");
+        return predictor.Predict(state, questions);
+    }
 
     /// <summary>
     /// Routes as <see cref="Predict(object?, QuestionSet)"/> does (no model, task, language or hint overrides), with
@@ -510,17 +537,31 @@ public sealed class LayaRouter : ILayaLongPredictor, IDisposable
 
     /// <summary>
     /// <see cref="Predict(object?, QuestionSet, string?, string?, string?, LangGuess?)"/> with per-call options.
-    /// Ports the <c>min_confidence</c> argument of Python's <c>Router.predict</c>: the threshold is validated after the
-    /// state and questions are checked and before anything is routed or loaded, and the gate is applied to the
-    /// answers whichever checkpoint produced them. <c>PredictLong</c> takes none, as in Python.
+    /// Ports the <c>min_confidence</c>, <c>max_len</c> and <c>head_max_len</c> arguments of Python's <c>Router.predict</c>:
+    /// the threshold is validated after the state and questions are checked and before anything is routed or loaded, the
+    /// gate is applied to the answers whichever checkpoint produced them, and the token budgets reach the checkpoint. The
+    /// language is the <paramref name="lang"/> argument, else the one routing detected, and reaches the checkpoint too.
+    /// <c>PredictLong</c> takes none of these, as in Python.
     /// </summary>
-    /// <exception cref="ArgumentException">The threshold is invalid, with Python's <c>ValueError</c> text.</exception>
+    /// <exception cref="ArgumentException">The threshold is invalid, with Python's <c>ValueError</c> text; or
+    /// <see cref="LayaPredictOptions.Lang"/> is set (use <paramref name="lang"/>).</exception>
     public LayaResult Predict(
         object? state, QuestionSet questions, string? model, string? task, string? lang, LangGuess? langGuess,
         LayaPredictOptions? options)
-        => PredictRouted(state, questions, model, task, lang, langGuess,
-            predictor => predictor.Predict(state, questions), options?.MinConfidence);
+    {
+        // Python's `predict` takes `lang` once, as the routing hint that is also the agent's language; a second spelling
+        // would be an ambiguous one.
+        if (options?.Lang is not null)
+            throw new ArgumentException(
+                "LayaPredictOptions.Lang is not accepted by a router; pass the lang argument of Predict, which routes and "
+                + "selects the language's temperatures");
+        return PredictRouted(state, questions, model, task, lang, langGuess,
+            (predictor, decision) => CallPredict(
+                predictor, state, questions, EffectiveLang(lang, decision), options?.MaxLen, options?.HeadMaxLen),
+            options?.MinConfidence);
+    }
 
+    [WarnSite, MethodImpl(MethodImplOptions.NoInlining)]
     LayaResult ILayaLongPredictor.PredictLong(
         object state, QuestionSet questions, int? window, int? stride, string aggregate, int? batchSize) =>
         PredictLong(state, questions, window, stride, aggregate, batchSize);
@@ -529,6 +570,7 @@ public sealed class LayaRouter : ILayaLongPredictor, IDisposable
     /// Route using the usual model/task/lang hints, then scan the entire state. An attached predictor
     /// must implement ILayaLongPredictor; unsupported predictors are never silently truncated.
     /// </summary>
+    [WarnSite, MethodImpl(MethodImplOptions.NoInlining)]
     public LayaResult PredictLong(
         object state, QuestionSet questions, int? window = null, int? stride = null,
         string aggregate = "auto", int? batchSize = null,
@@ -540,22 +582,44 @@ public sealed class LayaRouter : ILayaLongPredictor, IDisposable
     /// with Python's per-call <c>lang_guess</c> hint; see
     /// <see cref="Route(object?, QuestionSet?, string?, string?, string?, LangGuess?)"/>.
     /// </summary>
+    [WarnSite, MethodImpl(MethodImplOptions.NoInlining)]
     public LayaResult PredictLong(
         object state, QuestionSet questions, int? window, int? stride,
         string aggregate, int? batchSize,
         string? model, string? task, string? lang, LangGuess? langGuess)
     {
         StateGuard.NotNull(state);
-        return PredictRouted(state, questions, model, task, lang, langGuess, predictor =>
-            predictor is ILayaLongPredictor scanner
-                ? scanner.PredictLong(state, questions, window, stride, aggregate, batchSize)
-                : throw new NotSupportedException(
-                    $"{predictor.GetType().Name} has no PredictLong, so a state longer than its window cannot be scanned"));
+        return PredictRouted(state, questions, model, task, lang, langGuess, (predictor, decision) =>
+        {
+            if (predictor is not ILayaLongPredictor scanner)
+                throw new NotSupportedException(
+                    $"{predictor.GetType().Name} has no PredictLong, so a state longer than its window cannot be scanned");
+            // router.py:331-333: the caller's language, else the detected one (no truthiness test here, unlike predict).
+            var effective = lang ?? decision.Detection?.Language;
+            if (scanner is ILayaLongLangPredictor takesLang)
+                return takesLang.PredictLong(state, questions, new LayaLongOptions
+                {
+                    Window = window, Stride = stride, Aggregate = aggregate, BatchSize = batchSize, Lang = effective,
+                });
+            if (effective is not null)
+                WarnOnce.Warn(
+                    $"laya: Router.predict_long: {predictor.GetType().Name}.predict_long has no `lang` parameter, so the "
+                    + $"{(lang is not null ? "requested" : "detected")} language {ShownLang(effective)} is not reaching it "
+                    + "and the scan runs without it");
+            return scanner.PredictLong(state, questions, window, stride, aggregate, batchSize);
+        });
+    }
+
+    // router.py:350-353: bounded to 32 code points before it is rendered, `...` after a longer one.
+    private static string ShownLang(string lang)
+    {
+        var runes = lang.EnumerateRunes().Count();
+        return PythonStr.Repr(LanguageDetection.SliceCodePoints(lang, 32)) + (runes > 32 ? "..." : "");
     }
 
     private LayaResult PredictRouted(
         object? state, QuestionSet questions, string? model, string? task, string? lang, LangGuess? langGuess,
-        Func<ILayaPredictor, LayaResult> predict, MinConfidence? minConfidence = null)
+        Func<ILayaPredictor, RouteDecision, LayaResult> predict, MinConfidence? minConfidence = null)
     {
         StateGuard.NotNull(state);
         ArgumentNullException.ThrowIfNull(questions);
@@ -565,7 +629,7 @@ public sealed class LayaRouter : ILayaLongPredictor, IDisposable
         // Inference runs outside the lock, exactly as Python's predict() calls
         // agent.system_one after load() has already returned and released the lock — so
         // concurrent predictions on a shared checkpoint are not serialised by the router.
-        var result = WithLease(decision.Model, predict);
+        var result = WithLease(decision.Model, predictor => predict(predictor, decision));
         return (gate is { } g ? ConfidenceGate.Apply(result, g) : result).WithRouting(decision);
     }
 
@@ -636,9 +700,19 @@ public sealed class LayaRouter : ILayaLongPredictor, IDisposable
     /// acts per question group, as in Python. <see cref="LayaBatchOptions.MinConfidence"/> is batch-wide: it is
     /// applied by the router to every result, is not passed to the checkpoints, and is not part of the grouping.</param>
     /// <exception cref="NotSupportedException">A routed checkpoint (an attached predictor) has no batch support.</exception>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="options"/> sets <see cref="LayaBatchOptions.Lang"/>, <see cref="LayaBatchOptions.MaxLen"/> or
+    /// <see cref="LayaBatchOptions.HeadMaxLen"/>, which Python's <c>Router.predict_batch</c> does not take (it is a
+    /// <c>TypeError</c> there): they are per request, on <see cref="LayaBatchRequest"/>.
+    /// </exception>
     public IReadOnlyList<LayaResult> PredictBatch(
         IReadOnlyList<LayaBatchRequest> requests, LayaBatchOptions? options = null)
     {
+        foreach (var (name, set) in new[] { ("lang", options?.Lang is not null), ("max_len", options?.MaxLen is not null),
+                                            ("head_max_len", options?.HeadMaxLen is not null) })
+            if (set)
+                throw new ArgumentException(
+                    $"Router.predict_batch() got an unexpected keyword argument '{name}'; set it on each LayaBatchRequest");
         // router.py:1669: validated before any request is looked at.
         var gate = options?.MinConfidence?.Check();
         // router.py:1789 calls the agent without min_confidence and gates the results itself.
@@ -671,9 +745,19 @@ public sealed class LayaRouter : ILayaLongPredictor, IDisposable
                 if (predictor is not ILayaBatchPredictor batcher)
                     throw new NotSupportedException(
                         $"{predictor.GetType().Name} has no PredictBatch, so requests cannot share forward passes");
-                foreach (var (questions, group) in GroupBySchema(requests, indices))
+                // router.py:1751: a language only matters to a checkpoint that has per-language temperatures.
+                var langAware = predictor is ILayaLangTemperatures { HasLangTemperatures: true };
+                foreach (var (questions, group, key) in GroupBySchema(requests, indices, decisions, langAware))
                 {
-                    var batch = batcher.PredictBatch([.. group.Select(i => requests[i].State)], questions, inner);
+                    // Passed only when set, as Python passes its keyword arguments (router.py:1769-1773).
+                    var groupOptions = key.Lang is null && key.MaxLen is null && key.HeadMaxLen is null
+                        ? inner
+                        : new LayaBatchOptions
+                        {
+                            BatchSize = inner?.BatchSize, SortByLength = inner?.SortByLength ?? false,
+                            Lang = key.Lang, MaxLen = key.MaxLen, HeadMaxLen = key.HeadMaxLen,
+                        };
+                    var batch = batcher.PredictBatch([.. group.Select(i => requests[i].State)], questions, groupOptions);
                     if (batch.Count != group.Count)
                         throw new InvalidOperationException(
                             $"internal error: Agent.predict_batch returned {batch.Count} results for {group.Count} states");
@@ -687,12 +771,16 @@ public sealed class LayaRouter : ILayaLongPredictor, IDisposable
         return results;
     }
 
-    // Splits one checkpoint's requests by question schema, first-seen order (router.py:1726-1776). A
-    // later per-request token budget or lang joins the grouping key here.
-    private static List<(QuestionSet Questions, List<int> Indices)> GroupBySchema(
-        IReadOnlyList<LayaBatchRequest> requests, List<int> indices)
+    // What a forward pass shares besides the question schema: the token budgets and, for a checkpoint with per-language
+    // temperatures, the language (raw, not normalised: "de" and "de-AT" are separate passes).
+    private readonly record struct GroupKey(string? Lang, int? MaxLen, int? HeadMaxLen);
+
+    // Splits one checkpoint's requests by question schema, token budgets and language, first-seen order
+    // (router.py:1726-1776).
+    private static List<(QuestionSet Questions, List<int> Indices, GroupKey Key)> GroupBySchema(
+        IReadOnlyList<LayaBatchRequest> requests, List<int> indices, IReadOnlyList<RouteDecision> decisions, bool langAware)
     {
-        var groups = new List<(string Schema, QuestionSet Questions, List<int> Indices)>();
+        var groups = new List<(string Schema, QuestionSet Questions, List<int> Indices, GroupKey Key)>();
         QuestionSet? lastQuestions = null;
         string? lastSchema = null;
         foreach (var i in indices)
@@ -706,11 +794,14 @@ public sealed class LayaRouter : ILayaLongPredictor, IDisposable
                 lastQuestions = questions;
                 lastSchema = schema;
             }
-            var at = groups.FindIndex(g => g.Schema == schema);
-            if (at < 0) groups.Add((schema, questions, [i]));
+            // The request's own language, else the detection's (router.py:1751-1756); none for a checkpoint without any.
+            var lang = langAware ? requests[i].Lang ?? decisions[i].Detection?.Language : null;
+            var key = new GroupKey(lang, requests[i].MaxLen, requests[i].HeadMaxLen);
+            var at = groups.FindIndex(g => g.Schema == schema && g.Key == key);
+            if (at < 0) groups.Add((schema, questions, [i], key));
             else groups[at].Indices.Add(i);
         }
-        return [.. groups.Select(g => (g.Questions, g.Indices))];
+        return [.. groups.Select(g => (g.Questions, g.Indices, g.Key))];
     }
 
     /// <summary>

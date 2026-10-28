@@ -130,7 +130,14 @@ const NON_EN_DIACRITICS = new Set(
     "ğı" +                                 // Turkish (text is lowercased before matching)
     "āēģīķļņūž" +                          // Baltic
     "đ" +                                  // Serbo-Croatian / Vietnamese
-    "ə").split(""),                        // Azerbaijani
+    "ə" +                                  // Azerbaijani
+    // Vietnamese: no stopword list of its own, so its letters are the only signal that keeps
+    // it off the English checkpoint, and the tone-marked letters are precomposed codepoints
+    // of their own (see laya/lang.py for the same fix).
+    "ạảấầẩẫậắằẳẵặ" +
+    "ẹẻẽếềểễệỉị" +
+    "ọỏốồổỗộớờởỡợụủứừửữự" +
+    "ỳỵỷỹơư").split(""),
 );
 
 export const NON_EN_DIACRITIC_RATE = 0.02;

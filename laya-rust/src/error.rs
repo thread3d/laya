@@ -93,14 +93,17 @@ pub enum LayaError {
     NoMarkers {
         /// The question id that lost one or more markers.
         id: String,
-        /// The configured head budget the question's options did not fit within.
-        head_max_len: usize,
+        /// The head budget the question's options did not fit within: the configured one, or a
+        /// per-call override. Signed because Python does not validate an override, so a negative
+        /// one is reported as written.
+        head_max_len: i64,
         /// Markers that survived the total sequence budget.
         actual_markers: usize,
         /// Markers requested by the question.
         expected_markers: usize,
-        /// The configured total sequence budget.
-        max_len: usize,
+        /// The total sequence budget: the configured one, or a per-call override (signed, as
+        /// `head_max_len`).
+        max_len: i64,
     },
 
     /// A state or request was refused before any inference: a `null` state, which Python rejects

@@ -10,7 +10,7 @@
 
 mod common;
 
-use common::engines::{self, CHECKPOINTS};
+use common::engines;
 use common::golden_data::{self, CheckpointGoldenData};
 use common::result_compare::{assert_result_matches, assert_state_usage_matches};
 use laya::answers::{LayaResult, Usage};
@@ -441,6 +441,9 @@ fn batch_options(options: &Value) -> BatchOptions {
         .and_then(Value::as_bool)
         .unwrap_or(false);
     built.min_confidence = golden_data::recorded_min_confidence(options);
+    built.lang = golden_data::recorded_lang(options);
+    built.max_len = golden_data::recorded_budget(options, "max_len");
+    built.head_max_len = golden_data::recorded_budget(options, "head_max_len");
     built
 }
 
@@ -504,7 +507,7 @@ fn run_success_cases(
     unavailable: &str,
 ) {
     let mut checked_any = false;
-    for checkpoint in CHECKPOINTS {
+    for checkpoint in engines::checkpoints() {
         let Some(engine) = load(checkpoint) else {
             continue;
         };
@@ -549,7 +552,7 @@ fn reproduces_the_recorded_batch_predictions_for_the_split_layout() {
 #[test]
 fn rejects_the_same_batch_requests_python_rejects() {
     let mut checked_any = false;
-    for checkpoint in CHECKPOINTS {
+    for checkpoint in engines::checkpoints() {
         let Some(engine) = engines::load(checkpoint) else {
             continue;
         };
@@ -619,7 +622,7 @@ fn rejects_the_same_batch_requests_python_rejects() {
 #[test]
 fn predict_is_a_one_state_batch_for_null_states_and_empty_questions() {
     let mut checked_any = false;
-    for checkpoint in CHECKPOINTS {
+    for checkpoint in engines::checkpoints() {
         let Some(engine) = engines::load(checkpoint) else {
             continue;
         };

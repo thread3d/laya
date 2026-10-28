@@ -360,6 +360,12 @@ agent.predict(...)          # alias of system_one
   `usage["windows"]` is total over every path, including the one where a state already fit a single
   window, so a cached answer never reads as a window the model read.
 
+  End hooks may reorder result rows: an unchanged answer keeps the index and token span of its
+  original window. Attribution requires the original answer object and unchanged prediction fields
+  (type, choice/noul/score, probabilities, legend and confidence). Cloned, replaced or edited answers
+  omit `answer["window"]`; reliability and action annotations are retained. Adding the window to
+  the returned answer does not mutate the per-window answer a hook may have cached.
+
 ### Router
 
 ```python

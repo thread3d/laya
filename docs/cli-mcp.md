@@ -304,6 +304,7 @@ the server is ready.
 | `LAYA_DEFAULT_MODEL` | `multilingual` | The checkpoint a state with no language evidence falls back to, same meaning as in `laya.serve`. Unlike `laya.serve`, an unresolvable name does not stop the server: it comes back as a `router construction failed` tool error on the next call, because a stdio server has no startup to refuse. |
 | `LAYA_BASE_URL` | unset | Send predictions to a `laya-serve` on your own hardware instead of loading checkpoints in each MCP process. A bare `host:port` is read as HTTP. |
 | `LAYA_REMOTE_TIMEOUT` | `300` | HTTP timeout in seconds when `LAYA_BASE_URL` is set, including the server's cold load. Invalid or non-positive values use the default. |
+| `LAYA_USER_AGENT` | `laya/<version>` | User-Agent for remote HTTP requests. Read when the remote Router is constructed; empty or space/tab-only values use the default. Invalid header values raise a configuration error. Ignored in local mode. |
 | `LAYA_API_KEY` | unset | Bearer token sent with every remote request when `LAYA_BASE_URL` is set. Required by a `laya-serve` that set its own `LAYA_API_KEY`; ignored in local mode. |
 
 ### Share one model server across MCP sessions
@@ -339,6 +340,19 @@ Set the same `LAYA_API_KEY` in both processes when the server requires a bearer 
 `LAYA_DEFAULT_MODEL` and `LAYA_AUTO_TASK` aligned so local routing previews match the server's
 actual routing. Device and preload settings belong to the HTTP server. The first call after an
 idle unload waits for a cold load; raise `LAYA_REMOTE_TIMEOUT` if that takes longer than 300 seconds.
+
+Remote requests identify the library as `laya/<laya.__version__>`. An operator can use that
+prefix in an allowlist, or set `LAYA_USER_AGENT` for a deployment-specific identity. This header
+does not replace bearer authentication or guarantee acceptance by a proxy's security policy.
+When embedding `RemoteRouter` directly, its keyword-only `user_agent` argument takes precedence
+over the environment. `None` reads the environment; an explicit empty or space/tab-only string
+selects the default. The selected value is checked before surrounding spaces/tabs are trimmed:
+CR/LF, other ASCII controls except tab, DEL, and non-Latin-1 characters raise an error naming
+`LAYA_USER_AGENT`. Unlike an invalid timeout, an invalid header is never silently replaced.
+Each Router keeps the value resolved at construction; environment changes require a new Router
+or a restarted MCP process. An explicit request header also takes precedence over a UA set on
+a custom urllib opener; use this setting instead of that workaround.
+
 `laya_shortlist`, `laya_tournament`, and prediction hook overrides return `unsupported_remote`, since these
 paths run in the model process. For shared-server tournament selection, enable
 [`LAYA_TOURNAMENT_GROUP` on the HTTP server](http-api.md#large-choices-laya_tournament_group) and call

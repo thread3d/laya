@@ -688,7 +688,7 @@ fn probe_jev_confidence_matches_python() {
 #[test]
 fn the_recorded_min_confidence_cases_reproduce() {
     let mut checked_any = false;
-    for checkpoint in common::engines::CHECKPOINTS {
+    for checkpoint in common::engines::checkpoints() {
         let Some(engine) = common::engines::load(checkpoint) else {
             continue;
         };

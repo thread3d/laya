@@ -3,9 +3,10 @@ namespace Laya;
 /// <summary>
 /// Per-call knobs for <see cref="ILayaBatchPredictor.PredictBatch"/> and
 /// <see cref="LayaRouter.PredictBatch"/>. Ports the batching arguments of Python's
-/// <c>ONNXAgent.predict_batch</c> (<c>batch_size</c>, <c>sort_by_length</c>). It is a class with
-/// init-only properties so later per-call options (<c>lang</c>,
-/// <c>max_len</c>, <c>head_max_len</c>) can be added without changing any signature.
+/// <c>ONNXAgent.predict_batch</c> (<c>batch_size</c>, <c>sort_by_length</c>, <c>min_confidence</c>, <c>lang</c>,
+/// <c>max_len</c>, <c>head_max_len</c>). It is a class with init-only properties so further per-call options can be
+/// added without changing any signature. A router takes <c>lang</c>, <c>max_len</c> and <c>head_max_len</c> per request
+/// (<see cref="LayaBatchRequest"/>), as Python's <c>Router.predict_batch</c> does, and refuses them here.
 /// </summary>
 public sealed class LayaBatchOptions
 {
@@ -31,6 +32,23 @@ public sealed class LayaBatchOptions
     /// writes nothing onto the answers. See <see cref="Laya.MinConfidence"/>.
     /// </summary>
     public MinConfidence? MinConfidence { get; init; }
+
+    /// <summary>
+    /// Language of every state in the call (Python <c>lang</c>); see <see cref="LayaPredictOptions.Lang"/>.
+    /// </summary>
+    public string? Lang { get; init; }
+
+    /// <summary>
+    /// Total sequence budget for every state in the call (Python <c>max_len</c>); see
+    /// <see cref="LayaPredictOptions.MaxLen"/>.
+    /// </summary>
+    public int? MaxLen { get; init; }
+
+    /// <summary>
+    /// Question-head budget for every state in the call (Python <c>head_max_len</c>); see
+    /// <see cref="LayaPredictOptions.HeadMaxLen"/>.
+    /// </summary>
+    public int? HeadMaxLen { get; init; }
 }
 
 /// <summary>
@@ -50,7 +68,8 @@ public interface ILayaBatchPredictor : ILayaPredictor
 /// <summary>
 /// One request of a heterogeneous <see cref="LayaRouter.PredictBatch"/> / <see cref="LayaRouter.RouteBatch"/>
 /// call. Python passes these as dicts with <c>state</c> and <c>questions</c> plus the optional routing
-/// overrides <c>model</c>, <c>task</c>, <c>lang</c> and <c>lang_guess</c>.
+/// overrides <c>model</c>, <c>task</c>, <c>lang</c> and <c>lang_guess</c>, and the token-budget overrides
+/// <c>max_len</c> and <c>head_max_len</c>.
 /// </summary>
 public sealed class LayaBatchRequest
 {
@@ -66,11 +85,26 @@ public sealed class LayaBatchRequest
     /// <summary>Explicit task name (Python <c>task</c>).</summary>
     public string? Task { get; init; }
 
-    /// <summary>Explicit language code used for routing (Python <c>lang</c>).</summary>
+    /// <summary>
+    /// Explicit language code (Python <c>lang</c>): routes the request and, on a checkpoint that has
+    /// <see cref="LayaOptions.LangTemperatures"/>, selects the language's temperatures. Without it the router's own detection
+    /// of the state's language is used for the latter.
+    /// </summary>
     public string? Lang { get; init; }
 
     /// <summary>Per-request language hint (Python <c>lang_guess</c>).</summary>
     public LangGuess? LangGuess { get; init; }
+
+    /// <summary>
+    /// Total sequence budget for this request (Python <c>max_len</c>); see <see cref="LayaPredictOptions.MaxLen"/>.
+    /// Requests that ask for different budgets are answered in separate forward passes.
+    /// </summary>
+    public int? MaxLen { get; init; }
+
+    /// <summary>
+    /// Question-head budget for this request (Python <c>head_max_len</c>); see <see cref="LayaPredictOptions.HeadMaxLen"/>.
+    /// </summary>
+    public int? HeadMaxLen { get; init; }
 }
 
 /// <summary>Python's refusal of a missing state, shared by every prediction entry point.</summary>

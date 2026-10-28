@@ -7,9 +7,8 @@
 //! and the order restoration are testable without a model: the engine supplies the tokenizing and
 //! the forward pass.
 //!
-//! Python's per-call hooks, `lang`, `max_len` and `head_max_len` are not part of this port yet.
-//! [`BatchOptions`] is `#[non_exhaustive]` so they can be added as fields without a signature
-//! change.
+//! Python's per-call hooks are not part of this port. [`BatchOptions`] is `#[non_exhaustive]` so a
+//! field can be added without a signature change.
 
 use crate::confidence::MinConfidence;
 use crate::error::{LayaError, Result};
@@ -22,8 +21,7 @@ const SORT_WINDOW_BATCHES: usize = 8;
 /// Options for `LayaEngine::predict_batch` and `LayaRouter::predict_batch`. Every field is
 /// optional; `Default` gives Python's defaults. Build one with the chained setters.
 ///
-/// Per-call hooks, `lang`, `max_len` and `head_max_len`, which Python's `predict_batch` also
-/// accepts, are not part of this port yet.
+/// The per-call hooks, which Python's `predict_batch` also accepts, are not part of this port.
 #[derive(Debug, Clone, Default, PartialEq)]
 #[non_exhaustive]
 pub struct BatchOptions {
@@ -41,6 +39,17 @@ pub struct BatchOptions {
     /// answer of every result; it plays no part in how states are grouped or batched. See
     /// [`crate::PredictOptions::min_confidence`] for what it reports.
     pub min_confidence: Option<MinConfidence>,
+    /// Selects an entry of [`crate::LayaOptions::lang_temperatures`] for every state of the call;
+    /// see [`crate::PredictOptions::lang`]. `LayaRouter::predict_batch` refuses it
+    /// (`LayaError::NotSupported`): a request names its own `lang`, as in Python.
+    pub lang: Option<String>,
+    /// Override the checkpoint's `max_len` for every state of the call; see
+    /// [`crate::PredictOptions::max_len`]. `LayaRouter::predict_batch` refuses it: a request names
+    /// its own.
+    pub max_len: Option<i64>,
+    /// Override the checkpoint's `head_max_len` for every state of the call; see
+    /// [`crate::PredictOptions::head_max_len`]. Refused by `LayaRouter::predict_batch`.
+    pub head_max_len: Option<i64>,
 }
 
 impl BatchOptions {
@@ -68,6 +77,27 @@ impl BatchOptions {
     #[must_use]
     pub fn min_confidence(mut self, min_confidence: MinConfidence) -> Self {
         self.min_confidence = Some(min_confidence);
+        self
+    }
+
+    /// Set [`Self::lang`].
+    #[must_use]
+    pub fn lang(mut self, lang: impl Into<String>) -> Self {
+        self.lang = Some(lang.into());
+        self
+    }
+
+    /// Set [`Self::max_len`].
+    #[must_use]
+    pub fn max_len(mut self, max_len: i64) -> Self {
+        self.max_len = Some(max_len);
+        self
+    }
+
+    /// Set [`Self::head_max_len`].
+    #[must_use]
+    pub fn head_max_len(mut self, head_max_len: i64) -> Self {
+        self.head_max_len = Some(head_max_len);
         self
     }
 
@@ -404,7 +434,7 @@ mod tests {
                 .get("sort_by_length")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false),
-            min_confidence: None,
+            ..BatchOptions::default()
         }
     }
 
@@ -413,6 +443,40 @@ mod tests {
     /// `state_widths`, and the planned runs, `[rows, width]` per forward pass, must be the ones
     /// Python made. Needs the tokenizer and the batch goldens, not a forward pass; skips like the
     /// integration tests when either is missing.
+    /// Splits `LAYA_TEST_CHECKPOINTS` as `tests/common/test_artifacts.rs` does and panics on a name
+    /// that is not a checkpoint subdirectory.
+    fn selected_checkpoint_names(raw: &str) -> Vec<String> {
+        let names: Vec<String> = raw
+            .split(|c: char| c.is_whitespace() || c == ',')
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .collect();
+        let known = [
+            crate::LayaCheckpoint::English.subdir(),
+            crate::LayaCheckpoint::Multilingual.subdir(),
+            crate::LayaCheckpoint::TypedDecisions.subdir(),
+        ];
+        if let Some(unknown) = names.iter().find(|n| !known.contains(&n.as_str())) {
+            panic!("unknown LAYA_TEST_CHECKPOINTS entry '{unknown}' in '{raw}'");
+        }
+        names
+    }
+
+    #[test]
+    fn checkpoint_selection_accepts_known_names() {
+        assert!(selected_checkpoint_names("").is_empty());
+        assert_eq!(
+            selected_checkpoint_names(" english, typed-decisions "),
+            ["english", "typed-decisions"]
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown LAYA_TEST_CHECKPOINTS entry 'typo' in 'english typo'")]
+    fn checkpoint_selection_rejects_an_unknown_name() {
+        selected_checkpoint_names("english typo");
+    }
+
     #[test]
     fn plans_the_recorded_session_runs() {
         use crate::laya_config::LayaConfig;
@@ -421,12 +485,21 @@ mod tests {
         use crate::tokenization::HfTokenizer;
         use serde_json::Value;
 
+        // `LAYA_TEST_CHECKPOINTS` (space- or comma-separated subdirectory names) narrows this to the
+        // checkpoints a parity job owns; unset runs all. Same semantics as `tests/common`, including
+        // failing on an unknown name, so a library-only run cannot pass by ignoring a typo.
+        let selected =
+            selected_checkpoint_names(&std::env::var("LAYA_TEST_CHECKPOINTS").unwrap_or_default());
+        let selected: Vec<&str> = selected.iter().map(String::as_str).collect();
         let mut checked_any = false;
         for checkpoint in [
             crate::LayaCheckpoint::Multilingual,
             crate::LayaCheckpoint::English,
             crate::LayaCheckpoint::TypedDecisions,
-        ] {
+        ]
+        .into_iter()
+        .filter(|c| selected.is_empty() || selected.contains(&c.subdir()))
+        {
             let Some(dir) = artifact_dir(checkpoint) else {
                 continue;
             };
@@ -465,6 +538,17 @@ mod tests {
                     continue;
                 }
                 checked_any = true;
+                // A case that passes its own token budget was recorded with it
+                // (Python: predict_batch(max_len=...)); a bool is the int 0 or 1.
+                let budget = |name: &str, fallback: usize| -> i64 {
+                    match &root["options"][name] {
+                        Value::Bool(b) => i64::from(*b),
+                        Value::Number(n) => n.as_i64().expect("integer budget"),
+                        _ => i64::try_from(fallback).expect("config budget"),
+                    }
+                };
+                let max_len = budget("max_len", config.max_len);
+                let head_max_len = budget("head_max_len", config.head_max_len);
 
                 let widths: Vec<usize> = states
                     .iter()
@@ -472,12 +556,12 @@ mod tests {
                         questions
                             .iter()
                             .map(|(_, question)| {
-                                SequenceBuilder::build_with_stats(
+                                SequenceBuilder::build_with_overrides(
                                     &tokenizer,
                                     state,
                                     question,
-                                    config.max_len,
-                                    config.head_max_len,
+                                    max_len,
+                                    head_max_len,
                                     matches!(state, Value::Array(_)),
                                 )
                                 .expect("sequence")

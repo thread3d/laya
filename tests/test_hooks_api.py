@@ -206,9 +206,11 @@ for _name, _scores, _labels, _kwargs, _error in (
 from laya.mcp.remote import RemoteRouter  # noqa: E402
 
 check_true("RemoteRouter/is a Router", issubclass(RemoteRouter, Router))
-check_param("RemoteRouter.__init__", RemoteRouter.__init__, "base_url", inspect.Parameter.empty)
-check_param("RemoteRouter.__init__", RemoteRouter.__init__, "api_key", None)
-check_param("RemoteRouter.__init__", RemoteRouter.__init__, "timeout", None)
+check_param("RemoteRouter.__init__", RemoteRouter.__init__, "base_url", inspect.Parameter.empty,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD)
+check_param("RemoteRouter.__init__", RemoteRouter.__init__, "api_key", None, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+check_param("RemoteRouter.__init__", RemoteRouter.__init__, "timeout", None, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+check_param("RemoteRouter.__init__", RemoteRouter.__init__, "user_agent", None, inspect.Parameter.KEYWORD_ONLY)
 for method in ("predict", "predict_batch"):
     check("RemoteRouter/%s signature" % method,
           [(p.name, p.kind, p.default) for p in sig(getattr(RemoteRouter, method)).values()],

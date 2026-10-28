@@ -315,6 +315,18 @@ _NON_EN_DIACRITICS = set(
     "āēģīķļņūž"                                 # Baltic
     "đ"                                         # Serbo-Croatian / Vietnamese
     "ə"                                         # Azerbaijani
+    # Vietnamese: it holds no stopword list of its own, so its letters are the only
+    # signal that keeps it off the English checkpoint. The set used to stop at `đ`
+    # (the comment above already claimed Vietnamese coverage), but the tone-marked
+    # letters -- `ả`, `ạ`, `ề`, `ơ`, `ư` and friends -- are precomposed codepoints
+    # of their own, so everyday sentences such as "Cảm ơn bạn nhiều nhé" carried a
+    # diacritic rate of 0.0 and were routed to the English checkpoint.
+    # Text is lowercased before matching, so lowercase forms are enough.
+    "ạảấầẩẫậắằẳẵặ"                            # a-family tone marks
+    "ẹẻẽếềểễệỉị"                              # e-/i-family tone marks
+    "ọỏốồổỗộớờởỡợụủứừửữự"                      # o-/u-family tone marks
+    "ỳỵỷỹơư"                                   # y-family tone marks, and the two letters
+                                               # no other listed language uses
 )
 # Words that more than one list claims. `la`, `un`, `e`, `que`, `una` and friends are function words
 # of several of these languages at once, so matching one says "not English" without saying *which*

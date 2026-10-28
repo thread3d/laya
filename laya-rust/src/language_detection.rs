@@ -155,6 +155,17 @@ const NON_EN_DIACRITICS: &str = concat!(
     "āēģīķļņūž",                       // Baltic
     "đ",                               // Serbo-Croatian / Vietnamese
     "ə",                               // Azerbaijani
+    // Vietnamese: no stopword list of its own, so its letters are the only signal that keeps it
+    // off the English checkpoint. The set used to stop at `đ` (the comment above already claimed
+    // Vietnamese coverage), but the tone-marked letters are precomposed codepoints of their own,
+    // so everyday sentences such as "Cảm ơn bạn nhiều nhé" carried a diacritic rate of 0.0 and
+    // were routed to the English checkpoint. Mirrors `laya/lang.py`; text is lowercased before
+    // matching, so lowercase forms are enough.
+    "ạảấầẩẫậắằẳẵặ",                    // a-family tone marks
+    "ẹẻẽếềểễệỉị",                      // e-/i-family tone marks
+    "ọỏốồổỗộớờởỡợụủứừửữự",             // o-/u-family tone marks
+    "ỳỵỷỹơư",                          // y-family tone marks, and the two letters no other
+                                       // listed language uses
 );
 
 // Function words. Latin-script languages overlap heavily (de/la/le/un/e/que), so each hit is

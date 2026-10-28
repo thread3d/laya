@@ -379,6 +379,19 @@ check_true("and its differing digest reaches it as the conflict it names",
 check_true("every identity field is printed for a report with no config block",
            all(("  %-18s" % key) in _summary for key in evidence._IDENTITY_KEYS))
 
+# A UTF-8 BOM is what Notepad and Excel write. `_read_json_object` opened the artifact as plain
+# utf-8, so the BOM became U+FEFF and a valid config was refused as "not valid JSON". The other
+# caller-file readers in this repo open as utf-8-sig for this reason (laya/train.py,
+# docker/entrypoint.py); utf-8-sig leaves a file without a BOM unchanged.
+_bom_path = os.path.join(tmp, "bom-artifact.json")
+with open(_bom_path, "wb") as f:
+    f.write(b"\xef\xbb\xbf" + json.dumps({"a": 1}).encode("utf-8"))
+try:
+    _bom_doc = evidence._read_json_object(_bom_path)
+except ValueError as exc:
+    _bom_doc = "refused: %s" % exc
+check("a UTF-8 BOM artifact is read, not refused as invalid JSON", _bom_doc, {"a": 1})
+
 # ------------------------------------------------------ no torch required
 import subprocess
 _BLOCK = (

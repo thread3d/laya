@@ -94,18 +94,30 @@ The shipped checkpoints work zero-shot, but fine-tuning on decisions from your o
 
 **[nandhakishorm.github.io/laya](https://nandhakishorm.github.io/laya/)**: guides for [prediction hooks](https://nandhakishorm.github.io/laya/hooks/), [schema-driven decisions](https://nandhakishorm.github.io/laya/structured/), [Docker](https://nandhakishorm.github.io/laya/docker/) and [LangChain and LangGraph](https://nandhakishorm.github.io/laya/langchain/), plus a full [API reference](https://nandhakishorm.github.io/laya/reference/).
 
-## What's new in 0.4.16
+## What's new in 0.4.17
 
-* **Rust and .NET answer batches, and abstain, the way Python does.** `predict_batch` and the
-  router batch APIs are ported to both, grouping by checkpoint and question schema and restoring
-  input order (#1358, #1359). The `min_confidence` abstention gate and `jev_confidence` follow, so
-  a low-confidence answer abstains identically in every port (#1362, #1363). Both sets are checked
-  against goldens recorded from the Python package rather than hand-written tables.
-* **Four inputs are now refused where they enter instead of failing later.** A non-numeric or
-  overflowing `hooks_timeout` is a `ValueError` at the call (#1365), an unhashable tournament
-  choice label is a 422 rather than a 500 (#1366), a question or batch file that cannot be read
-  names the file and exits 2 rather than printing a traceback (#1367), and an answer that is not
-  an object is left out of a structured projection rather than ending the call (#1368).
+* **Vietnamese stops routing to the English checkpoint.** Its tone-marked vowels now count as
+  non-English diacritics. "Cảm ơn bạn nhiều nhé" scored a diacritic rate of 0.0 and read as
+  English. Fixed in `laya/lang.py` and carried into all six ports: TypeScript, Rust and .NET
+  directly, and the Java, Go and C++ tables re-recorded from the same source (#1392).
+* **A deciding window keeps its attribution after end hooks.** `predict_long` attributed answers
+  by position, so an end hook that reordered results reported the wrong token span without
+  saying so (#1369).
+* **`RemoteRouter` identifies itself, and the User-Agent is configurable.** The urllib default was
+  rejected outright by a Cloudflare browser-integrity rule in front of a hosted `laya-serve`,
+  before authentication (#1396).
+* **Ten more inputs are refused where they enter.** A `--questions` path that is a directory, a
+  UTF-8 BOM written by Notepad or Excel, a probability too wide for a double, an incomparable
+  `target_error`, a tool `choice` sent as an array, a short batch reply, an agent with no
+  tokenizer, a drive-anchored digest path and a bad `LAYA_MAX_LOADED` are each a named error
+  rather than a crash or a silent wrong answer (#1372, #1394, #1397, #1398, #1400, #1401, #1403,
+  #1404, #1405, #1406). A SHA-256 pin that is not a map is refused instead of verifying nothing
+  (#1402).
+* **The ports gain per-language temperatures, calibration files and a Go router.** `.NET` and Rust
+  take `lang_temperatures` plus per-call `lang`, `max_len` and `head_max_len` (#1370, #1371) and
+  .NET reads calibration files (#1384); Go gains the router model lifecycle, per-checkpoint
+  SHA-256 pins and routed inference (#1374, #1379). A C++ foundation starts, generated from the
+  same tables as Go (#1399, #1407).
 
 ## What's new in 0.4.15
 
@@ -985,6 +997,8 @@ result = agent.predict_long(state, questions, hooks=[AuditLog()])   # the scan, 
   reported when the scan reached inference unchanged. A hook that means to answer the document
   calls `ctx.skip(...)` instead: its result comes back with no `answer["window"]` and
   `usage["windows"]` at 0, because no window scored it.
+  End-hook result reordering keeps an unchanged answer's original span; cloned, replaced or edited
+  answers omit attribution. Reliability annotations are retained.
 
 A smaller `window` isolates a short deciding span better (it becomes a larger fraction of its
 window); the default (`max(64, max_len - head_max_len - 8)` — 312 tokens on the English checkpoint

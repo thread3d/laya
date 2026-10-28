@@ -8,6 +8,7 @@ namespace Laya.Tests;
 /// functions in <c>laya/common.py</c> (CPython 3.12) on <c>json.loads(value)</c>, with the entry text
 /// built as <c>onnx_agent.py</c> builds it: <c>"%s=%r -> %g"</c>.
 /// </summary>
+[Collection(WarningStateCollection.Name)]
 public sealed class TemperatureConfigTests
 {
     [Theory]

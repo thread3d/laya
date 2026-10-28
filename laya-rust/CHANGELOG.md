@@ -11,6 +11,24 @@ regenerated from laya (Python) 0.4.14 for the supported paths (see the known gap
 
 ### Added
 
+- Per-language temperatures and per-call overrides, ported from `laya/common.py`
+  `resolve_lang_temperatures` and `ONNXAgent`: `LayaOptions::lang_temperatures` (a table of
+  `LangTemperature` entries, resolved with Python's key normalisation `lang.split('-')[0].lower()`,
+  last-duplicate-wins, clamp and one warning per language through the `log` facade; a temperature
+  list that is not three long is `LayaError::InvalidConfig` with Python's `ValueError` text), the
+  public `resolve_lang_temperatures`, and the router passing the table to every engine it builds.
+  `PredictOptions::lang`, `BatchOptions::lang` and `LongOptions::lang` select an entry per call
+  (it replaces both checkpoint maps, with no fallback to the checkpoint's bucket); the router uses
+  its explicit `lang` argument, else the detected language, and `predict_batch` adds a request's
+  `lang` to the grouping key, raw, only for an engine with a table. `PredictOptions`,
+  `BatchOptions` and `BatchRequest` also take `max_len` and `head_max_len` (`i64`: Python does not
+  validate them, so `0` and negative values follow its arithmetic, and a question that loses an
+  option marker is `LayaError::NoMarkers` naming the value as written); the router splits a batch
+  on them. `predict_long` takes neither, as in Python. `LayaRouter::predict_batch` refuses a batch-wide
+  `BatchOptions::{lang, max_len, head_max_len}` with Python's `TypeError` text, as the request is
+  where they belong. API notes: **breaking:** the `max_len` and `head_max_len` fields of
+  `LayaError::NoMarkers` change from `usize` to `i64`, so code that reads or builds them must adapt;
+  `LayaOptions` has a new public field, and `LayaPredictor` gained the provided methods `predict_with_options` and `has_lang_temperatures`.
 - The abstention gate, ported from `laya/confidence.py`: `PredictOptions::min_confidence` with
   `LayaEngine::predict_with_options` and `LayaRouter::predict_with_options`, and
   `BatchOptions::min_confidence` for `predict_batch` on the engine and the router (one threshold
@@ -40,8 +58,8 @@ regenerated from laya (Python) 0.4.14 for the supported paths (see the known gap
 - `LayaEngine::predict_long` and `LayaRouter::predict_long` (`aggregate="auto"`): scan a state
   longer than one sequence in overlapping token windows and keep the most confident window per
   question, with `Answer::window()` attribution, `LayaResult::scan_usage()` and summed
-  `state_usage()`. Matches Python's `ONNXAgent.predict_long` and the .NET SDK; hooks, per-language
-  temperatures are not part of it, and, as in Python, it takes no `min_confidence`. New `LongOptions`, `LayaLongPredictor`,
+  `state_usage()`. Matches Python's `ONNXAgent.predict_long` and the .NET SDK; hooks are not part
+  of it, and, as in Python, it takes no `min_confidence`. New `LongOptions`, `LayaLongPredictor`,
   `LayaError::{UnsupportedAggregate, InvalidWindow, NotSupported}` and a default
   `LayaTokenizer::decode`. `LayaError` is not `#[non_exhaustive]`, so an exhaustive `match` on it
   outside the crate needs arms for the three new variants.
@@ -53,11 +71,10 @@ regenerated from laya (Python) 0.4.14 for the supported paths (see the known gap
   requests by checkpoint and then by question schema, restores request order, attaches each
   request's `routing`, and honours each request's `model`, `task`, `lang` and `lang_guess`;
   `route_batch` loads nothing. New `BatchOptions`, `BatchRequest` (both `#[non_exhaustive]`, with
-  chained setters, so hooks, `lang` and per-request token budgets can be added
-  later), `LayaBatchPredictor` with the provided method `LayaPredictor::as_batch_predictor` (a
+  chained setters, so hooks can be added later), `LayaBatchPredictor` with the provided method `LayaPredictor::as_batch_predictor` (a
   default of `None`, so existing implementors keep compiling) and `LayaError::InvalidState`, raised
-  for a `null` state as Python raises `TypeError`. Hooks, per-call `lang` and
-  `max_len` / `head_max_len` and the router's `diagnostics` report are not part of it. `LayaError`
+  for a `null` state as Python raises `TypeError`. Hooks and the router's `diagnostics` report are
+  not part of it. `LayaError`
   is not `#[non_exhaustive]`, so an exhaustive `match` on it outside the crate needs an arm for the
   new variant.
 - Behaviour change: `LayaEngine::predict` and `predict_serialize` now act as Python's `system_one`,
@@ -139,4 +156,4 @@ regenerated from laya (Python) 0.4.14 for the supported paths (see the known gap
 
 - Language detection, routing and email cleaning follow the regenerated Python 0.4.14 probes; a
   later Python change needs the probes regenerated.
-- Not yet ported: histogram-binning calibration and `lang_temperatures`.
+- Not yet ported: histogram-binning calibration and per-call hooks.
