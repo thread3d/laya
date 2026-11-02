@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "laya"
-version = "0.4.18"
+version = "0.4.21"
 description = "Fast, non-autoregressive System 1 decision engine with calibrated probabilities"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -92,7 +92,7 @@ crewai = [
 
 # `pip install laya[agno]` adds the Agno multi-agent team routing and guardrail integration (laya.integrations).
 agno = [
-    "agno>=1.1.14,<2",
+    "agno>=1.1.14,<4",
 ]
 
 [project.scripts]

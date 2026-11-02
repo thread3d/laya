@@ -3,7 +3,8 @@
 `laya-serve` exposes Laya over the TypeSafe Jev `/v1/systemone` wire protocol. A client written
 against Jev -- `hs-jev`, `typesafe-sdk`, or your own -- can point its base URL at this server and
 keep working: Laya's `predict()` output is already schema-compatible, and the server adds only the
-HTTP surface: one decision route, a health probe, an optional bearer check and request limits.
+HTTP surface: single and batch inference, a routing snapshot, a health probe, an optional bearer
+check and request limits.
 
 The [Python HTTP client](https://github.com/NandhaKishorM/laya/blob/main/sdk/python/README.md)
 provides synchronous `predict` and `health` calls with no runtime dependencies. Install it
@@ -53,7 +54,7 @@ Everything is environment variables, so one image serves a laptop dev run and a 
 For a deployment published under a prefix such as `/laya`, set `LAYA_ROOT_PATH=/laya`.
 FastAPI uses it when generating OpenAPI and Swagger UI URLs. Configure the reverse proxy to
 strip `/laya` before forwarding requests to Laya; the app's routes remain `/health` and
-`/v1/systemone` internally.
+`/v1/systemone`, `/v1/systemone/batch` and `/v1/route` internally.
 
 For containers, including CUDA and ARM64 images, see [Docker quickstart](docker.md).
 
@@ -88,7 +89,8 @@ sample to the handler that produces it, field by field.
 
 With idle unloading enabled, authenticated health responses also include `idle_unload_seconds`
 (the configured window) and `idle_seconds` (time since the last inference request or completion).
-Health probes do not reset that clock. An empty `loaded` list is normal after an idle unload.
+Health probes and routing snapshots do not reset that clock. An empty `loaded` list is normal
+after an idle unload.
 
 - `status` is `ok` whenever the process answers at all. It says nothing about the checkpoints.
 - `loaded` lists the checkpoints resident in memory. It is empty until a request builds one, which is
@@ -109,9 +111,90 @@ Health probes do not reset that clock. An empty `loaded` list is normal after an
   of the latest one. The demotion is scoped to the request that failed, so a checkpoint built on CPU
   because the GPU was never available is not a fallback and counts `0` here -- that shows in `device`.
 
+### `POST /v1/route`
+
+Inspect the deployed Router's checkpoint selection without requesting inference. This is useful
+when an application's local routing configuration differs from the service's. MCP remote routing
+still runs locally; it does not call this endpoint.
+
+```bash
+curl -s localhost:8000/v1/route -H 'content-type: application/json' -d '{
+  "state": {"message": "Turn lights off"},
+  "questions": {},
+  "explain": true
+}'
+```
+
+With the default fallback model, this returns:
+
+```json
+{"model": "multilingual", "repo": "convaiinnovations/laya/multilingual",
+ "reason": "Latin script, language not identified and no non-English letters; using default (multilingual)",
+ "diagnostic": {"stage": "whole_state", "reason": "insufficient_words", "source": null}}
+```
+
+`state` and `questions` are required, with the same shape and size limits as prediction. An empty
+questions object is allowed. This is a routing snapshot, not a complete inference-request validator:
+a successful route does not certify that every question will pass inference-time validation.
+
+The optional routing controls are `model`, `task`, `lang` and `lang_guess`, with the same
+[model aliases, registry and override semantics](#post-v1systemone) as prediction. Omitted controls
+(and `null` routing overrides) leave deployment settings in charge. `explain` defaults to `false`;
+only JSON booleans are accepted. Strings, numbers and `null` return `422` naming `explain` before
+routing. Unknown fields are ignored, as on the prediction endpoints, but prediction-only controls
+`max_len`, `head_max_len`, `min_confidence`, `batch_size`, `sort_by_length`, `diagnostics` and `states`
+are refused with `422`, including when their value is `null`. The same applies to `hooks`,
+`on_route`, `on_predict_start`, `on_predict_end`, `hooks_raise` and `hooks_timeout`: hook policy
+belongs to the operator.
+
+The default response contains only `model`, `repo` and `reason`. With `explain: true`, it also
+contains `diagnostic`, read from the final decision **after** `on_route`; no detector is run a
+second time. It is `null` when that decision carries no diagnostic. Built-in diagnostics contain
+`stage`, `reason` and `source`, preserving `source: null` when no source is available. The full
+`detection` mapping, including `mixed_segment` containing verbatim input, is never exported.
+Built-in diagnostic metadata does not include caller values, but `source.path` may contain
+caller-chosen field names. Hook-provided diagnostics remain operator-controlled. The routing
+`reason` can include input text, so the response as a whole is **not text-free**.
+
+Authentication, admission, body-read timeout and request limits are shared with prediction.
+Routing runs behind the same gate on the same worker, so it can wait behind a forward pass;
+use `/health` for liveness. The endpoint does not call prediction or load a checkpoint. Startup
+preload is unchanged, and operator-installed hooks still run and may have side effects.
+Cancellation of an HTTP request or a hook timeout does not forcibly stop code already running.
+Routing does not reset the inference idle deadline on success, failure or cancellation, though
+queued/running work can delay unloading. The result describes routing **now**, not a guarantee
+about a later prediction if configuration, hooks or input change.
+
+An injected legacy router without the `explain` parameter still supports omitted/false requests;
+`explain: true` returns a clear `422`, without silently retrying. As with prediction, a `ValueError`
+returns `422` with its message, including one raised by an operator hook. Other unexpected errors
+are logged server-side and return `500` with `routing failed`.
+There is no batch routing endpoint or SDK routing method in this change.
+
+#### Try a configuration mismatch locally
+
+From a checkout, run the complete example without downloading checkpoints or starting a server:
+
+```bash
+python -m pip install -e ".[serve]" httpx
+python examples/http_route.py
+```
+
+The example uses FastAPI's in-process `TestClient` against the real handler. Its local Router
+defaults to `multilingual`, while its injected server Router defaults to `english`. The same short
+state produces identical language diagnostics but different model selections, demonstrating why
+local diagnostics cannot establish a deployment's decision. It also checks the default three-field
+response and an explicit model pin, whose diagnostic is `null`, and verifies that neither Router
+loaded checkpoints. Each response is a snapshot of that request, not a reservation for later
+inference. Injecting the Router keeps the example independent of normal startup preload;
+`httpx` is needed for the test client, not by the routing endpoint.
+
 ### `POST /v1/systemone`
 
-One request carries a `state` and any number of questions over it:
+One request carries a `state` and any number of questions over it. Those questions share that
+state: each is answered against the whole serialized context, so a question whose instructions
+name `rows[i]` still sees every record. One answer per record is one entry of `states` on
+`POST /v1/systemone/batch`.
 
 ```bash
 curl -s localhost:8000/v1/systemone -H 'content-type: application/json' -d '{
@@ -128,7 +211,7 @@ curl -s localhost:8000/v1/systemone -H 'content-type: application/json' -d '{
 
 | field | required | meaning |
 |---|---|---|
-| `state` | yes | text, email, ticket or JSON document to decide on; a missing or `null` state is a `400` |
+| `state` | yes | the one context every question in the request is answered against: text, email, ticket or JSON; a missing or `null` state is a `400` |
 | `questions` | yes | object keyed by question id; each question is `choice` / `score` / `noul` with `instructions` and `criteria` |
 | `model` | no | names a checkpoint; a path or unpublished Hub id is a `422`, anything else is ignored (see below) |
 | `task` | no | forces a checkpoint by workflow name instead of letting routing decide; an unknown name is a `422` naming it |
@@ -220,7 +303,8 @@ marks, it does not drop.
 
 `usage` reports what the forward pass was built from. How much of a state the model reads is a token
 budget, not a character count, and the budget moves with `max_len`, `head_max_len` and every
-question's own option prompt (#174), so these keys are the only place that fact is visible:
+question's own option prompt (#174), so these keys are the only place in the response
+that fact is visible:
 
 | `usage` key | meaning |
 |---|---|
@@ -233,7 +317,13 @@ question's own option prompt (#174), so these keys are the only place that fact 
 | `options` | present only when some question's options no longer have a token span each: keyed by question id, with `total` (the options that question defines), `distinct` (the spans that reached the sequence) and `tokens_per_option` |
 
 A truncated answer is still an answer -- the head decides on the evidence it was given -- but a
-caller sizing states by character count cannot see the cut anywhere else in the response.
+caller sizing states by character count cannot see the cut anywhere else in the response. When
+`usage.truncated` is true or `state_tokens_dropped` is above zero, the server logs one warning
+for the request with that dropped-token count and the question ids. The warning is written on
+`/v1/systemone` and `/v1/systemone/batch` before `LAYA_JEV_STRICT` projects the payload, so a
+strict response that no longer carries these keys still leaves the cut in the server log. A
+batch logs once, with the indexes of the results that were cut and the dropped-token count of
+each, rather than once per answer.
 
 `routing` records which checkpoint answered and why:
 
@@ -292,8 +382,9 @@ answering, on both `/v1/systemone` and `/v1/systemone/batch`:
 The projection keeps only the contracted keys and recomputes nothing: every value is the one the
 result already carries, so the probabilities and scores a strict client reads are identical to
 the ones the full payload reports. The default stays the full payload, and a deployment that
-turns the flag on loses the truncation visibility `usage` provides -- a cut state is then
-visible in the logs, not in the response. Score `criteria` should stay plain strings under the
+turns the flag on loses the truncation visibility `usage` provides. The server has already
+logged the dropped state tokens by then, so a cut state is in the log, where the response no
+longer carries it. Score `criteria` should stay plain strings under the
 strict contract: a strict client compares the returned `legend` against the criteria it sent,
 and Laya renders a structured criterion with Python's JSON, which a JavaScript caller that
 stringifies its own criteria may not match byte for byte.
@@ -461,10 +552,14 @@ as long as it keeps the socket open.
 ## Not (yet) here
 
 This server speaks one protocol on purpose. There is no OpenAI-compatible endpoint; run several
-questions in one request instead, since they share a single forward pass per question set. The one
-other route is `POST /v1/systemone/batch`, which answers one `questions` set over an array of
-`states`. It has no section on this page yet -- its request shape is in the README's self-hosting
-section -- and every check above applies to it as it does to `POST /v1/systemone`: the same shape
-`400`s, the same unpaired-surrogate refusal, the same auth, admission, size limits, body-control
-validation and `500` mapping. The `laya` CLI and MCP server cover local use -- see the
+questions in one request instead, since they share a single forward pass per question set.
+`POST /v1/systemone/batch` answers one `questions` set over an array of
+`states`. Each state is its own context, which is what a caller needs for one decision per
+record; questions in one `/v1/systemone` request see the whole shared state, including when
+their text names `rows[i]`. It has no section on this page yet -- its request shape is in the
+README's self-hosting section -- and every check above applies to it as it does to
+`POST /v1/systemone`: the same shape `400`s, the same unpaired-surrogate refusal, the same auth,
+admission, size limits, body-control validation and `500` mapping. A state that does not fit
+the token room is truncated the same way, and a batch with any truncated result logs one
+warning for the call. The `laya` CLI and MCP server cover local use -- see the
 [README](https://github.com/NandhaKishorM/laya#readme).
