@@ -1,0 +1,701 @@
+import { describe, expect, it } from "vitest";
+import {
+  answersToJson,
+  decide,
+  decideBatch,
+  planFromJsonSchema,
+  questionsFromJsonSchema,
+  SchemaError,
+  MAX_OPTIONS,
+  MAX_PROPERTIES,
+  MAX_SCORE_LEVELS,
+} from "../src/structured.js";
+import { Agent } from "../src/agent.js";
+import { Router } from "../src/router.js";
+
+// Mirrors tests/test_structured.py on the Python side.
+const SCHEMA = {
+  type: "object",
+  properties: {
+    department: { type: "string", enum: ["billing", "support", "sales"], description: "Which team?" },
+    urgency: { type: "integer", minimum: 0, maximum: 2 },
+    needs_human: { type: "boolean" },
+    priority: { enum: [1, 2, 3] },
+  },
+};
+
+const ANSWERS = {
+  department: { type: "choice", choice: "billing", confidence: 0.9,
+    probabilities: { billing: 0.9, support: 0.1, sales: 0.0 } },
+  urgency: { type: "score", score: 1.2, confidence: 0.5,
+    probabilities: { "0": 0.1, "1": 0.2, "2": 0.7 }, legend: {} },
+  needs_human: { type: "noul", noul: 0.8, confidence: 0.8 },
+  priority: { type: "choice", choice: "2", confidence: 0.7,
+    probabilities: { "1": 0.2, "2": 0.7, "3": 0.1 } },
+};
+
+describe("structured/mapping", () => {
+  const questions = questionsFromJsonSchema(SCHEMA);
+  it("enum is a choice, description becomes instructions", () => {
+    expect(questions.department.type).toBe("choice");
+    expect(questions.department.instructions).toBe("Which team?");
+    expect(Object.keys(questions.department.criteria as object)).toEqual(["billing", "support", "sales"]);
+  });
+  it("bounded number is a score with level labels", () => {
+    expect(questions.urgency.type).toBe("score");
+    expect(questions.urgency.criteria).toEqual(["0", "1", "2"]);
+    expect(questions.urgency.instructions).toBe("Score `urgency` from 0 to 2");
+  });
+  it("boolean is noul", () => {
+    expect(questions.needs_human.type).toBe("noul");
+    expect(questions.needs_human.instructions).toBe("Is `needs_human` true?");
+  });
+  it("integer enum becomes a choice with string labels", () => {
+    expect(questions.priority.type).toBe("choice");
+    expect(Object.keys(questions.priority.criteria as object)).toEqual(["1", "2", "3"]);
+  });
+  it("null enum member gets the 'null' label", () => {
+    const q = questionsFromJsonSchema({
+      type: "object", properties: { x: { enum: ["a", null] } },
+    });
+    expect(Object.keys(q.x.criteria as object)).toEqual(["a", "null"]);
+  });
+  it("const is a single-option choice", () => {
+    const q = questionsFromJsonSchema({ type: "object", properties: { x: { const: "billing" } } });
+    expect(q.x.type).toBe("choice");
+    expect(Object.keys(q.x.criteria as object)).toEqual(["billing"]);
+  });
+  it("all-boolean enum is noul", () => {
+    const q = questionsFromJsonSchema({ type: "object", properties: { x: { enum: [true, false] } } });
+    expect(q.x.type).toBe("noul");
+  });
+  it("nullable boolean remains noul", () => {
+    const q = questionsFromJsonSchema({ type: "object", properties: { x: { type: ["null", "boolean"] } } });
+    expect(q.x.type).toBe("noul");
+  });
+  it("plan has one field per property", () => {
+    expect(planFromJsonSchema(SCHEMA)).toHaveLength(4);
+  });
+});
+
+describe("structured/projection", () => {
+  it("projects answers onto schema values", () => {
+    const values = answersToJson(ANSWERS, SCHEMA);
+    expect(values.department).toBe("billing");
+    expect(values.urgency).toBe(2); // argmax level, not the raw 1.2 score
+    expect(values.needs_human).toBe(true);
+    expect(values.priority).toBe(2); // integer enum keeps its type
+    expect(typeof values.priority).toBe("number");
+  });
+  it("false noul stays false", () => {
+    const v = answersToJson({ x: { type: "noul", noul: 0.2 } },
+      { type: "object", properties: { x: { type: "boolean" } } });
+    expect(v.x).toBe(false);
+  });
+  it("score without probabilities falls back to the rounded score", () => {
+    const v = answersToJson({ x: { type: "score", score: 1.6, confidence: 0.5 } },
+      { type: "object", properties: { x: { type: "integer", minimum: 0, maximum: 2 } } });
+    expect(v.x).toBe(2);
+  });
+  it("score without probabilities honours minimum when minimum != 0", () => {
+    const schema = { type: "object", properties: { x: { type: "integer", minimum: 3, maximum: 7 } } };
+    for (const [score, want] of [[0, 3], [2.4, 5], [4, 7]] as const) {
+      const got = answersToJson({ x: { type: "score", score } }, schema);
+      expect(got.x).toBe(want);
+    }
+  });
+  it("null choice value projects back to null", () => {
+    const v = answersToJson({ x: { type: "choice", choice: "null" } },
+      { type: "object", properties: { x: { enum: ["a", null] } } });
+    expect(v.x).toBe(null);
+  });
+
+  // Mirrors the non-dict-answer block in tests/test_structured.py. The answers this port projects
+  // come from parsed remote JSON, so a field's entry can be a string, number, boolean, array or
+  // null instead of an answer object. Python skips those (`isinstance(answer, dict)`) and omits the
+  // field, as it omits an absent answer; `answer == null` let a primitive through and each field
+  // read invented a value for it -- "undefined" for a choice, `minimum + 0` for a score, false for
+  // a noul, measured across 4 fields x 6 shapes against `laya/structured.py`.
+  const EXPECTED_VALUES: Record<string, unknown> = {
+    department: "billing", urgency: 2, needs_human: true, priority: 2,
+  };
+  const FIELDS = Object.keys(EXPECTED_VALUES);
+  const NON_OBJECT: Array<[string, unknown]> = [
+    ["string", "oops"],
+    ["list", ["not", "an", "answer"]],
+    ["int", 7],
+    ["float", 0.5],
+    ["bool", true],
+    ["null", null],
+  ];
+  for (const [label, body] of NON_OBJECT) {
+    it(`omits a non-object answer (${label}) and still projects the fields beside it`, () => {
+      for (const field of FIELDS) {
+        const values = answersToJson({ ...ANSWERS, [field]: body } as any, SCHEMA);
+        expect(Object.prototype.hasOwnProperty.call(values, field)).toBe(false);
+        for (const other of FIELDS.filter((f) => f !== field)) {
+          expect(values[other]).toEqual(EXPECTED_VALUES[other]);
+        }
+      }
+    });
+  }
+  it("all answers non-object yields no values", () => {
+    expect(answersToJson({ department: 5, urgency: "x" } as any, SCHEMA)).toEqual({});
+  });
+
+  // The same entry reaches `decide` through a runner, not only through answersToJson, and
+  // `returnDetails` walks it a second time to build the per-field maps. Python omits it from all
+  // four (`values`, `confidence`, `answer_confidence`, `probabilities`); the unguarded loop added a
+  // confidence of 0.0 for a question that was never answered.
+  const fakeRunner = (answers: Record<string, any>) => ({
+    async predict() {
+      return { model: "fake", answers: JSON.parse(JSON.stringify(answers)) };
+    },
+  });
+  for (const [label, body] of NON_OBJECT) {
+    it(`decide omits a non-object answer (${label}) from the details too`, async () => {
+      const det = await decide(fakeRunner({ ...ANSWERS, department: body }), "s", SCHEMA, {
+        returnDetails: true,
+      }) as any;
+      for (const map of ["values", "confidence", "answerConfidence", "probabilities"]) {
+        expect(Object.prototype.hasOwnProperty.call(det[map], "department")).toBe(false);
+      }
+      expect(det.values.urgency).toBe(2);
+      expect(det.confidence.needs_human).toBe(0.8);
+    });
+  }
+});
+
+describe("structured/rejections", () => {
+  const bad = (schema: unknown) => () => questionsFromJsonSchema(schema);
+  it("rejects enum values with the same choice label", () => {
+    for (const values of [[1, "1"], [null, "null"], [true, "true"]]) {
+      expect(bad({ type: "object", properties: { x: { enum: values } } }))
+        .toThrowError(/properties\.x: enum values produce duplicate choice labels/);
+    }
+  });
+  it("rejects a free string", () => {
+    expect(bad({ type: "object", properties: { a: { type: "string" } } }))
+      .toThrowError(/properties\.a: a free string cannot be a fixed option set/);
+  });
+  it("rejects multiple non-null types even in a nullable union", () => {
+    for (const types of [["boolean", "integer"], ["null", "integer", "boolean"]]) {
+      expect(bad({ type: "object", properties: { a: { type: types, minimum: 0, maximum: 2 } } }))
+        .toThrowError(/properties\.a: .*multiple non-null types/);
+    }
+  });
+  it("rejects arrays, nested objects and $ref", () => {
+    expect(bad({ type: "object", properties: { a: { type: "array", items: { type: "string" } } } }))
+      .toThrowError(SchemaError);
+    expect(bad({ type: "object", properties: { a: { type: "object", properties: {} } } }))
+      .toThrowError(/nested objects are not supported/);
+    expect(bad({ type: "object", properties: { a: { $ref: "#/$defs/X" } } }))
+      .toThrowError(/\$ref\/recursion is not supported/);
+  });
+  it("rejects an unbounded or too-wide number", () => {
+    expect(bad({ type: "object", properties: { a: { type: "integer", minimum: 0 } } }))
+      .toThrowError(/needs integer 'minimum' and 'maximum'/);
+    expect(bad({ type: "object", properties: { a: { type: "integer", minimum: 0, maximum: 100 } } }))
+      .toThrowError(new RegExp(`exceeds MAX_SCORE_LEVELS=${MAX_SCORE_LEVELS}`));
+  });
+  it("rejects too many properties or options", () => {
+    const manyProps = Object.fromEntries(
+      Array.from({ length: MAX_PROPERTIES + 1 }, (_, i) => [`p${i}`, { type: "boolean" }]));
+    expect(bad({ type: "object", properties: manyProps }))
+      .toThrowError(new RegExp(`exceeds MAX_PROPERTIES=${MAX_PROPERTIES}`));
+    const manyOpts = Array.from({ length: MAX_OPTIONS + 1 }, (_, i) => `v${i}`);
+    expect(bad({ type: "object", properties: { a: { type: "string", enum: manyOpts } } }))
+      .toThrowError(new RegExp(`exceeds MAX_OPTIONS=${MAX_OPTIONS}`));
+  });
+  it("rejects a non-object root and empty properties", () => {
+    expect(bad({ type: "array" })).toThrowError(/top level must be an object with 'properties'/);
+    expect(bad({ type: "object", properties: {} })).toThrowError(/non-empty object/);
+    expect(bad("nope")).toThrowError(/expected a JSON schema object, got str/);
+  });
+});
+
+describe("structured/decide", () => {
+  class FakeRunner {
+    calls: { state: unknown; questions: unknown; opts: unknown }[] = [];
+    constructor(private answers: any) {}
+    async predict(state: unknown, questions: any, opts: any = {}) {
+      this.calls.push({ state, questions, opts });
+      return { answers: this.answers, usage: { input_tokens: 1, output_tokens: 0 },
+        routing: { model: "english" } };
+    }
+  }
+
+  it("returns schema-shaped values and forwards state + kwargs", async () => {
+    const runner = new FakeRunner(ANSWERS);
+    const out: any = await decide(runner, "some state", SCHEMA, { hooksRaise: false });
+    expect(out.department).toBe("billing");
+    expect(runner.calls[0].state).toBe("some state");
+    expect((runner.calls[0].questions as any).department.type).toBe("choice");
+    expect((runner.calls[0].opts as any).hooksRaise).toBe(false);
+  });
+
+  it("returnDetails exposes confidence, probabilities, usage and routing", async () => {
+    const runner = new FakeRunner(ANSWERS);
+    const d = await decide(runner, "some state", SCHEMA, { returnDetails: true });
+    expect(d.confidence.department).toBe(0.9);
+    expect(d.probabilities.needs_human).toEqual({ false: 0.2, true: 0.8 });
+    expect(d.usage).toEqual({ input_tokens: 1, output_tokens: 0 });
+    expect(d.routing).toEqual({ model: "english" });
+    expect(d.values.priority).toBe(2);
+  });
+
+  it("questions pass-through returns the raw answers", async () => {
+    const raw = { a: { type: "noul", noul: 0.9, confidence: 0.9 } };
+    const runner = new FakeRunner(raw);
+    const out = await decide(runner, "s", undefined,
+      { questions: { a: { type: "noul", instructions: "?" } } });
+    expect(out).toEqual(raw);
+  });
+
+  it("requires exactly one of schema or questions", async () => {
+    const runner = new FakeRunner({});
+    await expect(decide(runner, "s")).rejects.toThrow(/exactly one of schema= or questions=/);
+    await expect(decide(runner, "s", SCHEMA, { questions: {} }))
+      .rejects.toThrow(/exactly one of schema= or questions=/);
+  });
+
+  it("accepts a model exposing toJSONSchema()", async () => {
+    const runner = new FakeRunner(ANSWERS);
+    const out: any = await decide(runner, "s", { toJSONSchema: () => SCHEMA });
+    expect(out.department).toBe("billing");
+  });
+});
+
+describe("structured/methods", () => {
+  const fakeProvider = () => ({
+    async runEncoder(b: any) {
+      const n = b?.inputIds?.length ?? 2;
+      return { lastHidden: Array.from({ length: n }, (_, i) => [i + 1, 0]) };
+    },
+    async runHead(h: any) {
+      const n = h?.length ?? 1;
+      return {
+        logits: Array.from({ length: n }, (_, i) => (i % 2 === 0 ? [2, 0] : [0, 2])),
+        act: Array.from({ length: n }, () => [3, 0]),
+      };
+    },
+  });
+
+  it("Agent.decide runs end to end against a stub provider", async () => {
+    const a = new Agent({ provider: fakeProvider() } as any);
+    const values = await a.decide("hi", {
+      type: "object",
+      properties: {
+        department: { type: "string", enum: ["billing", "support"] },
+        needs_human: { type: "boolean" },
+      },
+    });
+    expect(values.department).toBe("billing"); // argmax of the fake logits
+    expect(values.needs_human).toBe(true); // fake act head strongly positive
+  });
+
+  it("Router exposes decide", () => {
+    expect(typeof (Router.prototype as any).decide).toBe("function");
+  });
+});
+
+describe("structured/nullable-anyof", () => {
+  const NULLABLE = {
+    type: "object",
+    properties: {
+      dept: {
+        anyOf: [{ type: "string", enum: ["billing", "sales"] }, { type: "null" }],
+        description: "Which team?",
+      },
+      score: { anyOf: [{ type: "integer", minimum: 0, maximum: 2 }, { type: "null" }] },
+      flag: { anyOf: [{ type: "boolean" }, { type: "null" }] },
+    },
+  };
+
+  it("unwraps anyOf nullable enum as choice and preserves description", () => {
+    const nq = questionsFromJsonSchema(NULLABLE);
+    expect(nq.dept.type).toBe("choice");
+    expect(nq.dept.instructions).toBe("Which team?");
+    expect(Object.keys(nq.dept.criteria as object)).toEqual(["billing", "sales"]);
+  });
+
+  it("unwraps anyOf nullable bounded integer as score", () => {
+    const nq = questionsFromJsonSchema(NULLABLE);
+    expect(nq.score.type).toBe("score");
+    expect(nq.score.criteria).toEqual(["0", "1", "2"]);
+  });
+
+  it("unwraps anyOf nullable boolean as noul", () => {
+    const nq = questionsFromJsonSchema(NULLABLE);
+    expect(nq.flag.type).toBe("noul");
+  });
+
+  it("accepts oneOf nullable enum as choice", () => {
+    const q = questionsFromJsonSchema({
+      type: "object",
+      properties: { a: { oneOf: [{ enum: ["x", "y"] }, { type: "null" }] } },
+    });
+    expect(q.a.type).toBe("choice");
+    expect(Object.keys(q.a.criteria as object)).toEqual(["x", "y"]);
+  });
+
+  it("rejects unions of two real types as ambiguous", () => {
+    expect(() =>
+      questionsFromJsonSchema({
+        type: "object",
+        properties: { a: { anyOf: [{ type: "boolean" }, { type: "integer" }] } },
+      }),
+    ).toThrowError(/only 'Optional\[\.\.\.\]' unions \(one non-null branch\) are supported/);
+  });
+});
+
+describe("structured/min_confidence", () => {
+  const fakeRunner = (answers: Record<string, any>) => ({
+    calls: [] as any[],
+    async predict(state: unknown, questions: any, opts: any) {
+      this.calls.push({ state, questions, opts });
+      return { model: "fake", answers: JSON.parse(JSON.stringify(answers)) };
+    },
+  });
+
+  it("default behavior unchanged when minConfidence is omitted", async () => {
+    const runner = fakeRunner(ANSWERS);
+    const out = await decide(runner, "s", SCHEMA);
+    expect(out.department).toBe("billing");
+    expect(out.urgency).toBe(2);
+    expect(out.needs_human).toBe(true);
+    expect(out.priority).toBe(2);
+    expect(Object.values(ANSWERS).some((a: any) => a.low_confidence)).toBe(false);
+  });
+
+  it("with minConfidence=0.85, answers below threshold project as null", async () => {
+    const runner = fakeRunner(ANSWERS);
+    const out = await decide(runner, "s", SCHEMA, { minConfidence: 0.85 });
+    expect(out.department).toBe("billing"); // 0.9 >= 0.85
+    expect(out.urgency).toBeNull(); // 0.5 < 0.85
+    expect(out.needs_human).toBeNull(); // 0.8 < 0.85
+    expect(out.priority).toBeNull(); // 0.7 < 0.85
+  });
+
+  it("accepts python parity alias min_confidence", async () => {
+    const runner = fakeRunner(ANSWERS);
+    const out = await decide(runner, "s", SCHEMA, { min_confidence: 0.85 });
+    expect(out.department).toBe("billing");
+    expect(out.urgency).toBeNull();
+  });
+
+  it("with returnDetails: true, details keep raw confidence and answers dict", async () => {
+    const runner = fakeRunner(ANSWERS);
+    const det = await decide(runner, "s", SCHEMA, { minConfidence: 0.85, returnDetails: true });
+    expect(det.values.urgency).toBeNull();
+    expect(det.confidence.urgency).toBe(0.5);
+    expect((det.answers.urgency as any).low_confidence).toBe(true);
+    expect(det.values.department).toBe("billing");
+    expect((det.answers.department as any).low_confidence).toBeUndefined();
+  });
+
+  it("direct answersToJson with low_confidence: true in answer projects to null", () => {
+    const answersWithFlag = {
+      department: { type: "choice", choice: "billing", confidence: 0.4, low_confidence: true },
+      urgency: {
+        type: "score",
+        score: 2.0,
+        confidence: 0.9,
+        probabilities: { "0": 0.0, "1": 0.1, "2": 0.9 },
+        legend: {},
+      },
+    };
+    const proj = answersToJson(answersWithFlag as any, SCHEMA);
+    expect(proj.department).toBeNull();
+    expect(proj.urgency).toBe(2);
+  });
+
+  it("rejects invalid minConfidence values", async () => {
+    const runner = fakeRunner(ANSWERS);
+    await expect(decide(runner, "s", SCHEMA, { minConfidence: 1.2 })).rejects.toThrow(/min_confidence must be a float/);
+    await expect(decide(runner, "s", SCHEMA, { minConfidence: -0.1 })).rejects.toThrow(/min_confidence must be a float/);
+    await expect(decide(runner, "s", SCHEMA, { minConfidence: true as any })).rejects.toThrow(/min_confidence must be a float/);
+    await expect(decide(runner, "s", SCHEMA, { minConfidence: "0.85" as any })).rejects.toThrow(/min_confidence must be a float/);
+  });
+});
+
+describe("structured/answerConfidence", () => {
+  const fakeRunner = (answers: Record<string, any>) => ({
+    async predict(state: unknown, questions: any, opts: any) {
+      return { model: "fake", answers: JSON.parse(JSON.stringify(answers)) };
+    },
+  });
+
+  it("exposes answerConfidence per field on DecisionResult", async () => {
+    const calAnswers = {
+      department: { type: "choice", choice: "billing", confidence: 0.3, answer_confidence: 0.95 },
+      urgency: {
+        type: "score",
+        score: 2.0,
+        confidence: 0.9,
+        answer_confidence: 0.4,
+        probabilities: { "0": 0.1, "1": 0.5, "2": 0.4 },
+      },
+    };
+    const runner = fakeRunner(calAnswers);
+    const det = await decide(runner, "state", SCHEMA, { returnDetails: true });
+
+    expect(det.confidence.department).toBe(0.3);
+    expect(det.confidence.urgency).toBe(0.9);
+    expect(det.answerConfidence.department).toBe(0.95);
+    expect(det.answerConfidence.urgency).toBe(0.4);
+
+    // Entropy conf ranks urgency > department, whereas answerConfidence reverses it
+    expect(det.confidence.department).toBeLessThan(det.confidence.urgency);
+    expect(det.answerConfidence.department).toBeGreaterThan(det.answerConfidence.urgency!);
+  });
+
+  it("maps absent or non-finite answer_confidence to null", async () => {
+    const runner = fakeRunner({
+      department: { type: "choice", choice: "billing", confidence: 0.8 },
+      urgency: { type: "score", score: 1.0, confidence: 0.5, answer_confidence: NaN },
+      needs_human: { type: "noul", noul: 0.9, confidence: 0.9, answer_confidence: true as any },
+    });
+    const det = await decide(runner, "state", SCHEMA, { returnDetails: true });
+    expect(det.answerConfidence.department).toBeNull();
+    expect(det.answerConfidence.urgency).toBeNull();
+    expect(det.answerConfidence.needs_human).toBeNull();
+  });
+});
+
+describe("structured/boolean enums", () => {
+  // Python parity (laya/structured.py::_enum_field): the noul shortcut is exactly two distinct
+  // booleans. A single-value enum plans as a one-option choice there, and a duplicate enum raises
+  // the duplicate-label SchemaError -- both of which this side used to plan as a noul, changing
+  // the question type and the projected value type ("true" vs boolean).
+  it("plans a two-value boolean enum as a noul", () => {
+    const [f] = planFromJsonSchema({ type: "object", properties: { a: { enum: [true, false] } } });
+    expect(f.kind).toBe("noul");
+    expect(f.question.type).toBe("noul");
+  });
+
+  it("plans a single-value boolean enum as a one-option choice", () => {
+    const fields = planFromJsonSchema({ type: "object", properties: { a: { enum: [true] } } });
+    expect(fields[0].kind).toBe("choice");
+    expect(fields[0].question.type).toBe("choice");
+    expect(fields[0].question.criteria).toEqual({ true: null });
+  });
+
+  it("refuses a duplicate boolean enum instead of planning a noul", () => {
+    expect(() => planFromJsonSchema({ type: "object", properties: { a: { enum: [true, true] } } })).toThrow(
+      SchemaError,
+    );
+    expect(() => planFromJsonSchema({ type: "object", properties: { a: { enum: [false, false] } } })).toThrow(
+      /duplicate choice labels/,
+    );
+  });
+
+  it("projects the one-option choice back to the boolean value", async () => {
+    const runner = {
+      async predict() {
+        return {
+          model: "fake",
+          answers: { a: { type: "choice", choice: "true", confidence: 0.9, probabilities: { true: 0.9 } } },
+        };
+      },
+    };
+    expect(await decide(runner as any, "state", { type: "object", properties: { a: { enum: [true] } } })).toEqual({
+      a: true,
+    });
+  });
+});
+
+describe("structured/decideBatch", () => {
+  const fakeBatchRunner = (answersPerState: Record<string, any>[]) => ({
+    calls: [] as any[],
+    async predict(state: unknown, questions: any, opts: any) {
+      return { model: "fake", answers: answersPerState[0] };
+    },
+    async predictBatch(states: unknown[], questions: any, opts: any) {
+      this.calls.push({ states, questions, opts });
+      return states.map((_s, i) => ({
+        model: "fake",
+        answers: JSON.parse(JSON.stringify(answersPerState[i % answersPerState.length])),
+      }));
+    },
+  });
+
+  it("evaluates a batch of states against a schema in input order", async () => {
+    const a1 = { ...ANSWERS, department: { type: "choice", choice: "sales", confidence: 0.9 } };
+    const a2 = { ...ANSWERS, department: { type: "choice", choice: "billing", confidence: 0.9 } };
+    const runner = fakeBatchRunner([a1, a2]);
+
+    const results = await decideBatch(runner, ["state 1", "state 2"], SCHEMA);
+    expect(results).toHaveLength(2);
+    expect(results[0].department).toBe("sales");
+    expect(results[1].department).toBe("billing");
+    expect(runner.calls).toHaveLength(1);
+    expect(runner.calls[0].states).toEqual(["state 1", "state 2"]);
+  });
+
+  it("supports returnDetails: true returning DecisionResult array", async () => {
+    const calAnswer = {
+      department: { type: "choice", choice: "billing", confidence: 0.3, answer_confidence: 0.95 },
+      urgency: { type: "score", score: 2.0, confidence: 0.8, answer_confidence: 0.85, probabilities: { "2": 0.85 } },
+    };
+    const runner = fakeBatchRunner([calAnswer]);
+    const results = await decideBatch(runner, ["s1", "s2"], SCHEMA, { returnDetails: true });
+    expect(results).toHaveLength(2);
+    expect(results[0].values.department).toBe("billing");
+    expect(results[0].answerConfidence.department).toBe(0.95);
+    expect(results[0].confidence.department).toBe(0.3);
+    expect(results[1].values.department).toBe("billing");
+    expect(results[1].answerConfidence.department).toBe(0.95);
+  });
+
+  it("evaluates with explicit questions instead of schema", async () => {
+    const qs = questionsFromJsonSchema(SCHEMA);
+    const runner = fakeBatchRunner([ANSWERS]);
+    const results = await decideBatch(runner, ["s1"], undefined, { questions: qs });
+    expect(results).toHaveLength(1);
+    expect(results[0].department.choice).toBe("billing");
+  });
+
+  it("gates low confidence answers when minConfidence is provided", async () => {
+    const answersWithLowConf = {
+      department: { type: "choice", choice: "billing", confidence: 0.9, answer_confidence: 0.95 },
+      urgency: { type: "score", score: 2.0, confidence: 0.4, answer_confidence: 0.4 },
+    };
+    const runner = fakeBatchRunner([answersWithLowConf]);
+    const results = await decideBatch(runner, ["s1"], SCHEMA, { minConfidence: 0.85, returnDetails: true });
+    expect(results[0].values.department).toBe("billing");
+    expect(results[0].values.urgency).toBeNull();
+    expect((results[0].answers.urgency as any).low_confidence).toBe(true);
+  });
+
+  it("accepts python parity alias min_confidence in decideBatch", async () => {
+    const answersWithLowConf = {
+      department: { type: "choice", choice: "billing", confidence: 0.9, answer_confidence: 0.95 },
+      urgency: { type: "score", score: 2.0, confidence: 0.4, answer_confidence: 0.4 },
+    };
+    const runner = fakeBatchRunner([answersWithLowConf]);
+    const results = await decideBatch(runner, ["s1"], SCHEMA, {
+      min_confidence: 0.85,
+      returnDetails: true,
+    });
+
+    expect(results[0].values.department).toBe("billing");
+    expect(results[0].values.urgency).toBeNull();
+    expect((results[0].answers.urgency as any).low_confidence).toBe(true);
+  });
+
+  it("handles empty states array cleanly", async () => {
+    const runner = fakeBatchRunner([ANSWERS]);
+    const results = await decideBatch(runner, [], SCHEMA);
+    expect(results).toEqual([]);
+  });
+
+  it("throws TypeError if states is not an array", async () => {
+    const runner = fakeBatchRunner([ANSWERS]);
+    await expect(decideBatch(runner, "not-an-array" as any, SCHEMA)).rejects.toThrow(TypeError);
+    await expect(decideBatch(runner, 123 as any, SCHEMA)).rejects.toThrow(TypeError);
+    await expect(decideBatch(runner, null as any, SCHEMA)).rejects.toThrow(TypeError);
+  });
+
+  it("throws Error if neither or both schema and questions are passed", async () => {
+    const runner = fakeBatchRunner([ANSWERS]);
+    await expect(decideBatch(runner, ["s1"])).rejects.toThrow("pass exactly one of schema= or questions=");
+    await expect(decideBatch(runner, ["s1"], SCHEMA, { questions: {} as any })).rejects.toThrow(
+      "pass exactly one of schema= or questions=",
+    );
+  });
+
+  it("throws TypeError if runner has no predictBatch", async () => {
+    const plainRunner = {
+      async predict() {
+        return { answers: {} };
+      },
+    };
+    await expect(decideBatch(plainRunner as any, ["s1"], SCHEMA)).rejects.toThrow(/has no predictBatch/);
+  });
+
+  it("routes batch using routeBatch Router convention", async () => {
+    const routerRunner = {
+      calls: [] as any[],
+      routeBatch(reqs: any[]) {
+        return reqs.map(() => ({ model: "router-m" }));
+      },
+      async predictBatch(requests: any[], batchSize?: number | null) {
+        this.calls.push({ requests, batchSize });
+        return requests.map((r: any) => ({
+          model: "router-m",
+          answers: JSON.parse(JSON.stringify(ANSWERS)),
+        }));
+      },
+      async predict() {
+        return { answers: ANSWERS };
+      },
+    };
+
+    const results = await decideBatch(routerRunner as any, ["req1", "req2"], SCHEMA, { batchSize: 4 });
+    expect(results).toHaveLength(2);
+    expect(routerRunner.calls).toHaveLength(1);
+    expect(routerRunner.calls[0].batchSize).toBe(4);
+    expect(routerRunner.calls[0].requests).toHaveLength(2);
+    expect(routerRunner.calls[0].requests[0].state).toBe("req1");
+    expect(routerRunner.calls[0].requests[1].state).toBe("req2");
+  });
+});
+
+
+
+// `DecideBatchOptions` documents that anything it does not read itself is forwarded to the
+// runner, hooks included. On a Router-like runner the call used to spread those options into the
+// request objects and pass no third argument, so `Router.predictBatch` -- which reads hooks from
+// its options argument, not from each request -- never ran them: tracing and metrics hooks
+// observed nothing on the batch path while firing on the single-request and Agent paths.
+describe("structured/decideBatch Router hook forwarding", () => {
+  const provider = () => ({
+    async runEncoder(b: any) {
+      const n = b?.inputIds?.length ?? 1;
+      return { lastHidden: Array.from({ length: n }, () => [[1, 0], [0, 1]]) };
+    },
+    async runHead(_h: any, batch?: any) {
+      const n = batch?.inputIds?.length ?? 1;
+      return {
+        logits: Array.from({ length: n }, () => [2, 0, 1, 0]),
+        act: Array.from({ length: n }, () => [3, 0]),
+      };
+    },
+  });
+
+  const routerWithAgent = () =>
+    new Router({ default: "english", loader: () => new Agent({ provider: provider() } as any) } as any);
+
+  it("fires per-call hooks through decide() and decideBatch() on a Router", async () => {
+    const fired: string[] = [];
+    const hook = {
+      onPredictStart(ctx: any) {
+        fired.push(String(ctx.states[0]));
+      },
+    };
+    await decide(routerWithAgent(), "single", SCHEMA, { hooks: [hook] });
+    expect(fired).toEqual(["single"]);
+
+    fired.length = 0;
+    await decideBatch(routerWithAgent(), ["s1", "s2"], SCHEMA, { hooks: [hook] });
+    expect(fired).toEqual(["s1", "s2"]);
+  });
+
+  it("forwards the plain-callable form too, and does not put hooks on the request objects", async () => {
+    const fired: string[] = [];
+    const router = routerWithAgent();
+    const calls: any[] = [];
+    // Record what reaches the router's own predictBatch, then run the real one.
+    const realBatch = router.predictBatch.bind(router);
+    (router as any).predictBatch = (requests: any[], batchSize: any, opts: any) => {
+      calls.push({ requests, batchSize, opts });
+      return realBatch(requests, batchSize, opts);
+    };
+    await decideBatch(router, ["s1"], SCHEMA, { onPredictStart: (ctx) => fired.push(String(ctx.states[0])) });
+    expect(fired).toEqual(["s1"]);
+    expect(calls).toHaveLength(1);
+    expect("onPredictStart" in calls[0].requests[0]).toBe(false);
+    expect(typeof calls[0].opts.onPredictStart).toBe("function");
+  });
+});

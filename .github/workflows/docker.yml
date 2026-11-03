@@ -1,0 +1,188 @@
+name: Docker
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel outdated pull request runs; on main, run per commit.
+concurrency:
+  group: docker-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  spark-build:
+    # Builds the DGX Spark image (ARM64, CUDA 13.0) and checks its libraries load.
+    # No GPU here, so this proves installation, not inference.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build ARM64 CUDA 13.0 image
+        run: docker build --pull --build-arg TORCH_INDEX=cu130 -t laya:spark .
+      - name: Check CUDA libraries and dependencies without a GPU
+        run: |
+          docker run --rm --network none laya:spark python -c '
+          import platform, torch
+          from torch.backends import cusparselt
+          assert platform.machine() == "aarch64"
+          assert torch.version.cuda == "13.0"
+          assert cusparselt.is_available()
+          print(torch.__version__, cusparselt.version())
+          '
+          docker run --rm --network none laya:spark pip check
+      # torch 2.14 compiles Triton kernels on the first CUDA inference unless this is set (#365).
+      - name: A CUDA image must keep torch's native Triton JIT off
+        run: docker run --rm --network none laya:spark sh -c 'test "$TORCH_DISABLE_NATIVE_JIT" = 1'
+
+  smoke:
+    # Native runners for both architectures; torch wheels install for the target, so
+    # an emulated cross-build would be slow and would not prove the ARM64 wheels.
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate Compose and build CPU image
+        run: |
+          docker compose -f compose.yaml -f compose.spark.yaml config --quiet
+          docker compose -f compose.yaml -f compose.http.yaml -f compose.spark.yaml config --quiet
+          docker compose config --quiet
+          docker compose -f compose.yaml -f compose.example.yml config --quiet
+          docker compose -f compose.yaml -f compose.example.yml -f compose.cuda.yaml config --quiet
+          docker compose -f compose.yaml -f compose.cuda.yaml config --quiet
+          docker compose -f compose.yaml -f compose.http.yaml config --quiet
+          docker compose -f compose.yaml -f compose.http.yaml -f compose.cuda.yaml config --quiet
+          # ModelScope prefetch, alone and stacked on top of every other combination a
+          # deployment reaches for.
+          docker compose -f compose.yaml -f compose.modelscope.yaml config --quiet
+          docker compose -f compose.yaml -f compose.http.yaml -f compose.modelscope.yaml config --quiet
+          docker compose -f compose.yaml -f compose.http.yaml -f compose.cuda.yaml -f compose.modelscope.yaml config --quiet
+          docker compose -f compose.yaml -f compose.http.yaml -f compose.spark.yaml -f compose.modelscope.yaml config --quiet
+          docker build --pull -t laya:smoke .
+      - name: Check installed runtime and fresh cache permissions
+        run: |
+          docker run --rm --network none -v laya-smoke-cache:/home/laya/.cache/huggingface \
+            laya:smoke python -c '
+          import json, os, pathlib, torch
+          from laya import Router
+          assert os.getuid() == 10001
+          assert torch.version.cuda is None
+          cache = pathlib.Path(os.environ["HF_HOME"])
+          (cache / "write-test").write_text("cache survives container replacement")
+          request = json.loads(pathlib.Path("/opt/laya/examples/request.json").read_text())
+          assert Router().route(request["state"], request["questions"]).model == "english"
+          '
+      - name: Check cache survives container replacement
+        run: |
+          docker run --rm --network none -v laya-smoke-cache:/home/laya/.cache/huggingface \
+            laya:smoke python -c '
+          import os, pathlib
+          marker = pathlib.Path(os.environ["HF_HOME"]) / "write-test"
+          assert marker.read_text() == "cache survives container replacement"
+          marker.unlink()
+          '
+      - name: Run existing tests without model downloads
+        run: |
+          docker run --rm --network none -v "$PWD:/workspace:ro" -w /workspace \
+            laya:smoke python tests/test_router.py
+          docker run --rm --network none -v "$PWD:/workspace:ro" -w /workspace \
+            laya:smoke python tests/test_criteria.py
+      - name: Test secret-file configuration
+        run: |
+          docker run --rm --network none -v "$PWD:/workspace:ro" -w /workspace \
+            laya:smoke python tests/test_docker_entrypoint.py
+          docker run --rm --network none -v "$PWD:/workspace:ro" -w /workspace \
+            laya:smoke python tests/test_docker_torch.py
+      - name: Reject unavailable CUDA before downloading models
+        run: |
+          docker run --rm --network none -e LAYA_DEVICE=cuda laya:smoke python -c '
+          import runpy
+          try:
+              runpy.run_path("/opt/laya/examples/quickstart.py", run_name="__main__")
+          except RuntimeError as error:
+              assert "CUDA was requested but is unavailable" in str(error)
+          else:
+              raise AssertionError("CUDA request unexpectedly succeeded in the CPU image")
+          '
+      - name: Remove test cache
+        if: always()
+        run: docker volume rm laya-smoke-cache || true
+
+  http:
+    # Start laya-serve the way the docs do and wait for its healthcheck. No preload,
+    # so no weights download; the key is a throwaway written for this job.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      COMPOSE_FILE: compose.yaml:compose.http.yaml
+      LAYA_PRELOAD: "0"
+      LAYA_API_KEY: ci-test-key
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Start laya-serve and wait until healthy
+        run: docker compose up --build -d --wait --wait-timeout 300 laya-serve
+      - name: Check binding, health and bearer auth
+        run: |
+          docker compose port laya-serve 8000 | grep -q '^127.0.0.1:'
+          curl -fsS localhost:8000/health
+          code() { curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8000/v1/systemone \
+            -H 'content-type: application/json' -d '{}' "$@"; }
+          test "$(code)" = 401
+          test "$(code -H 'authorization: Bearer wrong')" = 401
+          # 400 is the body error, which the handler reaches only once auth has passed: this is
+          # the half that says the configured key is accepted, not merely that others are not.
+          test "$(code -H "authorization: Bearer $LAYA_API_KEY")" = 400
+      # docs/docker.md tells operators to keep the bearer key in a mounted file instead of in the
+      # environment: the entrypoint reads LAYA_API_KEY_FILE, moves the value into LAYA_API_KEY and
+      # drops the _FILE name before it execs the server. This job only ever set the inline
+      # variable, so the second arm of docker/entrypoint.py's SECRET_NAMES -- the one the
+      # documented deployment uses -- was exercised by nothing. Deleting that arm leaves the API
+      # unauthenticated (`/v1/systemone` with no header answers 400) and every line above still
+      # passed; tests/test_docker_entrypoint.py explains the same gap at the script level.
+      - name: Check the file-backed bearer key
+        run: |
+          mkdir -p "$RUNNER_TEMP/secrets"
+          # Both keys are shell variables, and the file is written from the one that is supposed
+          # to authenticate this service. A literal token after `Bearer ` is what the secret scan
+          # in security.yml looks for, and these two strings are test values, not credentials.
+          FILE_KEY=from-a-mounted-file
+          printf '%s\n' "$FILE_KEY" > "$RUNNER_TEMP/secrets/laya_api_key"
+          # LAYA_API_KEY= keeps the job's inline key away from this service, so the mounted file
+          # is the only thing that can authenticate it. LAYA_PORT moves both the published and the
+          # bound port off the one the service above is holding, from the one variable the docs
+          # say controls both.
+          LAYA_API_KEY= LAYA_PORT=8100 docker compose run -d --name laya-file-key \
+            --volume "$RUNNER_TEMP/secrets/laya_api_key:/run/secrets/laya_api_key:ro" \
+            -e LAYA_API_KEY_FILE=/run/secrets/laya_api_key \
+            --service-ports laya-serve >/dev/null
+          for _ in $(seq 1 60); do
+            if [ "$(curl -s -o /dev/null -w '%{http_code}' localhost:8100/health)" = 200 ]; then
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS localhost:8100/health
+          code() { curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8100/v1/systemone \
+            -H 'content-type: application/json' -d '{}' "$@"; }
+          test "$(code)" = 401
+          test "$(code -H 'authorization: Bearer wrong')" = 401
+          # The key the job exports must not be the one the file-backed service accepts, and the
+          # value in the mounted file must be. 400 is the body error, which the handler reaches
+          # only once auth has passed.
+          test "$(code -H "authorization: Bearer $LAYA_API_KEY")" = 401
+          test "$(code -H "authorization: Bearer $FILE_KEY")" = 400
+      - name: Stop the file-backed service
+        if: always()
+        run: docker rm -f laya-file-key || true
+      - name: Stop
+        if: always()
+        run: |
+          docker compose logs laya-serve || true
+          docker compose down --volumes || true

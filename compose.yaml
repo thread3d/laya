@@ -1,0 +1,36 @@
+services:
+  laya:
+    build:
+      context: .
+      args:
+        TORCH_INDEX: "${LAYA_TORCH_INDEX:-cpu}"
+        TORCH_VERSION: "${LAYA_TORCH_VERSION:-2.14.0}"
+    environment:
+      LAYA_DEVICE: "${LAYA_DEVICE:-cpu}"
+      # The autocast dtype the runtime picks when it builds the model on the selected device
+      # (`laya/agent.py`). An empty value means "use the checkpoint's own `amp_dtype`", which is
+      # what these images have always served. README's threshold section measures what fp16 vs
+      # bf16 decides differently.
+      LAYA_CUDA_AMP: "${LAYA_CUDA_AMP:-}"
+      LAYA_CPU_AMP: "${LAYA_CPU_AMP:-}"
+      LAYA_MODEL: "${LAYA_MODEL:-auto}"
+      LAYA_MODEL_PATH: "${LAYA_MODEL_PATH:-}"
+      LAYA_REQUEST_FILE: "${LAYA_REQUEST_FILE:-/opt/laya/examples/request.json}"
+      # The supply-chain pair: LAYA_REVISION says which Hub commit a checkpoint download resolves to
+      # (a commit, branch, tag, or `reviewed` for the reviewed SHAs in `laya/revisions.py`) and
+      # LAYA_SHA256_DIGESTS verifies the artifact that arrives (`docs/security.md`). This service
+      # builds its Router with no `revision=` or `sha256_digests=` argument
+      # (`examples/docker/quickstart.py`), so these variables are the only way to pin from Compose.
+      LAYA_REVISION: "${LAYA_REVISION:-}"
+      LAYA_SHA256_DIGESTS: "${LAYA_SHA256_DIGESTS:-}"
+      HF_HUB_OFFLINE: "${HF_HUB_OFFLINE:-0}"
+      HF_TOKEN: "${HF_TOKEN:-}"
+      HF_TOKEN_FILE: "${HF_TOKEN_FILE:-}"
+      OMP_NUM_THREADS: "${OMP_NUM_THREADS:-4}"
+    volumes:
+      - model-cache:/home/laya/.cache/huggingface
+    init: true
+
+volumes:
+  model-cache:
+    name: "${LAYA_CACHE_VOLUME:-${COMPOSE_PROJECT_NAME}_model-cache}"

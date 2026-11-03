@@ -1,0 +1,21 @@
+# research/benchmarks/feishu_zh/SOURCE.json pins a sha256 of the raw bytes of the
+# frozen dataset and of every archived run, and audit.py verifies them with
+# read_bytes(). A checkout that rewrites the line endings (git's default
+# core.autocrlf=true on Windows) changes those bytes, so the archive must stay LF
+# on every platform.
+research/benchmarks/feishu_zh/SOURCE.json text eol=lf
+research/benchmarks/feishu_zh/data/** text eol=lf
+research/benchmarks/feishu_zh/results/** text eol=lf
+
+# Same reason in research/benchmarks/zh_short_commands: audit.py pins the sha256 of the
+# raw bytes of data/cases.jsonl and prompts.py, and a CRLF report.json would make every
+# later run on another platform look like a rewrite.
+research/benchmarks/zh_short_commands/data/** text eol=lf
+research/benchmarks/zh_short_commands/prompts.py text eol=lf
+research/benchmarks/zh_short_commands/results/** text eol=lf
+
+# laya-rust/tools/gen_round4_cases.py and laya-dotnet/tools/dump_round4_golden.py both write
+# their 20,000-case corpus with LF. These files are regenerated, never edited, so a checkout
+# that rewrote the line endings would report every line as changed on the next re-run.
+laya-rust/tests/round4_python_cases.txt text eol=lf
+laya-dotnet/tests/Laya.Tests/golden/round4/round4_python.txt text eol=lf

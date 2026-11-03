@@ -1,0 +1,613 @@
+"""Deterministic regression coverage for heterogeneous Router batching."""
+
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, Lock
+from time import sleep
+
+import pytest
+
+from laya.router import Router
+
+
+Q = {"intent": {"type": "noul", "instructions": "Relevant?"}}
+
+
+def request(state, **overrides):
+    return {"state": state, "questions": Q, **overrides}
+
+
+@pytest.fixture
+def fake_agent(monkeypatch):
+    import laya.agent
+
+    built = []
+    calls = []
+
+    class Agent:
+        def __init__(self, repo, *, device, token, subfolder):
+            self.checkpoint = subfolder or "english"
+            built.append(self.checkpoint)
+
+        def predict_batch(self, states, questions, batch_size=None):
+            calls.append((self.checkpoint, list(states), questions, batch_size))
+            if "raise" in states:
+                raise RuntimeError("inference failed")
+            return [
+                {"model": "laya-rl-agent", "answers": {"seen": state}, "usage": {}}
+                for state in states
+            ]
+
+        def system_one(self, state, questions):
+            return self.predict_batch([state], questions)[0]
+
+    monkeypatch.setattr(laya.agent, "Agent", Agent)
+    return built, calls
+
+
+@pytest.mark.parametrize("capacity,expected", [
+    (1, (["english", "multilingual", "typed-decisions"], ["typed-decisions"])),
+    (2, (["english", "multilingual", "typed-decisions"], ["multilingual", "typed-decisions"])),
+    (3, (["english", "multilingual", "typed-decisions"],
+         ["english", "multilingual", "typed-decisions"])),
+])
+def test_mixed_groups_keep_order_and_lru(fake_agent, capacity, expected):
+    built, calls = fake_agent
+    router = Router(max_loaded=capacity, default="english", auto_task_detection=True)
+    typed = {key: {"type": "noul", "instructions": "?"} for key in
+             ("action", "needs_review", "outcome", "risk", "urgency")}
+    items = [request("English text one"), request("مرحبا"),
+             request("English text two"), {"state": "decision", "questions": typed},
+             request("forced", model="ml"), request("forced english", lang="en"),
+             request("explicit task", task="typed_decisions")]
+    decisions = router.route_batch(items)
+    assert router.loaded == []
+    results = router.predict_batch(items)
+    assert [r["answers"]["seen"] for r in results] == [r["state"] for r in items]
+    assert [r["routing"] for r in results] == list(map(dict, decisions))
+    assert built == expected[0]
+    assert router.loaded == expected[1]
+    assert [(c[0], c[1]) for c in calls] == [
+        ("english", ["English text one", "English text two", "forced english"]),
+        ("multilingual", ["مرحبا", "forced"]),
+        ("typed-decisions", ["decision"]),
+        ("typed-decisions", ["explicit task"]),
+    ]
+    assert router.predict_many([]) == []
+    assert router.route_batch(()) == []
+
+
+@pytest.mark.parametrize("items,error,fragment", [
+    (None, TypeError, "requests must be a sequence"),
+    ({}, TypeError, "requests must be a sequence"),
+    ("text", TypeError, "requests must be a sequence"),
+    ([None], TypeError, "request 0"),
+    ([{"questions": Q}], ValueError, "request 0 is missing required key 'state'"),
+    ([{"state": None, "questions": Q}], TypeError, "request 0 'state' must not be None"),
+    ([{"state": "x"}], ValueError, "request 0 is missing required key 'questions'"),
+    ([request("x"), {"state": "y", "questions": None}], TypeError, "request 1 'questions'"),
+    ([request("x"), request("y", model="invalid")], ValueError, "unknown model"),
+])
+def test_invalid_batch_fails_before_loading(fake_agent, items, error, fragment):
+    built, _ = fake_agent
+    router = Router()
+    with pytest.raises(error, match=fragment):
+        router.predict_batch(items)
+    assert built == []
+    assert router.loaded == []
+
+
+def test_inference_exception_propagates_and_cache_remains_consistent(fake_agent):
+    built, calls = fake_agent
+    router = Router(max_loaded=1, default="english")
+    with pytest.raises(RuntimeError, match="inference failed"):
+        router.predict_batch([request("first"), request("raise", lang="ar"),
+                              request("unreached", lang="ar")])
+    assert built == ["english", "multilingual"]
+    assert [(c[0], c[1]) for c in calls] == [
+        ("english", ["first"]),
+        ("multilingual", ["raise", "unreached"]),
+    ]
+    assert router.loaded == ["multilingual"]
+    assert list(router._agents) == router.loaded
+    assert router.predict("after failure", Q, lang="ar")["answers"]["seen"] == "after failure"
+
+
+def test_evicted_checkpoint_is_unreferenced_when_it_is_evicted(monkeypatch):
+    # With max_loaded=1, loading the second group's checkpoint evicts the first. Eviction's
+    # gc.collect() / empty_cache() only give its memory back if predict_batch no longer holds
+    # it at that moment -- directly, or through the previous group's contexts.
+    import gc
+    import weakref
+
+    import laya.agent
+
+    refs = {}
+    evicted_alive = []
+
+    class Agent:
+        def __init__(self, repo, *, device, token, subfolder):
+            self.checkpoint = subfolder or "english"
+            refs[self.checkpoint] = weakref.ref(self)
+
+        def predict_batch(self, states, questions, batch_size=None):
+            return [{"answers": {"seen": state}, "usage": {}} for state in states]
+
+    class CheckFreed:
+        def on_evict(self, ctx):
+            gc.collect()
+            evicted_alive.append((ctx.model, refs[ctx.model]() is not None))
+
+    monkeypatch.setattr(laya.agent, "Agent", Agent)
+    router = Router(max_loaded=1, default="english", hooks=[CheckFreed()])
+    router.predict_batch([request("english text"), request("مرحبا")])
+    assert evicted_alive == [("english", False)]
+
+
+def test_warm_cache_and_repeated_batches(fake_agent):
+    built, _ = fake_agent
+    router = Router(max_loaded=2, default="english")
+    router.load("multilingual")
+    result = router.predict_batch([request("en", model="english"),
+                                   request("ar", model="multilingual"),
+                                   request("en again", model="english")])
+    assert [r["answers"]["seen"] for r in result] == ["en", "ar", "en again"]
+    assert built == ["multilingual", "english"]
+    assert router.loaded == ["english", "multilingual"]
+    router.predict_batch([request("ar", model="multilingual"), request("en", model="english")])
+    assert built == ["multilingual", "english"]
+
+
+
+def test_same_checkpoint_same_questions_uses_one_agent_batch(fake_agent):
+    _, calls = fake_agent
+    router = Router(max_loaded=2, default="english")
+    items = [
+        request("one", model="english"),
+        request("two", model="english"),
+        request("three", model="english"),
+    ]
+
+    results = router.predict_batch(items, batch_size=2)
+
+    assert [r["answers"]["seen"] for r in results] == ["one", "two", "three"]
+    assert len(calls) == 1
+    assert calls[0][0] == "english"
+    assert calls[0][1] == ["one", "two", "three"]
+    assert calls[0][2] == Q
+    assert calls[0][3] == 2
+
+
+def test_same_checkpoint_different_questions_split_agent_batches(fake_agent):
+    _, calls = fake_agent
+    router = Router(max_loaded=2, default="english")
+    q2 = {"risk": {"type": "noul", "instructions": "Risky?"}}
+    items = [
+        {"state": "one", "questions": Q, "model": "english"},
+        {"state": "two", "questions": q2, "model": "english"},
+        {"state": "three", "questions": Q, "model": "english"},
+    ]
+
+    results = router.predict_batch(items)
+
+    assert [r["answers"]["seen"] for r in results] == ["one", "two", "three"]
+    assert len(calls) == 2
+    assert calls[0][0] == "english"
+    assert calls[0][1] == ["one", "three"]
+    assert calls[0][2] == Q
+    assert calls[1][0] == "english"
+    assert calls[1][1] == ["two"]
+    assert calls[1][2] == q2
+
+
+def test_predict_batch_honours_hooks_timeout(fake_agent):
+    def slow_hook(ctx):
+        sleep(0.3)
+
+    router = Router(hooks_timeout=0.05, on_predict_start=slow_hook)
+    with pytest.raises(TimeoutError):
+        router.predict_batch([request("one")])
+
+    # A per-call override wins, exactly as it does on `predict`.
+    router = Router(hooks_timeout=0.05, on_predict_start=slow_hook)
+    results = router.predict_batch([request("one")], hooks_timeout=5.0)
+    assert len(results) == 1
+
+
+def test_route_batch_forwards_lang_guess(fake_agent):
+    built, _ = fake_agent
+    router = Router()
+
+    decisions = router.route_batch([
+        request("hola", lang_guess="es"),
+        request("hello", lang_guess="en-US"),
+    ])
+
+    assert [decision.model for decision in decisions] == ["multilingual", "english"]
+    assert built == []
+
+def test_concurrent_batch_load_deduplicates(monkeypatch):
+    import laya.agent
+
+    built = []
+    guard = Lock()
+
+    class SlowAgent:
+        def __init__(self, repo, *, device, token, subfolder):
+            sleep(0.01)
+            with guard:
+                built.append(subfolder or "english")
+
+        def predict_batch(self, states, questions, batch_size=None):
+            return [
+                {"model": "stub", "answers": {"seen": state}, "usage": {}}
+                for state in states
+            ]
+
+        def system_one(self, state, questions):
+            return self.predict_batch([state], questions)[0]
+
+    monkeypatch.setattr(laya.agent, "Agent", SlowAgent)
+    router = Router(max_loaded=2, default="english")
+    start = Barrier(8)
+
+    def worker(_):
+        start.wait()
+        return router.predict_batch([request("hello", model="english"),
+                                     request("مرحبا", model="multilingual")])
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(worker, range(8)))
+    assert built == ["english", "multilingual"]
+    assert router.loaded == ["english", "multilingual"]
+    assert all([r["answers"]["seen"] for r in result] == ["hello", "مرحبا"]
+               for result in results)
+
+
+def test_equal_questions_with_different_option_order_score_separately(fake_agent):
+    """A question schema that arrives with a different key order must be scored with
+    its own order. Dict equality ignores insertion order, but options are positional
+    in the rendered sequence, so grouping reordered-but-equal schemas would make the
+    second request's batched answers differ from its single-request answers."""
+    built, calls = fake_agent
+    ordered = {"intent": {"type": "choice", "instructions": "Pick one",
+                          "criteria": {"zulu": "last", "alpha": "first"}}}
+    reordered = {"intent": {"type": "choice", "instructions": "Pick one",
+                            "criteria": {"alpha": "first", "zulu": "last"}}}
+    requests = [{"state": "one", "questions": ordered},
+                {"state": "two", "questions": reordered}]
+    results = Router(max_loaded=1, default="english").predict_batch(requests)
+    assert len(results) == 2
+    # separate agent calls, each carrying its own caller's option order
+    orders = [list(call[2]["intent"]["criteria"]) for call in calls]
+    assert orders == [["zulu", "alpha"], ["alpha", "zulu"]]
+
+
+def _lang_recording_router(monkeypatch, lang_temperatures):
+    """A Router over a fake agent that records the `lang` each batch call received."""
+    import laya.agent
+
+    calls = []
+
+    class Agent:
+        def __init__(self, repo, *, device, token, subfolder):
+            self.checkpoint = subfolder or "english"
+            if lang_temperatures is not None:
+                self.lang_temperatures = lang_temperatures
+
+        def predict_batch(self, states, questions, batch_size=None, **overrides):
+            calls.append({"n": len(states), "lang": overrides.get("lang")})
+            return [{"model": "fake", "answers": {}} for _ in states]
+
+        def system_one(self, state, questions, **overrides):
+            calls.append({"n": 1, "lang": overrides.get("lang")})
+            return {"model": "fake", "answers": {}}
+
+    monkeypatch.setattr(laya.agent, "Agent", Agent)
+    return Router(max_loaded=1, default="english"), calls
+
+
+def test_lang_reaches_the_agent_when_it_carries_lang_temperatures(monkeypatch):
+    """`predict` forwards the request's language so per-language temperatures apply; the batch
+    path forwarded only the token budgets, so the same request scored differently depending on
+    which entry point served it. The request is routed as German either way, which is what made
+    the difference hard to see."""
+    router, calls = _lang_recording_router(monkeypatch, {"de": [1.5, 1.5, 1.5]})
+    router.predict_batch([request("a", lang="de"), request("b", lang="de"), request("c", lang="fr")])
+    assert sorted(c["lang"] for c in calls) == ["de", "fr"]
+    # requests sharing a language still share one forward pass
+    assert {"n": 2, "lang": "de"} in calls
+    assert {"n": 1, "lang": "fr"} in calls
+
+
+def test_lang_is_not_added_to_the_group_key_without_lang_temperatures(monkeypatch):
+    """An agent with no per-language temperatures does not use `lang`, so naming it must not
+    split a group that shares one forward pass today. The explicit `model` keeps every request
+    on one checkpoint, so the only thing that could split the group is the lang key."""
+    router, calls = _lang_recording_router(monkeypatch, None)
+    router.predict_batch([request("a", model="english", lang="de"),
+                          request("b", model="english", lang="fr"),
+                          request("c", model="english")])
+    assert calls == [{"n": 3, "lang": None}]
+
+
+def test_predict_and_predict_batch_pass_the_same_lang(monkeypatch):
+    """The invariant that was violated: one request, either entry point, same language."""
+    router, calls = _lang_recording_router(monkeypatch, {"de": [1.5, 1.5, 1.5]})
+    router.predict("a", Q, model="english", lang="de")
+    via_predict = calls[-1]["lang"]
+    calls.clear()
+    router.predict_batch([request("a", model="english", lang="de")])
+    assert calls[-1]["lang"] == via_predict == "de"
+
+
+def _budget_recording_router(monkeypatch, hooks=(), agent=None):
+    """A Router over a fake agent that records the token budget each forward pass received."""
+    import laya.agent
+
+    calls = []
+
+    class Recording:
+        def __init__(self, repo, *, device, token, subfolder):
+            self.checkpoint = subfolder or "english"
+
+        def predict_batch(self, states, questions, batch_size=None, **overrides):
+            calls.append({"n": len(states), "max_len": overrides.get("max_len"),
+                          "head_max_len": overrides.get("head_max_len")})
+            return [{"model": "fake", "answers": {}, "usage": {}} for _ in states]
+
+        def system_one(self, state, questions, **overrides):
+            calls.append({"n": 1, "max_len": overrides.get("max_len"),
+                          "head_max_len": overrides.get("head_max_len")})
+            return {"model": "fake", "answers": {}, "usage": {}}
+
+    monkeypatch.setattr(laya.agent, "Agent", agent or Recording)
+    return Router(max_loaded=1, default="english", hooks=list(hooks)), calls
+
+
+def test_request_token_budget_reaches_the_forward_pass(monkeypatch):
+    """A request's `max_len` / `head_max_len` are read into its context, which is where the
+    grouping below already keys on them. Two requests that ask for the same wide budget share a
+    forward pass; the one that asks for nothing is grouped apart, because the budgets differ."""
+    router, calls = _budget_recording_router(monkeypatch)
+    router.predict_batch([request("a", max_len=1024, head_max_len=512),
+                          request("b", max_len=1024, head_max_len=512),
+                          request("c")])
+    assert calls == [{"n": 2, "max_len": 1024, "head_max_len": 512},
+                     {"n": 1, "max_len": None, "head_max_len": None}]
+
+
+def test_predict_and_predict_batch_pass_the_same_budget(monkeypatch):
+    """The invariant: one request, either entry point, the same token budget."""
+    router, calls = _budget_recording_router(monkeypatch)
+    router.predict("a", Q, model="english", max_len=1024, head_max_len=512)
+    via_predict = calls[-1]
+    calls.clear()
+    router.predict_batch([request("a", model="english", max_len=1024, head_max_len=512)])
+    assert calls[-1] == dict(via_predict, n=1)
+
+
+def test_requests_without_a_budget_forward_no_budget_keys(monkeypatch):
+    """`predict` passes the budget only when set, so an Agent-like object whose methods predate
+    the arguments still works. Naming the keys `None` must behave like leaving them out."""
+    class NoBudgetArgs:
+        def __init__(self, repo, *, device, token, subfolder):
+            pass
+
+        def predict_batch(self, states, questions, batch_size=None):
+            return [{"model": "fake", "answers": {}, "usage": {}} for _ in states]
+
+    router, _ = _budget_recording_router(monkeypatch, agent=NoBudgetArgs)
+    out = router.predict_batch([request("a"), request("b", max_len=None, head_max_len=None)])
+    assert len(out) == 2
+
+
+def test_start_hook_budget_outranks_the_request_budget(monkeypatch):
+    """The context is seeded from the request and only then started, so a hook that sets a budget
+    wins -- the same ordering `predict` has."""
+    class Narrow:
+        def on_predict_start(self, ctx):
+            ctx.max_len = 64
+
+    router, calls = _budget_recording_router(monkeypatch, hooks=[Narrow()])
+    router.predict_batch([request("a", max_len=1024)])
+    assert calls == [{"n": 1, "max_len": 64, "head_max_len": None}]
+
+
+def test_request_budget_does_not_change_routing(monkeypatch):
+    """The budget is an inference argument: the routed checkpoint and `routing` must be what the
+    same request gets without it."""
+    router, calls = _budget_recording_router(monkeypatch)
+    plain = router.predict_batch([request("a")])
+    calls.clear()
+    wide = router.predict_batch([request("a", max_len=1024, head_max_len=512)])
+    assert [r["routing"] for r in wide] == [r["routing"] for r in plain]
+
+
+
+def test_router_predict_and_predict_batch_min_confidence(monkeypatch):
+    """`min_confidence` gates answers below threshold on both predict and predict_batch (#361)."""
+    import laya.agent
+
+    class Agent:
+        def __init__(self, repo, *, device, token, subfolder):
+            pass
+
+        def system_one(self, state, questions, **overrides):
+            return {
+                "model": "fake",
+                "answers": {
+                    "q1": {"type": "choice", "choice": "yes", "answer_confidence": 0.95},
+                    "q2": {"type": "choice", "choice": "no", "answer_confidence": 0.60},
+                },
+            }
+
+        def predict_batch(self, states, questions, batch_size=None, **overrides):
+            return [self.system_one(s, questions, **overrides) for s in states]
+
+    monkeypatch.setattr(laya.agent, "Agent", Agent)
+    router = Router(max_loaded=1, default="english")
+
+    # Default min_confidence=None: no low_confidence flags
+    res_default = router.predict("hello", {"q1": {}}, model="english")
+    assert "low_confidence" not in res_default["answers"]["q1"]
+    assert "low_confidence" not in res_default["answers"]["q2"]
+
+    # min_confidence=0.80 on predict: q2 flagged, q1 unflagged
+    res_gated = router.predict("hello", {"q1": {}}, model="english", min_confidence=0.80)
+    assert "low_confidence" not in res_gated["answers"]["q1"]
+    assert res_gated["answers"]["q2"]["low_confidence"] is True
+
+    # min_confidence=0.80 on predict_batch: q2 flagged, q1 unflagged
+    batch_res = router.predict_batch([request("hello", model="english")], min_confidence=0.80)
+    assert "low_confidence" not in batch_res[0]["answers"]["q1"]
+    assert batch_res[0]["answers"]["q2"]["low_confidence"] is True
+
+    # Rejection of invalid thresholds
+    with pytest.raises(ValueError):
+        router.predict("hello", {"q1": {}}, min_confidence=1.5)
+    with pytest.raises(ValueError):
+        router.predict("hello", {"q1": {}}, min_confidence=True)
+    with pytest.raises(ValueError):
+        router.predict_batch([request("hello", model="english")], min_confidence=-0.1)
+
+
+def test_end_hooks_see_the_low_confidence_flag(monkeypatch):
+    """`on_predict_end` sees `low_confidence` on both Router paths (#361 review)."""
+    import laya.agent
+
+    class Agent:
+        def __init__(self, repo, *, device, token, subfolder):
+            pass
+
+        def system_one(self, state, questions, **overrides):
+            return {
+                "model": "fake",
+                "answers": {
+                    "q1": {"type": "choice", "choice": "yes", "answer_confidence": 0.95},
+                    "q2": {"type": "choice", "choice": "no", "answer_confidence": 0.60},
+                },
+            }
+
+        def predict_batch(self, states, questions, batch_size=None, **overrides):
+            return [self.system_one(s, questions, **overrides) for s in states]
+
+    monkeypatch.setattr(laya.agent, "Agent", Agent)
+    seen = []
+
+    class Record:
+        def on_predict_end(self, ctx):
+            seen.append({q: a.get("low_confidence", False) for q, a in ctx.results[0]["answers"].items()})
+
+    router = Router(max_loaded=1, default="english", hooks=[Record()])
+
+    router.predict("hello", {"q1": {}}, model="english", min_confidence=0.80)
+    assert seen[-1] == {"q1": False, "q2": True}
+
+    router.predict_batch([request("hello", model="english")], min_confidence=0.80)
+    assert seen[-1] == {"q1": False, "q2": True}
+
+
+def _sort_recording_router(monkeypatch, accepts_sort):
+    """A Router whose attached agent records the sort_by_length it was called with."""
+    import laya.agent
+
+    calls = []
+
+    class Agent:
+        def __init__(self, repo, *, device, token, subfolder):
+            pass
+
+        if accepts_sort:
+            def predict_batch(self, states, questions, batch_size=None, sort_by_length=False,
+                              **overrides):
+                calls.append({"n": len(states), "sort": sort_by_length})
+                return [{"model": "fake", "answers": {}, "usage": {}} for _ in states]
+        else:
+            # Strict signature, no **overrides: passing sort_by_length must raise TypeError,
+            # exactly like a real Agent that predates #294.
+            def predict_batch(self, states, questions, batch_size=None):
+                calls.append({"n": len(states), "sort": "unsupported"})
+                return [{"model": "fake", "answers": {}, "usage": {}} for _ in states]
+
+        def system_one(self, state, questions):
+            return self.predict_batch([state], questions)[0]
+
+    monkeypatch.setattr(laya.agent, "Agent", Agent)
+    return Router(max_loaded=1, default="english"), calls
+
+
+def test_sort_by_length_reaches_every_agent_call(monkeypatch):
+    """`Agent.predict_batch` has had `sort_by_length` since #294, but `Router.predict_batch`
+    never forwarded it, so routing -- the normal entry point -- silently lost length grouping.
+    Every model/question-schema group the batch splits into must get the knob."""
+    router, calls = _sort_recording_router(monkeypatch, accepts_sort=True)
+    two_schemas = {"intent": {"type": "noul", "instructions": "Urgent?"}}  # different schema text -> own group
+    router.predict_batch([request("a"), request("b"),
+                          {"state": "c", "questions": two_schemas}], sort_by_length=True)
+    assert [c["sort"] for c in calls] == [True, True]  # one call per group, each with the knob
+    calls.clear()
+    router.predict_batch([request("a"), request("b")])  # default stays off
+    assert [c["sort"] for c in calls] == [False]
+
+
+def test_sort_by_length_is_dropped_for_agents_that_predate_it(monkeypatch):
+    """An attached agent-like object whose `predict_batch` predates #294 must keep serving the
+    batch instead of raising TypeError -- the same tolerance the `lang` forwarding has."""
+    router, calls = _sort_recording_router(monkeypatch, accepts_sort=False)
+    results = router.predict_batch([request("a"), request("b")], sort_by_length=True)
+    assert len(results) == 2
+    assert [c["sort"] for c in calls] == ["unsupported"]  # one group, retry without the knob
+    assert [r["routing"]["model"] for r in results] == ["english", "english"]
+
+
+def test_predict_batch_memoizes_identical_question_schema(monkeypatch):
+    """Router.predict_batch memoizes question schema serialization across consecutive requests
+    sharing the identical questions dictionary, avoiding redundant json.dumps() per item."""
+    import laya.router
+    calls = []
+    real_schema = laya.router._question_schema
+
+    def recording_schema(q):
+        calls.append(q)
+        return real_schema(q)
+
+    monkeypatch.setattr(laya.router, "_question_schema", recording_schema)
+    router, _ = _sort_recording_router(monkeypatch, accepts_sort=True)
+
+    shared_q = {"intent": {"type": "noul", "instructions": "Urgent?"}}
+    other_q = {"intent": {"type": "noul", "instructions": "Different?"}}
+
+    requests = [
+        {"state": "a", "questions": shared_q},
+        {"state": "b", "questions": shared_q},
+        {"state": "c", "questions": shared_q},
+        {"state": "d", "questions": other_q},
+    ]
+    results = router.predict_batch(requests)
+    assert len(results) == 4
+    # Exactly 2 schema serializations instead of 4
+    assert len(calls) == 2
+
+
+def test_route_batch_reaches_subclass_route_override():
+    """A subclass that overrides route() must have its override invoked by route_batch()."""
+    from laya.router import RouteDecision
+
+    class CustomRouter(Router):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.route_calls = []
+
+        def route(self, state, questions=None, **kwargs):
+            self.route_calls.append(state)
+            decision = super().route(state, questions, **kwargs)
+            return RouteDecision(dict(decision, reason="custom_override"))
+
+    router = CustomRouter()
+    items = [request("first request"), request("second request")]
+    decisions = router.route_batch(items)
+
+    assert router.route_calls == ["first request", "second request"]
+    assert len(decisions) == 2
+    assert [d["reason"] for d in decisions] == ["custom_override", "custom_override"]
+

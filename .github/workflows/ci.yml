@@ -1,0 +1,403 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  # Cancel outdated pull request runs. On main, use a per-commit group so each push
+  # gets its own run and started runs finish without cancelling or being cancelled by adjacent merges.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # transformers probes for TensorFlow at import; when TF is present its abseil runtime can
+  # deadlock model construction. Laya is torch-only.
+  USE_TF: "0"
+  USE_TORCH: "1"
+  TOKENIZERS_PARALLELISM: "false"
+
+jobs:
+  typescript:
+    name: TypeScript (node${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: laya-ts
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20", "22"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: laya-ts/package-lock.json
+      - run: npm ci
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Python parity oracle dependencies
+        run: |
+          python -m pip install numpy tokenizers==0.23.2
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Python long-prediction oracle drift check (no models)
+        run: python scripts/predict_long_fixtures.py --check
+      - name: Official tokenizer decode parity (no models)
+        run: python scripts/tokenizer_decode_fixtures.py --check
+      - name: Unit tests
+        run: npm test -- --run
+      - name: Packed package end-to-end test
+        run: npm run test:package
+
+  feishu-benchmark:
+    name: Chinese benchmark audit (no models or API)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+      - run: python research/benchmarks/feishu_zh/audit.py
+      - run: python -m unittest discover -s research/benchmarks/feishu_zh/tests -v
+      # This job installs nothing, so running the audit here is what proves it needs
+      # nothing but the standard library. Its test suite imports numpy and runs in `test`.
+      - run: python research/benchmarks/zh_short_commands/audit.py
+      # Standard library only, audit and tests alike, so both run here.
+      - run: python research/benchmarks/es_phone_turns/audit.py
+      - run: python -m unittest discover -s research/benchmarks/es_phone_turns/tests -v
+
+  test:
+    name: tests (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep this in lockstep with pyproject classifiers; packaging tests enforce that.
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          # CPU-only torch keeps the job under a minute instead of pulling CUDA wheels
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          # `mcp` so laya[mcp] resolution and the laya.mcp layer are both exercised, and
+          # `serve` because laya.serve and examples/server.py both import fastapi -- without
+          # it every test that touches them skips itself silently and passes.
+          # `langchain` for the same reason: without langchain-core the runnables fall back
+          # to their plain-object path, so tests/test_langchain.py never checks the real
+          # Runnable behaviour (batch delegation, pydantic field validation) it is there for.
+          pip install -e ".[mcp,serve,langchain]" httpx
+          # The pytest-style suites need the runner; nothing else in this job uses it.
+          pip install pytest
+
+      - name: Import check
+        run: python -c "import laya; print(laya.__version__); print(sorted(laya.__all__))"
+
+      # The install above is what makes tests/test_langchain.py run on real Runnables, and
+      # nothing proves it took: with langchain-core missing, the checks inside that file's
+      # `if _RUNNABLE_AVAILABLE:` block vanish instead of failing and it still prints FAIL: 0.
+      # Assert the install took before the shared list runs test_langchain_real_mode.py.
+      - name: LangChain integration runs on the real base class
+        run: |
+          python -c "from laya.integrations.langchain import RunnableSerializable; \
+            assert RunnableSerializable is not object, \
+            'langchain-core is missing: laya.integrations.langchain fell back to a plain object, ' \
+            'so the LangChain suites in this job test a shape no install produces'"
+
+      # The canonical suite list lives in `scripts/test_suites.py`, which the release gate invokes
+      # too. Naming the suites here and again in `release.yml` is how the publish gate came to run
+      # 33 fewer than CI, so this step names one file and the script names them all (#374).
+      - name: Test suites
+        run: python scripts/test_suites.py
+
+      - name: Chinese short-command benchmark tests
+        run: python -m unittest discover -s research/benchmarks/zh_short_commands/tests -v
+
+  # The `test` job above deliberately stays free of `onnx`: this is the lane that
+  # installs it, so the exporter's suites run for real instead of skip-guarding into a
+  # trivial pass. Weight-free -- it builds tiny synthetic graphs and a tiny stand-in
+  # model, no checkpoint download.
+  onnx-export:
+    name: onnx export (quantization, weight-free)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          # The declared extra rather than a hand-listed pair: it also brings onnxscript, which
+          # torch.onnx.export needs for the torch.export path it takes by default.
+          pip install -e ".[onnx]"
+
+      - name: Quantized-export tests
+        run: python tests/test_onnx_quantize.py
+
+      # The only step that exports a graph and then runs it. tests/test_onnx_batch.py and
+      # tests/test_onnx_long.py drive ONNXAgent with a stub session, so neither can see an
+      # exporter that bakes the traced batch size into the graph -- which is what it did.
+      - name: Batch-dynamic export tests
+        run: python tests/test_onnx_export_batch.py
+
+  # The eval harness needs numpy and laya only, so it stays a separate, weight-free job: metric
+  # math, dataset parsing, the CLI and the API guard. The real-checkpoint gate is the scheduled
+  # `evals` workflow, which needs weights and network.
+  evals:
+    name: evals (metric math, dataset, API guard)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e . pytest
+
+      - name: Eval harness tests
+        run: python -m pytest tests/test_evals.py tests/test_evals_agreement.py -q
+
+      - name: Shortlist attribution tests
+        run: python -m pytest tests/test_evals_shortlist.py -q
+
+      - name: Eval API guard
+        run: python tests/test_evals_api.py
+
+      # The ONNX runner suite fakes the agent, so it stays weight-free and needs no
+      # onnxruntime: the module only imports numpy, and ONNXAgent's constructor is
+      # never called.
+      - name: Eval ONNX runner tests
+        run: python tests/test_evals_onnx.py
+
+      # The offline research suites. Each claims a CI consumer and had none: `test_laya_eval.py`
+      # says in its own docstring that it "runs in CI next to the other suites", while
+      # `test_presentation_checks.py` and `test_act_head_eval.py` guard the eval harness's own
+      # presentation and act-head math. They need only `laya` and numpy, so they belong here
+      # rather than in the weekly weight lane. `test_metamorphic` is invoked as a module: run as a
+      # script its `research` import fails (`No module named 'research'`).
+      - name: Offline research eval suites
+        run: |
+          python research/eval/test_laya_eval.py
+          python research/eval/test_presentation_checks.py
+          python -m research.eval.test_metamorphic
+          python research/evals/test_act_head_eval.py
+
+      - name: Fixture dataset validates
+        run: laya-evals validate research/evals/fixture.jsonl
+
+  # Every workflow in this repo ran on ubuntu-latest only, so a test that fails off Linux was
+  # invisible until a user hit it -- which is what happened to tests/test_download.py (#140).
+  #
+  # A separate job rather than an extra axis on `test`, deliberately: it leaves that job's name,
+  # and therefore the `tests (pyX.Y)` required checks, exactly as they are. It runs one Python
+  # because the variable that was untested is the OS, not the interpreter.
+  test-windows:
+    name: tests (windows)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # The +cpu index used on Linux is Linux/macOS only. On Windows the default PyPI wheel is
+      # already CPU-only, so installing torch plainly is both correct and what a user gets.
+      # The extras mirror the Linux install because the suite list below assumes them: without
+      # `mcp`, tests/test_mcp.py prints SKIP and exits 0; without `langchain-core`,
+      # tests/test_langchain.py runs against plain-object shims; and without `httpx` the
+      # starlette TestClient that tests/test_serve.py imports raises at collection. Any of the
+      # three leaves this lane green without testing the surface it names.
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch
+          pip install -e ".[mcp,serve,langchain]" httpx
+          pip install pytest
+        shell: bash
+
+      # bash on this runner so the quoting rules match the Linux job; the default shell on a
+      # Windows runner is PowerShell, where `python -c "...; ..."` is not the same command.
+      - name: Import check
+        run: python -c "import laya; print(laya.__version__); print(sorted(laya.__all__))"
+        shell: bash
+
+      # The Linux job's guard, repeated here: the install is what makes test_mcp.py and
+      # test_langchain.py exercise their real base classes, and nothing else proves it took. mcp
+      # and httpx are asserted the same way because their suites skip instead of failing. Run
+      # this before the shared list so a missing extra cannot make the suites silently skip.
+      - name: Integrations run on their real base classes
+        run: |
+          python -c "import mcp, httpx, langchain_core"
+          python -c "from laya.integrations.langchain import RunnableSerializable; \
+            assert RunnableSerializable is not object, \
+            'langchain-core is missing: laya.integrations.langchain fell back to a plain object'"
+        shell: bash
+
+      # The same canonical list as Linux and the release gate: an inline Windows copy had
+      # omitted 32 suites, and the -f guard silently accepted missing suite files.
+      - name: Test suites
+        run: python scripts/test_suites.py
+        shell: bash
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+      - run: pip install ruff
+      - name: Ruff
+        # Two invocations, because the SDK script directories carry pre-existing F401/F811
+        # import debt that is not worth churning in an unrelated change. They DO get `F82`,
+        # the undefined-name group, which is a real bug class rather than style: a
+        # `verify_snapshot(..., name)` whose enclosing parameter was `name_or_path` reached
+        # review in this repository, and it would have raised `NameError` on every Hugging
+        # Face download and failed all four .NET parity cells. ruff finds it in under a
+        # second. Widen the second list to the first's rule set once that debt is paid.
+        run: |
+          ruff check laya/ --select=E9,F63,F7,F82,F401,F811 --line-length=120
+          ruff check sdk/python/ --select=E9,F63,F7,F82,F401,F811 --line-length=120
+          ruff check laya-java/scripts/ laya-dotnet/tools/ laya-ts/scripts/ \
+            laya-go/scripts/ --select=E9,F63,F7,F82 --line-length=120
+      - name: Byte-compile every module
+        run: python -m compileall -q laya/ tests/ sdk/python/
+
+  python-sdk:
+    name: Python SDK (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python: ["3.10", "3.11", "3.12", "3.13"]
+        include:
+          - os: windows-latest
+            python: "3.11"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Build standalone distributions
+        run: |
+          python -m pip install --upgrade build setuptools wheel
+          python -m build --no-isolation sdk/python
+      - name: Verify installed wheel and sdist without inference dependencies
+        run: python sdk/python/tests/verify_package.py sdk/python/dist
+
+  python-sdk-integration:
+    name: Python SDK (live HTTP)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 697d788e1c16e9cb7f736471897ab758a79c1df7 # v0.4.7
+          path: .sdk-server-0.4.7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+      - name: Install server and build tools
+        run: |
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -e '.[serve]' build setuptools wheel
+          python -m build --no-isolation sdk/python
+      - name: Real inference from an isolated client environment
+        run: |
+          python sdk/python/tests/verify_package.py sdk/python/dist \
+            --server-python "$(command -v python)" \
+            --legacy-server-fixture .sdk-server-0.4.7/tests/sdk_server_fixture.py
+
+  typescript-sdk:
+    name: TypeScript SDK (node${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: sdk/typescript/package-lock.json
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install server and SDK
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e '.[serve]' httpx pytest
+          npm ci --prefix sdk/typescript
+      - name: Server contract and generated presets
+        run: |
+          python -m pytest tests/test_serve.py
+          python sdk/typescript/scripts/sync_presets.py --check
+      - name: SDK types, transport, packaging and live inference
+        working-directory: sdk/typescript
+        run: |
+          npm test
+          npm run test:integration
+          npm pack --dry-run
+
+  build:
+    name: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+      - run: pip install build twine
+      - run: python -m build
+      - name: Validate metadata
+        run: python -m twine check dist/*
+      - name: Version must match the tag on a release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          pkg=$(python -c "import re;print(re.search(r'version = \"(.*)\"', open('pyproject.toml').read()).group(1))")
+          tag="${GITHUB_REF_NAME#v}"
+          test "$pkg" = "$tag" || { echo "pyproject $pkg != tag $tag"; exit 1; }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/

@@ -1,0 +1,2092 @@
+"""Prediction hooks: observe or shape a decision without a model or a download.
+
+The Agent path uses the same weight-free fake as `test_batch.py` (the real `predict_batch`
+with `_encode_state` / `_forward` / `_decode_answers` stubbed). The Router path patches
+`laya.agent.Agent` so a model build never touches the Hub.
+
+Run: python tests/test_hooks.py
+"""
+import contextvars
+import inspect
+import os
+import sys
+import threading
+import time
+import warnings
+
+import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import laya.agent as _agent_mod  # noqa: E402
+from laya.agent import Agent  # noqa: E402
+from laya.hooks import OptionStabilityHook, normalise_hooks  # noqa: E402
+from laya.router import RouteDecision, Router  # noqa: E402
+
+PASS, FAIL = [], []
+
+
+def check(name, got, want):
+    if got == want:
+        PASS.append(name)
+    else:
+        FAIL.append("%s: got %r, want %r" % (name, got, want))
+
+
+def check_true(name, cond, detail=""):
+    if cond:
+        PASS.append(name)
+    else:
+        FAIL.append("%s%s" % (name, ": " + detail if detail else ""))
+
+
+def check_raises(name, exc, fn):
+    try:
+        fn()
+    except exc:
+        PASS.append(name)
+        return
+    except BaseException as other:  # noqa: BLE001
+        FAIL.append("%s: raised %r, want %r" % (name, other, exc))
+        return
+    FAIL.append("%s: did not raise %r" % (name, exc))
+
+
+NQ = 2
+QUESTIONS = {"a": {"type": "noul", "instructions": "?"}, "b": {"type": "noul", "instructions": "?"}}
+
+
+# `_encode_state` items carry the state truncation counts that `predict_batch` reports in `usage` (#174)
+NO_STATE_STATS = {"state_tokens": 0, "state_tokens_used": 0, "state_tokens_dropped": 0, "truncated": False}
+
+
+def make_fake():
+    """A real `predict_batch` with the three composed helpers stubbed out."""
+    fake = Agent.__new__(Agent)
+    fake.tok = type("Tok", (), {"pad_token_id": 0})()
+    fake._to_internal = staticmethod(Agent._to_internal).__func__
+    fake._encode_states = []
+    fake._forward_calls = []
+
+    def _encode_state(state, ids, internal):
+        fake._encode_states.append(state)
+        return [{"ids": [1, 2, 3], "markers": [0, 1], "qtype": 2, "state_stats": NO_STATE_STATS} for _ in ids]
+
+    def _forward(b):
+        n = b["input_ids"].shape[0]
+        fake._forward_calls.append(n)
+        return np.zeros((n, 2), dtype=np.float32), np.full((n, 2), 0.5, dtype=np.float32)
+
+    def _decode_answers(logits, act, items, ids, internal, offset):
+        return {"_offset": offset}
+
+    fake._encode_state = _encode_state
+    fake._forward = _forward
+    fake._decode_answers = _decode_answers
+    return fake
+
+
+class FakeAgent:
+    def system_one(self, state, questions):
+        return {"model": "fake", "answers": {}, "usage": {"input_tokens": 0, "output_tokens": 0}}
+
+
+# --------------------------------------------------------------- order and context
+events = []
+results_at_start = []
+results_at_end = []
+run_id_start = []
+run_id_end = []
+
+
+def start(ctx):
+    events.append(("start", ctx))
+    results_at_start.append(ctx.results)
+    run_id_start.append(ctx.run_id)
+
+
+def end(ctx):
+    events.append(("end", ctx))
+    results_at_end.append(ctx.results)
+    run_id_end.append(ctx.run_id)
+
+
+f = make_fake()
+res = f.predict_batch(["s0", "s1"], QUESTIONS, on_predict_start=start, on_predict_end=end)
+check("order/start then end", [e[0] for e in events], ["start", "end"])
+check("order/once each", len(events), 2)
+check("context/start sees states", events[0][1].states, ["s0", "s1"])
+check("context/start sees questions", events[0][1].questions, QUESTIONS)
+check("context/start has no results", results_at_start, [None])
+check_true("context/end results is the returned object", results_at_end[0] is res)
+check("context/end result count", len(results_at_end[0]), 2)
+check_true("context/elapsed_ms set", events[1][1].elapsed_ms is not None)
+check("context/usage aggregated", events[1][1].usage, {"input_tokens": 12, "output_tokens": 0})
+check_true("context/agent set", events[1][1].agent is f)
+check_true("context/run_id is a non-empty string",
+           isinstance(run_id_start[0], str) and bool(run_id_start[0]))
+check("context/run_id is shared by start and end", run_id_end[0], run_id_start[0])
+
+_rids = []
+_f2 = make_fake()
+_f2.predict_batch(["s0"], QUESTIONS, on_predict_end=lambda c: _rids.append(c.run_id))
+_f2.predict_batch(["s0"], QUESTIONS, on_predict_end=lambda c: _rids.append(c.run_id))
+check("context/run_id differs per call", len(set(_rids)), 2)
+
+
+# --------------------------------------------------------------- mutation
+def rewrite(ctx):
+    ctx.states = ["rewritten"]
+    ctx.questions = {"a": {"type": "noul", "instructions": "?"}}
+
+
+f = make_fake()
+f.predict_batch(["orig"], QUESTIONS, on_predict_start=rewrite)
+check("mutation/start rewrite is what gets encoded", f._encode_states, ["rewritten"])
+
+
+def replace_results(ctx):
+    ctx.results = [{"model": "replaced"}]
+
+
+f = make_fake()
+res = f.predict_batch(["s0"], QUESTIONS, on_predict_end=replace_results)
+check("mutation/end rewrite is returned", res, [{"model": "replaced"}])
+
+
+# --------------------------------------------------------------- caching short-circuit
+end_calls = {"n": 0}
+
+
+def cache_hit(ctx):
+    ctx.skip([{"model": "cached"}])
+
+
+def count_end(ctx):
+    end_calls["n"] += 1
+
+
+f = make_fake()
+res = f.predict_batch(["s0"], QUESTIONS, on_predict_start=cache_hit, on_predict_end=count_end)
+check("skip/returns cached results", res, [{"model": "cached"}])
+check("skip/no forward pass", f._forward_calls, [])
+check("skip/end still runs", end_calls["n"], 1)
+
+
+# --------------------------------------------------------------- installed vs per-call
+order = []
+f = make_fake()
+f.hooks = normalise_hooks(on_predict_start=lambda ctx: order.append("installed"))
+f.predict_batch(["s0"], QUESTIONS, on_predict_start=lambda ctx: order.append("percall"))
+check("installed/per-call additive and ordered", order, ["installed", "percall"])
+
+seq = []
+f = make_fake()
+f.predict_batch(["s0"], QUESTIONS,
+                on_predict_start=[lambda c: seq.append(1), lambda c: seq.append(2)])
+check("sequence/runs in order", seq, [1, 2])
+
+
+# --------------------------------------------------------------- system_one inherits
+seen = []
+f = make_fake()
+f.hooks = normalise_hooks(on_predict_start=lambda ctx: seen.append(ctx.states))
+out = f.system_one("state", QUESTIONS)
+check("system_one/hook fired", seen, [["state"]])
+check_true("system_one/returns a dict", isinstance(out, dict))
+
+
+# --------------------------------------------------------------- error policy
+def boom(ctx):
+    raise ValueError("hook boom")
+
+
+f = make_fake()
+check_raises("hooks_raise=True/propagates", ValueError,
+             lambda: f.predict_batch(["s0"], QUESTIONS, on_predict_start=boom))
+
+f = make_fake()
+with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    res = f.predict_batch(["s0"], QUESTIONS, on_predict_start=boom, hooks_raise=False)
+check("hooks_raise=False/continues", len(res), 1)
+check_true("hooks_raise=False/warns",
+           any(issubclass(w.category, RuntimeWarning) for w in caught))
+
+# ... but it arrives once per distinct message, not once per failure. The emit site is a plain
+# `warnings.warn` inside `laya/hooks.py::dispatch` (`:543-547`) whose text names the hook, the event and
+# the exception, so a hook that fails the same way repeats the same string, and Python's default
+# `RuntimeWarning` filter dedups by (message, category, caller line) for the rest of the process.
+# Every other `catch_warnings(record=True)` block in this suite (five of them) sets
+# `simplefilter("always")`, which is why the suite never contradicted the page.
+f = make_fake()
+with warnings.catch_warnings(record=True) as dedup:
+    warnings.simplefilter("default")
+    for _ in range(3):
+        f.predict_batch(["s0"], QUESTIONS, on_predict_start=boom, hooks_raise=False)
+check("warnings/identical repeats dedup to one line under the default filter", len(dedup), 1)
+check("warnings/and that line is the hook failure",
+      [str(w.message) for w in dedup], ["laya: hook _StartAdapter.on_predict_start failed: hook boom"])
+
+# The other half of the same claim: dedup keys on the message text, so a hook whose error varies with
+# the call -- a retry counter, a request id -- is not deduped at all. That is the arm that stays noisy.
+class Drifting:
+    def __init__(self):
+        self.n = 0
+
+    def on_predict_start(self, ctx):
+        self.n += 1
+        raise ValueError("hook attempt %d" % self.n)
+
+
+f = make_fake()
+drifting = Drifting()
+with warnings.catch_warnings(record=True) as varies:
+    warnings.simplefilter("default")
+    for _ in range(3):
+        f.predict_batch(["s0"], QUESTIONS, hooks=[drifting], hooks_raise=False)
+check("warnings/a varying message prints once per distinct text", len(varies), 3)
+check("warnings/all three name the same hook and event",
+      sorted({str(w.message).rsplit(": hook ", 1)[0] for w in varies}),
+      ["laya: hook Drifting.on_predict_start failed"])
+check("warnings/and the three texts are the three attempts",
+      sorted(str(w.message).rsplit(": ", 1)[1] for w in varies),
+      ["hook attempt 1", "hook attempt 2", "hook attempt 3"])
+
+# What makes two *distinct* texts is the hook type and the event named in the message: two classes
+# failing in one call are two lines, one hook failing on both events is two lines, but two instances
+# of the same class failing the same way collapse into one -- they produce the same string.
+class WarnPairA:
+    def on_predict_start(self, ctx):
+        raise ValueError("hook boom")
+
+
+class WarnPairB:
+    def on_predict_start(self, ctx):
+        raise ValueError("hook boom")
+
+
+f = make_fake()
+with warnings.catch_warnings(record=True) as same_type:
+    warnings.simplefilter("default")
+    f.predict_batch(["s0"], QUESTIONS, hooks=[WarnPairA(), WarnPairA()], hooks_raise=False)
+check("warnings/two instances of one class share one line", len(same_type), 1)
+
+f = make_fake()
+with warnings.catch_warnings(record=True) as other_type:
+    warnings.simplefilter("default")
+    f.predict_batch(["s0"], QUESTIONS, hooks=[WarnPairA(), WarnPairB()], hooks_raise=False)
+check("warnings/two classes failing alike are two lines", len(other_type), 2)
+
+
+class WarnBothEvents:
+    def on_predict_start(self, ctx):
+        raise ValueError("hook boom")
+
+    def on_predict_end(self, ctx):
+        raise ValueError("hook boom")
+
+
+f = make_fake()
+with warnings.catch_warnings(record=True) as both_events:
+    warnings.simplefilter("default")
+    f.predict_batch(["s0"], QUESTIONS, hooks=[WarnBothEvents()], hooks_raise=False)
+check("warnings/one hook failing on both events is two lines",
+      [str(w.message).rsplit(": hook ", 1)[0] for w in both_events],
+      ["laya: hook WarnBothEvents.on_predict_start failed",
+       "laya: hook WarnBothEvents.on_predict_end failed"])
+
+# And the call site is the other half of the key: the same hook failing from two different dispatch
+# lines -- an Agent call and a Router call -- has byte-identical text and still prints twice.
+class WarnTwoSites:
+    def on_predict_start(self, ctx):
+        raise ValueError("same text")
+
+
+class WarnRouteFake:
+    """The smallest thing a Router will attach: a `predict_batch` that answers."""
+
+    def predict_batch(self, states, questions, batch_size=None, **overrides):
+        return [{"model": "fake", "answers": {"seen": s},
+                 "usage": {"input_tokens": len(s), "output_tokens": 0}} for s in states]
+
+    def system_one(self, state, questions, **overrides):
+        return self.predict_batch([state], questions, **overrides)[0]
+
+
+two_sites = WarnTwoSites()
+f = make_fake()
+with warnings.catch_warnings(record=True) as sites:
+    warnings.simplefilter("default")
+    f.predict_batch(["s0"], QUESTIONS, hooks=[two_sites], hooks_raise=False)
+    rr = Router()
+    rr.attach("english", WarnRouteFake())
+    rr.predict_batch([{"state": "a", "questions": QUESTIONS, "model": "english"}],
+                     hooks=[two_sites], hooks_raise=False)
+check("warnings/the same text from two call sites prints twice", len(sites), 2)
+check("warnings/and the identical texts come from different sites",
+      len({(os.path.basename(w.filename), w.lineno) for w in sites}), 2)
+
+
+class ErrHook:
+    def __init__(self):
+        self.errors = []
+
+    def on_error(self, ctx):
+        self.errors.append(ctx.error)
+
+
+fail_seen = {}
+
+
+def end_on_fail(ctx):
+    fail_seen["error"] = ctx.error
+
+
+def bad_forward(b):
+    raise RuntimeError("infer boom")
+
+
+rec = ErrHook()
+f = make_fake()
+f._forward = bad_forward
+raised = None
+try:
+    f.predict_batch(["s0"], QUESTIONS, hooks=[rec], on_predict_end=end_on_fail)
+except RuntimeError as exc:
+    raised = exc
+check_true("on_error/propagates original", isinstance(raised, RuntimeError))
+check("on_error/fired once", len(rec.errors), 1)
+check("on_error/saw the error", str(rec.errors[0]), "infer boom")
+check("on_error/end still ran", str(fail_seen.get("error")), "infer boom")
+
+
+class BadErrHook:
+    def on_error(self, ctx):
+        raise ValueError("hook error")
+
+
+f = make_fake()
+f._forward = bad_forward
+raised = None
+try:
+    f.predict_batch(["s0"], QUESTIONS, hooks=[BadErrHook()])
+except BaseException as exc:  # noqa: BLE001
+    raised = exc
+check_true("on_error/failing hook does not mask the original", isinstance(raised, RuntimeError))
+check_true("on_error/failing hook is chained",
+           isinstance(getattr(raised, "__context__", None), ValueError))
+
+
+# a start hook that raises must still run on_error and the end hooks
+class StartErrRec:
+    def __init__(self):
+        self.errors = []
+
+    def on_error(self, ctx):
+        self.errors.append(ctx.error)
+
+
+start_fail_seen = []
+
+
+def raising_start(ctx):
+    raise ValueError("start boom")
+
+
+def end_after_start_fail(ctx):
+    start_fail_seen.append(ctx.error)
+
+
+rec2 = StartErrRec()
+f = make_fake()
+raised = None
+try:
+    f.predict_batch(["s0"], QUESTIONS, hooks=[rec2],
+                    on_predict_start=raising_start, on_predict_end=end_after_start_fail)
+except ValueError as exc:
+    raised = exc
+check_true("start failure/propagates", isinstance(raised, ValueError))
+check("start failure/on_error fired", len(rec2.errors), 1)
+check("start failure/end fired with the error", len(start_fail_seen), 1)
+check("start failure/end saw the error", str(start_fail_seen[0]), "start boom")
+
+
+# ctx.model carries the agent's model id
+f = make_fake()
+f.model_id = "convaiinnovations/laya"
+models = []
+f.predict_batch(["s0"], QUESTIONS, on_predict_end=lambda c: models.append(c.model))
+check("context/model is the agent model_id", models, ["convaiinnovations/laya"])
+
+
+# --------------------------------------------------------------- empty inputs
+empty = []
+f = make_fake()
+res = f.predict_batch([], QUESTIONS,
+                      on_predict_start=lambda c: empty.append(("s", c.results)),
+                      on_predict_end=lambda c: empty.append(("e", c.results)))
+check("empty states/returns []", res, [])
+check("empty states/start results None", empty[0][1], None)
+check("empty states/end results []", empty[1][1], [])
+
+empty = []
+f = make_fake()
+f.predict_batch(["s0"], {}, on_predict_end=lambda c: empty.append(c.results))
+check("empty questions/end sees empty results",
+      empty[0],
+      [{"model": "laya-rl-agent", "answers": {}, "usage": {"input_tokens": 0, "output_tokens": 0}}])
+
+
+# --------------------------------------------------------------- input guards and rescue
+f = make_fake()
+check_raises("guard/bare string raises", TypeError, lambda: f.predict_batch("nope", QUESTIONS))
+f = make_fake()
+check_raises("guard/bare dict raises", TypeError, lambda: f.predict_batch({"body": "x"}, QUESTIONS))
+
+
+def normalise_state(ctx):
+    ctx.states = [ctx.states]
+
+
+f = make_fake()
+f.predict_batch("nope", QUESTIONS, on_predict_start=normalise_state)
+check("guard/a hook can normalise a bare string", f._encode_states, ["nope"])
+
+
+# --------------------------------------------------------------- hand-built instance
+f = make_fake()
+res = f.predict_batch(["s0", "s1", "s2"], QUESTIONS)
+check("defaults/unset hooks are a no-op", len(res), 3)
+check("defaults/offsets unchanged", [r["answers"]["_offset"] for r in res], [0, NQ, 2 * NQ])
+
+
+# --------------------------------------------------------------- dynamic registration
+class Tag:
+    def __init__(self, log, tag):
+        self.log = log
+        self.tag = tag
+
+    def on_predict_end(self, ctx):
+        self.log.append(self.tag)
+
+
+log = []
+f = make_fake()
+f.add_hook(Tag(log, "a"))
+f.predict_batch(["s0"], QUESTIONS)
+check("add_hook/fires", log, ["a"])
+check("remove_hook/returns True", f.remove_hook(f.hooks[-1]), True)
+log.clear()
+f.predict_batch(["s0"], QUESTIONS)
+check("remove_hook/no longer fires", log, [])
+check("remove_hook/unknown returns False", f.remove_hook(object()), False)
+
+log = []
+f = make_fake()
+check_true("add_hook/returns self", f.add_hook([Tag(log, "x"), Tag(log, "y")]) is f)
+f.predict_batch(["s0"], QUESTIONS)
+check("add_hook/sequence order", log, ["x", "y"])
+
+log = []
+f = make_fake()
+f.add_hook(Tag(log, "installed"))
+with f.hooks_installed(Tag(log, "temp")):
+    f.predict_batch(["s0"], QUESTIONS)
+f.predict_batch(["s0"], QUESTIONS)
+check("hooks_installed/only during the block", log, ["installed", "temp", "installed"])
+
+# ...and the block restores the PREVIOUS list, which is what the docs promise. Installing a hook
+# that is already installed is legal (`add_hook` appends), so the block has to take its own copy
+# back off and leave the caller's in place. Removing by identity instead took both, so a hook an
+# application had installed once was silently uninstalled by any block that happened to name it.
+log = []
+f = make_fake()
+already = Tag(log, "already")
+f.add_hook(already)
+check("hooks_installed/pre-installed hook is present", len(f.hooks), 1)
+with f.hooks_installed(already):
+    check("hooks_installed/the block adds a second copy", len(f.hooks), 2)
+    f.predict_batch(["s0"], QUESTIONS)
+check("hooks_installed/restores the previous list", len(f.hooks), 1)
+log.clear()
+f.predict_batch(["s0"], QUESTIONS)
+check("hooks_installed/the pre-installed hook still fires after the block", log, ["already"])
+
+# The block removes ONE occurrence per hook it added -- the most recent match by identity -- and
+# touches nothing else. Two cases pin that, because the obvious alternatives get them wrong: a
+# snapshot restore reinstates a list from before the inner block and so drops a hook the inner
+# block legitimately installed; and removing by identity takes the caller's own copy too.
+log = []
+f = make_fake()
+outer, inner = Tag(log, "outer"), Tag(log, "inner")
+with f.hooks_installed(outer):
+    check("hooks_installed/overlapping blocks: outer installed", len(f.hooks), 1)
+    with f.hooks_installed(inner):
+        check("hooks_installed/overlapping blocks: both installed", len(f.hooks), 2)
+    check("hooks_installed/overlapping blocks: inner exit leaves the outer hook",
+          len(f.hooks), 1)
+    check_true("hooks_installed/overlapping blocks: and it is the outer one",
+               f.hooks[0] is outer)
+check("hooks_installed/overlapping blocks: outer exit leaves nothing", len(f.hooks), 0)
+
+# a hook added INSIDE the block is not the block's to remove, so it outlives it
+log = []
+f = make_fake()
+added_inside = Tag(log, "added-inside")
+with f.hooks_installed(Tag(log, "temp")):
+    f.add_hook(added_inside)
+    check("hooks_installed/add_hook inside: both present", len(f.hooks), 2)
+check("hooks_installed/add_hook inside: survives the block", len(f.hooks), 1)
+check_true("hooks_installed/add_hook inside: and it is the one that was added",
+           f.hooks[0] is added_inside)
+log.clear()
+f.predict_batch(["s0"], QUESTIONS)
+check("hooks_installed/add_hook inside: still fires after the block", log, ["added-inside"])
+
+# sequences are flattened, matching add_hook and the hooks= parameter
+log = []
+f = make_fake()
+with f.hooks_installed([Tag(log, "x"), Tag(log, "y")]):
+    f.predict_batch(["s0"], QUESTIONS)
+f.predict_batch(["s0"], QUESTIONS)
+check("hooks_installed/list of hooks fires during the block", log, ["x", "y"])
+check("hooks_installed/list of hooks removed after the block", len(f.hooks), 0)
+
+log = []
+f = make_fake()
+with f.hooks_installed((Tag(log, "a"),), Tag(log, "b")):
+    f.predict_batch(["s0"], QUESTIONS)
+check("hooks_installed/tuple arg and varargs mix in order", log, ["a", "b"])
+
+# and the same hook passed twice is the same case with no pre-install at all
+log = []
+f = make_fake()
+with f.hooks_installed(Tag(log, "t"), Tag(log, "t")):
+    pass
+check("hooks_installed/no residue when nothing was installed before", len(f.hooks), 0)
+
+
+# --------------------------------------------------------------- skip() counts
+# `skip()` replaces the whole call, so the count is part of the contract its docstring
+# states: one result per state, or a single result for the whole call (the shape
+# `predict_long` takes as the document's answer -- its scan hands the hook every window
+# as a state). Anything else used to pass through unchecked: `Router.predict` then
+# indexed `results[0]` of an empty list (an `IndexError`, a 500 over serve), and
+# `predict_batch` returned a shorter list than it was given states, silently dropping
+# rows the caller was about to zip against.
+
+def _skipper(*results):
+    def hook(ctx):
+        ctx.skip(list(results))
+    return hook
+
+
+CACHED = {"model": "cache", "usage": {},
+          "answers": {"a": {"type": "noul", "noul": 0.9}, "b": {"type": "noul", "noul": 0.1}}}
+
+# one per state: the docs' cache pattern, and the shape `predict_batch` returns
+f = make_fake()
+res = f.predict_batch(["s0", "s1", "s2"], QUESTIONS, on_predict_start=_skipper(CACHED, CACHED, CACHED))
+check("skip/one per state is accepted", len(res), 3)
+check("skip/forward never ran", len(f._encode_states), 0)
+check("skip/the payload comes back untouched", res[0], CACHED)
+
+# one result for the whole call: what a `predict_long` scan's hook answers with, even
+# though `ctx.states` holds every window. Pinned here because the scan's own check
+# (`predict_long: a start hook answered this state with N results`) reads the other
+# shape as a mistake, and this is the path it accepts.
+f = make_fake()
+res = f.predict_batch(["s0", "s1"], QUESTIONS, on_predict_start=_skipper(CACHED))
+check("skip/one result for the whole call is accepted", len(res), 1)
+check("skip/whole-call answer: forward never ran", len(f._encode_states), 0)
+
+# short and long counts are refused at the hook, with the contract in the message
+f = make_fake()
+err = None
+try:
+    f.predict_batch(["s0", "s1", "s2"], QUESTIONS, on_predict_start=_skipper(CACHED, CACHED))
+except ValueError as exc:
+    err = exc
+check_true("skip/a short list is refused", err is not None, repr(err))
+check_true("skip/the refusal names the contract",
+           err is not None and "one per state" in str(err), repr(err))
+check("skip/a refused skip leaves inference untouched", len(f._encode_states), 0)
+
+f = make_fake()
+err = None
+try:
+    f.predict_batch(["s0"], QUESTIONS, on_predict_start=_skipper())
+except ValueError as exc:
+    err = exc
+check_true("skip/an empty answer for a non-empty call is refused", err is not None, repr(err))
+check_true("skip/the refusal counts the states",
+           err is not None and "(1); got 0" in str(err), repr(err))
+
+# under hooks_raise=False a refusal warns like any other hook failure and the call still
+# gets an answer: the cache is wrong, not the request.
+f = make_fake()
+with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    res = f.predict_batch(["s0"], QUESTIONS, on_predict_start=_skipper(), hooks_raise=False)
+check("skip/refusal under hooks_raise=False falls back to inference", len(res), 1)
+check_true("skip/refusal under hooks_raise=False is warned",
+           any(issubclass(w.category, RuntimeWarning) and "ctx.skip()" in str(w.message)
+               for w in caught), [str(w.message) for w in caught])
+
+# Router.predict used to turn an empty answer into `ctx.results[0]` -- IndexError, a 500
+# over serve. The same refusal, raised where the contract is written.
+_skip_router = Router(default="english")
+_skip_router.attach("english", FakeAgent())
+check_raises("router/skip empty is a ValueError, not an IndexError",
+             ValueError,
+             lambda: _skip_router.predict("hello", QUESTIONS,
+                                          on_predict_start=lambda ctx: ctx.skip([])))
+
+log = []
+r = Router(default="english")
+r.add_hook(Tag(log, "router"))
+r.attach("english", FakeAgent())
+r.predict("hello", QUESTIONS)
+check("router/add_hook fires", log, ["router"])
+
+
+# --------------------------------------------------------------- per-call token budget
+def make_len_fake():
+    fake = make_fake()
+    fake._seen = []
+
+    def _encode(state, ids, internal, max_len=None, head_max_len=None):
+        fake._seen.append((max_len, head_max_len))
+        return [{"ids": [1, 2, 3], "markers": [0, 1], "qtype": 2, "state_stats": NO_STATE_STATS} for _ in ids]
+
+    fake._encode_state = _encode
+    return fake
+
+
+f = make_len_fake()
+f.predict_batch(["s"], QUESTIONS, max_len=128, head_max_len=64)
+check("budget/per-call kwargs reach _encode_state", f._seen, [(128, 64)])
+
+f = make_len_fake()
+f.predict_batch(["s"], QUESTIONS, on_predict_start=lambda c: setattr(c, "max_len", 200))
+check("budget/hook-set ctx reaches _encode_state", f._seen, [(200, None)])
+
+f = make_len_fake()
+f.predict_batch(["s"], QUESTIONS)
+check("budget/default passes no override", f._seen, [(None, None)])
+
+
+class LenFake:
+    def __init__(self):
+        self.seen = []
+
+    def system_one(self, state, questions, max_len=None, head_max_len=None):
+        self.seen.append((max_len, head_max_len))
+        return {"model": "x", "answers": {}, "usage": {"input_tokens": 0, "output_tokens": 0}}
+
+
+lf = LenFake()
+r = Router(default="english")
+r.attach("english", lf)
+r.predict("hello", QUESTIONS, max_len=256, head_max_len=128)
+check("budget/router per-call reaches the agent", lf.seen, [(256, 128)])
+
+lf = LenFake()
+r = Router(default="english")
+r.attach("english", lf)
+r.predict("hello", QUESTIONS, on_predict_start=lambda c: setattr(c, "head_max_len", 96))
+check("budget/router hook-set reaches the agent", lf.seen, [(None, 96)])
+
+
+class StrictFake:
+    """An agent-like object that does not accept the override kwargs."""
+
+    def system_one(self, state, questions):
+        return {"model": "x", "answers": {}, "usage": {"input_tokens": 0, "output_tokens": 0}}
+
+
+r = Router(default="english")
+r.attach("english", StrictFake())
+r.predict("hello", QUESTIONS)
+check("budget/default does not pass override kwargs", True, True)
+
+
+# --------------------------------------------------------------- context semantics
+from laya.hooks import PredictContext  # noqa: E402
+
+_c1 = PredictContext(states=[], questions={})
+_c2 = PredictContext(states=[], questions={})
+check_true("context/hashable by identity", isinstance(hash(_c1), int))
+check("context/two contexts are never equal", _c1 == _c2, False)
+
+
+# --------------------------------------------------------------- validation
+class NotAHook:
+    pass
+
+
+check_raises("validation/hooks= rejects a class", TypeError, lambda: normalise_hooks(hooks=[NotAHook]))
+check_raises("validation/hooks= rejects a plain callable", TypeError,
+             lambda: normalise_hooks(hooks=[lambda ctx: None]))
+check_raises("validation/on_predict_start must be callable", TypeError,
+             lambda: normalise_hooks(on_predict_start=123))
+
+
+class BadMethod:
+    on_predict_start = 5
+
+
+check_raises("validation/hook method must be callable", TypeError,
+             lambda: normalise_hooks(hooks=[BadMethod()]))
+
+
+# ------------------------------------------------- docs/hooks/errors.md's table, executed
+# The "Configuration errors" table is the page's only statement about which bad configuration
+# raises what, and its `example` column is the part a reader copies. Row "non-callable event"
+# used to read `on_predict_start = 5`, which is the row beneath it: both raise
+# `on_predict_start must be callable, got int` from `_StartAdapter.__init__`, so the branch that
+# validates an event attribute on a `hooks=` entry (laya/hooks.py:186-190) was unreachable from
+# the page while the page still claimed it. This gate parses the table, calls
+# `normalise_hooks(<example>)` for every row exactly as the page spells it, and pins the message
+# each row produces -- a row whose example drifts onto another row's error fails here rather
+# than in a reader's terminal. Weight-free: `normalise_hooks` builds no model.
+import re as _re  # noqa: E402
+from pathlib import Path as _CfgPath  # noqa: E402
+
+_cfg_doc = _CfgPath(__file__).resolve().parents[1] / "docs" / "hooks" / "errors.md"
+_cfg_section = _cfg_doc.read_text(encoding="utf-8").split("## Configuration errors", 1)[1] \
+    .split("\n## ", 1)[0]
+_cfg_rows = [[c.strip() for c in line.strip().strip("|").split("|")]
+             for line in _cfg_section.split("\n") if line.strip().startswith("|")][2:]
+
+
+def _cfg_message(cells):
+    """The TypeError text one row's example raises, or 'NO ERROR' if it raises nothing."""
+    parts = _re.split(r"`\s*,\s*with\s*`", cells[2].strip("`"), maxsplit=1)
+    ns = {"normalise_hooks": normalise_hooks, "MyHook": type("MyHook", (), {})}
+    if len(parts) > 1:
+        exec(parts[1], ns)                       # the class or value the example needs
+    try:
+        eval("normalise_hooks(%s)" % parts[0], ns)
+    except TypeError as exc:
+        return str(exc)
+    return "NO ERROR"
+
+
+_cfg_events = "on_predict_start, on_predict_end, on_route, on_load, on_evict, on_error"
+_cfg_implements = ("hooks entries must implement at least one of %s; got %%s. "
+                   "Pass a plain callable as on_predict_start=/on_predict_end= instead."
+                   % _cfg_events)
+_CFG_EXPECT = [
+    ("class instead of instance", "hooks entries must be instances, not classes; got MyHook. "
+                                  "Instantiate it first."),
+    ("no lifecycle method", _cfg_implements % "object"),
+    ("non-callable event", "hooks entry BadMethod.on_predict_start must be callable, got int"),
+    ("non-callable convenience hook", "on_predict_start must be callable, got int"),
+    ("plain callable in `hooks=`", _cfg_implements % "function"),
+]
+
+_cfg_msgs = [_cfg_message(c) for c in _cfg_rows]
+check("errors.md's configuration table still names these five cases, in order",
+      [c[0] for c in _cfg_rows], [c for c, _ in _CFG_EXPECT])
+check("every row is raised at construction, as its column claims",
+      sorted({c[1] for c in _cfg_rows}), ["construction"])
+for (case, want), got in zip(_CFG_EXPECT, _cfg_msgs):
+    check("errors.md row %r reaches its own message" % case, got, want)
+check("the event-attribute row does not raise the convenience hook's error",
+      _cfg_msgs[2] == _cfg_msgs[3], False)
+def _cfg_check_id(msg):
+    """The check a message came from, with the `got <type>` token it embeds stripped."""
+    return msg.split("; got")[0]
+
+
+check("an object and a lambda trip the same check, and no two rows share a message",
+      [_cfg_check_id(_cfg_msgs[1]) == _cfg_check_id(_cfg_msgs[4]), len(set(_cfg_msgs))],
+      [True, 5])
+
+
+# ------------------------------------------- docs/hooks/patterns.md's audit hook actually runs
+# The "Audit log" block is that page's answer to "how do I record every decision", and a reader
+# pastes it as written. It imported `json` only, while the body it documents writes to
+# `sys.stdout`, so the first call raised NameError inside the hook -- and `hooks_raise` defaults
+# to True, so the recording hook failed the very request it was recording. `docs/hooks/examples.md`
+# carries the same hook and does import sys. The gate execs the block from the page with a stub
+# `laya` -- 10 of the page's 21 python blocks end in a bare `laya.load(...)` and none of those
+# imports it, so that is the page's own convention, not an accident here -- then installs the hook
+# it hands to `laya.load` through the real `normalise_hooks` + `dispatch` and calls it with a real
+# PredictContext over two states -- so what runs is the page's code on the library's path.
+import ast as _A  # noqa: E402
+import builtins as _B  # noqa: E402
+import contextlib as _CL  # noqa: E402
+import io as _IO  # noqa: E402
+import json as _JSON  # noqa: E402
+import types as _T  # noqa: E402
+from laya.hooks import dispatch as _dispatch  # noqa: E402
+from pathlib import Path as _DocPath  # noqa: E402
+
+_pat_doc = _DocPath(__file__).resolve().parents[1] / "docs" / "hooks" / "patterns.md"
+_pat_section = _pat_doc.read_text(encoding="utf-8").split("### Audit log", 1)[1]
+_pat_block = _pat_section.split("```python\n", 1)[1].split("\n```", 1)[0]
+
+
+def _pat_free_names(src):
+    """Names the block reads but never binds, builtins excluded."""
+    tree = _A.parse(src)
+    bound = set(dir(_B))
+    for node in _A.walk(tree):
+        if isinstance(node, (_A.Import, _A.ImportFrom)):
+            bound.update((a.asname or a.name).split(".")[0] for a in node.names)
+        elif isinstance(node, _A.Name) and isinstance(node.ctx, (_A.Store, _A.Del)):
+            bound.add(node.id)
+        elif isinstance(node, _A.arg):
+            bound.add(node.arg)
+        elif isinstance(node, (_A.FunctionDef, _A.AsyncFunctionDef, _A.ClassDef)):
+            bound.add(node.name)
+        elif isinstance(node, _A.ExceptHandler) and node.name:
+            bound.add(node.name)
+    return sorted({n.id for n in _A.walk(tree)
+                   if isinstance(n, _A.Name) and isinstance(n.ctx, _A.Load)} - bound)
+
+
+check("the audit block's only free name is the `laya` its `laya.load` line never imports",
+      _pat_free_names(_pat_block), ["laya"])
+
+_pat_registered = []
+_pat_ns = {"laya": _T.SimpleNamespace(load=lambda *a, **kw: _pat_registered.append(kw))}
+try:
+    exec(compile(_pat_block, "docs/hooks/patterns.md", "exec"), _pat_ns)
+    _pat_hooks = normalise_hooks(**_pat_registered[0])
+except Exception as _pat_exc:  # noqa: BLE001
+    _pat_hooks = []
+    _pat_install_error = "%s: %s" % (type(_pat_exc).__name__, _pat_exc)
+else:
+    _pat_install_error = None
+
+_pat_hook = next(iter(_pat_hooks), None)
+check("the block installs without raising, through the real normalise_hooks",
+      _pat_install_error, None)
+check("the page's `laya.load(...)` call carries exactly one keyword, `on_predict_end`",
+      [sorted(_pat_registered[0]) if _pat_registered else None], [["on_predict_end"]])
+check("it becomes exactly one hook, and it is the `audit` the block defines",
+      [len(_pat_hooks), getattr(_pat_hook, "fn", None) is _pat_ns.get("audit")], [1, True])
+
+_pat_ctx = PredictContext(states=["charged twice", "cancel my plan"], questions={})
+_pat_ctx.results = [{"answers": {"intent": "billing"}, "routing": {"model": "english"}, "usage": None},
+                    {"answers": {"intent": "support"}}]
+_pat_ctx.model = "english"
+_pat_ctx.usage = {"input_tokens": 30, "output_tokens": 0}
+_pat_ctx.elapsed_ms = 1.5
+_pat_out = _IO.StringIO()
+try:
+    with _CL.redirect_stdout(_pat_out):
+        _dispatch(_pat_hooks, "on_predict_end", _pat_ctx)
+    _pat_records = [line for line in _pat_out.getvalue().split("\n") if line]
+    _pat_error = None
+except Exception as _pat_exc:  # noqa: BLE001
+    _pat_records = []
+    _pat_error = "%s: %s" % (type(_pat_exc).__name__, _pat_exc)
+
+check("the page's hook records both states without raising", _pat_error, None)
+check("one JSON record per state", len(_pat_records), 2)
+check("each record parses, and carries the call's identity plus the state it describes",
+      [sorted(_JSON.loads(_pat_records[0])) if _pat_records else None],
+      [["answers", "call_elapsed_ms", "call_usage", "model", "routing", "run_id", "state", "usage"]])
+check("the second record is the second state",
+      _JSON.loads(_pat_records[1])["state"] if len(_pat_records) > 1 else None, "cancel my plan")
+
+
+# --------------------------------------------------------------- Router
+class RouteHook:
+    def __init__(self):
+        self.decisions = []
+
+    def on_route(self, ctx):
+        self.decisions.append(dict(ctx.decision))
+        ctx.decision = RouteDecision(model="multilingual", repo="convaiinnovations/laya/multilingual",
+                                     reason="pinned by hook", detection=None, workflow=None)
+
+
+rh = RouteHook()
+r = Router(default="english", hooks=[rh])
+decision = r.route("hello", QUESTIONS)
+check("router/on_route fired", len(rh.decisions), 1)
+check("router/on_route saw the original", rh.decisions[0]["model"], "english")
+check("router/on_route can replace the decision", decision["model"], "multilingual")
+
+
+class LoadHook:
+    def __init__(self):
+        self.loads = []
+        self.evicts = []
+
+    def on_load(self, ctx):
+        self.loads.append(ctx.model)
+
+    def on_evict(self, ctx):
+        self.evicts.append(ctx.model)
+
+
+class BuiltAgent(FakeAgent):
+    def __init__(self, *args, **kwargs):
+        pass
+
+
+lh = LoadHook()
+real_agent = _agent_mod.Agent
+_agent_mod.Agent = BuiltAgent
+try:
+    r = Router(max_loaded=1, default="english", hooks=[lh])
+    r.load("english")
+    r.load("multilingual")  # evicts english
+finally:
+    _agent_mod.Agent = real_agent
+check("router/on_load fired per build", lh.loads, ["english", "multilingual"])
+check("router/on_evict fired on eviction", lh.evicts, ["english"])
+
+
+predict_seen = {}
+r = Router(default="english",
+           on_predict_start=lambda ctx: predict_seen.update(decision=dict(ctx.decision)),
+           on_predict_end=lambda ctx: predict_seen.update(results=ctx.results))
+r.attach("english", FakeAgent())
+out = r.predict("hello", QUESTIONS)
+check("router/predict start sees the decision", predict_seen["decision"]["model"], "english")
+check("router/predict end sees results", len(predict_seen["results"]), 1)
+check("router/predict keeps routing", out["routing"]["model"], "english")
+
+
+class PredictSuccessTrace:
+    def __init__(self):
+        self.events = []
+        self.contexts = []
+
+    def on_predict_start(self, ctx):
+        self.events.append("start")
+        self.contexts.append(ctx)
+
+    def on_predict_end(self, ctx):
+        self.events.append("end")
+        self.contexts.append(ctx)
+
+
+success_trace = PredictSuccessTrace()
+r = Router(default="english", hooks=[success_trace])
+r.attach("english", FakeAgent())
+success_out = r.predict("hello", QUESTIONS)
+check("router/predict success lifecycle", success_trace.events, ["start", "end"])
+check_true("router/predict success shares one context", success_trace.contexts[0] is success_trace.contexts[1])
+check("router/predict success shares one run_id", success_trace.contexts[0].run_id,
+      success_trace.contexts[1].run_id)
+check("router/predict success keeps the normal result", success_out["routing"]["model"], "english")
+
+
+class TimedAgent:
+    def system_one(self, state, questions, **kwargs):
+        return {"model": "timed", "answers": {}, "usage": {"input_tokens": 0, "output_tokens": 0}}
+
+
+class TimedRouter(Router):
+    def load(self, model):
+        time.sleep(0.001)
+        self.load_finished = time.perf_counter()
+        return TimedAgent()
+
+
+timed_trace = PredictSuccessTrace()
+timed_router = TimedRouter(default="english", hooks=[timed_trace])
+timed_router.predict("hello", QUESTIONS)
+timed_ctx = timed_trace.contexts[0]
+check_true("router/success elapsed starts after load", timed_ctx.started_at >= timed_router.load_finished)
+
+
+cached = [{"model": "cached", "answers": {}, "usage": {"input_tokens": 0, "output_tokens": 0}}]
+r = Router(default="english")
+r.attach("english", FakeAgent())
+skipped = r.predict("hello", QUESTIONS, on_predict_start=lambda c: c.skip(cached))
+check("router/skip returns the cached payload", skipped, cached[0])
+check("router/skip still adds routing", skipped.get("routing", {}).get("model"), "english")
+
+
+class PerCallRoute:
+    def __init__(self):
+        self.decisions = []
+
+    def on_route(self, ctx):
+        self.decisions.append(dict(ctx.decision))
+
+
+pcr = PerCallRoute()
+r = Router(default="english")
+r.attach("english", FakeAgent())
+r.predict("hello", QUESTIONS, hooks=[pcr])
+check("router/per-call hooks apply to on_route", len(pcr.decisions), 1)
+
+
+class PredictFailureTrace:
+    def __init__(self):
+        self.events = []
+        self.contexts = {}
+
+    def on_predict_start(self, ctx):
+        self.events.append("start")
+
+    def on_error(self, ctx):
+        self.events.append("error")
+        self.contexts["error"] = ctx
+
+    def on_predict_end(self, ctx):
+        self.events.append("end")
+        self.contexts["end"] = ctx
+
+
+class RaiseOnRoute(PredictFailureTrace):
+    def on_route(self, ctx):
+        raise RuntimeError("route failed")
+
+
+route_trace = RaiseOnRoute()
+route_error = None
+try:
+    Router(hooks=[route_trace]).predict("hello", QUESTIONS)
+except RuntimeError as exc:
+    route_error = exc
+check_true("router/route failure propagates", isinstance(route_error, RuntimeError))
+check("router/route failure lifecycle", route_trace.events, ["error", "end"])
+check_true("router/route failure has no start", "start" not in route_trace.events)
+route_ctx = route_trace.contexts.get("error")
+check_true("router/route failure records the original error",
+           getattr(route_ctx, "error", None) is route_error)
+check("router/route failure has no decision", getattr(route_ctx, "decision", "missing"), None)
+check("router/route failure has no model", getattr(route_ctx, "model", "missing"), None)
+check("router/route failure has no agent", getattr(route_ctx, "agent", "missing"), None)
+
+
+class LoadFailRouter(Router):
+    def load(self, model):
+        raise RuntimeError("load failed")
+
+
+load_trace = PredictFailureTrace()
+load_error = None
+try:
+    LoadFailRouter(default="english", hooks=[load_trace]).predict("hello", QUESTIONS)
+except RuntimeError as exc:
+    load_error = exc
+check_true("router/load failure propagates", isinstance(load_error, RuntimeError))
+check("router/load failure lifecycle", load_trace.events, ["error", "end"])
+check_true("router/load failure has no start", "start" not in load_trace.events)
+load_ctx = load_trace.contexts.get("error")
+check_true("router/load failure records the original error",
+           getattr(load_ctx, "error", None) is load_error)
+check("router/load failure retains the routed decision",
+      (getattr(load_ctx, "decision", None) or {}).get("model"), "english")
+check("router/load failure exposes the routed model", getattr(load_ctx, "model", "missing"), "english")
+check("router/load failure has no agent", getattr(load_ctx, "agent", "missing"), None)
+
+
+# --------------------------------------------------------------- Router.predict_batch
+# `predict_batch` promises each result is what `predict` returns for that request, so Router-level
+# predict hooks must run per request there too. It used to skip them: a redaction hook never ran,
+# and the raw state reached the model.
+class BatchFake:
+    """Records every `predict_batch` call and answers with the state it was given."""
+
+    def __init__(self):
+        self.calls = []
+
+    def predict_batch(self, states, questions, batch_size=None, **overrides):
+        self.calls.append((list(states), questions, overrides))
+        if "boom" in states:
+            raise RuntimeError("inference failed")
+        return [{"model": "fake", "answers": {"seen": s},
+                 "usage": {"input_tokens": len(s), "output_tokens": 0}} for s in states]
+
+    def system_one(self, state, questions, **overrides):
+        return self.predict_batch([state], questions, **overrides)[0]
+
+
+def batch_router(**kwargs):
+    r = Router(**kwargs)
+    en, ml = BatchFake(), BatchFake()
+    r.attach("english", en)
+    r.attach("multilingual", ml)
+    return r, en, ml
+
+
+def req(state, model="english", questions=QUESTIONS):
+    return {"state": state, "questions": questions, "model": model}
+
+
+def redact_start(ctx):
+    ctx.states = [s.replace("secret", "[redacted]") for s in ctx.states]
+
+
+r, en, ml = batch_router(on_predict_start=redact_start)
+out = r.predict_batch([req("a secret"), req("b secret", "multilingual"), req("c secret")])
+check("router_batch/start hook rewrite reaches the agent",
+      [c[0] for c in en.calls + ml.calls], [["a [redacted]", "c [redacted]"], ["b [redacted]"]])
+check("router_batch/results follow the rewrite", [o["answers"]["seen"] for o in out],
+      ["a [redacted]", "b [redacted]", "c [redacted]"])
+
+batch_events = []
+batch_results_at_start = {}
+
+
+class BatchTrace:
+    def on_predict_start(self, ctx):
+        batch_events.append(("start", ctx.states[0], ctx))
+        batch_results_at_start[ctx.states[0]] = ctx.results
+
+    def on_predict_end(self, ctx):
+        batch_events.append(("end", ctx.states[0], ctx))
+
+    def on_error(self, ctx):
+        batch_events.append(("error", ctx.states[0], ctx))
+
+
+r, en, ml = batch_router(hooks=[BatchTrace()])
+out = r.predict_batch([req("one"), req("two", "multilingual"), req("three")])
+check("router_batch/one start and one end per request, per checkpoint group, ends in reverse",
+      [(e[0], e[1]) for e in batch_events],
+      [("start", "one"), ("start", "three"), ("end", "three"), ("end", "one"),
+       ("start", "two"), ("end", "two")])
+starts = {e[1]: e[2] for e in batch_events if e[0] == "start"}
+ends = {e[1]: e[2] for e in batch_events if e[0] == "end"}
+check("router_batch/every request starts and ends", (sorted(starts), sorted(ends)),
+      (["one", "three", "two"], ["one", "three", "two"]))
+if len(starts) == len(ends) == 3:
+    check("router_batch/start sees its own state", starts["two"].states, ["two"])
+    check("router_batch/start sees its own questions", starts["two"].questions, QUESTIONS)
+    check("router_batch/start sees its own decision", starts["two"].decision["model"], "multilingual")
+    check("router_batch/context model is the routed checkpoint", starts["two"].model, "multilingual")
+    check_true("router_batch/context agent is the routed agent", starts["two"].agent is ml)
+    check_true("router_batch/context router is set", starts["two"].router is r)
+    check("router_batch/start has no results", batch_results_at_start, {"one": None, "two": None, "three": None})
+    check_true("router_batch/start and end share one context per request", ends["two"] is starts["two"])
+    check("router_batch/end sees its own result", ends["two"].results[0]["answers"]["seen"], "two")
+    check("router_batch/end result carries routing", ends["two"].results[0]["routing"]["model"], "multilingual")
+    check("router_batch/usage is per request", ends["three"].usage, {"input_tokens": 5, "output_tokens": 0})
+    check_true("router_batch/elapsed_ms set", ends["one"].elapsed_ms is not None)
+    check("router_batch/run_id differs per request", len({c.run_id for c in starts.values()}), 3)
+check("router_batch/still one agent call per checkpoint", [c[0] for c in en.calls + ml.calls],
+      [["one", "three"], ["two"]])
+
+
+class PlainDictPin:
+    """An on_route hook replacing the decision with a plain dict, which `predict` accepts."""
+
+    def on_route(self, ctx):
+        ctx.decision = {**ctx.decision, "model": "multilingual"}
+
+
+r, en, ml = batch_router(hooks=[PlainDictPin()])
+try:
+    out = r.predict_batch([req("pinned")])
+    got = ([c[0] for c in ml.calls], out[0]["routing"]["model"])
+except AttributeError as e:
+    got = repr(e)
+check("router_batch/an on_route hook may replace the decision with a plain dict", got, ([["pinned"]], "multilingual"))
+
+group_ctxs = []
+elapsed_when_first_end_ran = []
+
+
+def remember_start(ctx):
+    group_ctxs.append(ctx)
+
+
+def first_end(ctx):
+    if not elapsed_when_first_end_ran:
+        elapsed_when_first_end_ran.append([c.elapsed_ms is not None for c in group_ctxs])
+
+
+r, en, ml = batch_router(on_predict_start=remember_start, on_predict_end=first_end)
+r.predict_batch([req("a"), req("b"), req("c")])
+check("router_batch/elapsed_ms is set for the whole group before any end hook runs",
+      elapsed_when_first_end_ran, [[True, True, True]])
+
+
+def replace_result(ctx):
+    ctx.results = [{"replaced": ctx.states[0]}]
+
+
+r, en, ml = batch_router(on_predict_end=replace_result)
+check("router_batch/an end hook's replacement is what is returned",
+      r.predict_batch([req("x"), req("y", "multilingual")]), [{"replaced": "x"}, {"replaced": "y"}])
+
+cached_x = {"model": "cached", "answers": {}, "usage": {"input_tokens": 0, "output_tokens": 0}}
+r, en, ml = batch_router(on_predict_start=lambda c: c.skip([dict(cached_x)]) if c.states == ["x"] else None)
+out = r.predict_batch([req("x"), req("y")])
+check("router_batch/skip keeps that state from the agent", [c[0] for c in en.calls], [["y"]])
+check("router_batch/skip returns the cached payload", out[0]["model"], "cached")
+check("router_batch/skip still adds routing", out[0].get("routing", {}).get("model"), "english")
+check("router_batch/the other request is inferred", out[1]["answers"]["seen"], "y")
+
+
+def annotate_end(ctx):
+    ctx.results[0]["audited"] = ctx.decision["model"]
+
+
+mixed = [req("a secret"), req("b secret", "multilingual"), req("c", "english")]
+r, en, ml = batch_router(on_predict_start=redact_start, on_predict_end=annotate_end)
+batched = r.predict_batch(mixed)
+one_by_one = [r.predict(m["state"], m["questions"], model=m["model"]) for m in mixed]
+check("router_batch/identical to one predict call per request", batched, one_by_one)
+
+
+def budget_start(ctx):
+    if ctx.states == ["long"]:
+        ctx.max_len = 1024
+
+
+r, en, ml = batch_router(on_predict_start=budget_start)
+r.predict_batch([req("short"), req("long"), req("short again")])
+check("router_batch/hook-set token budget reaches the agent for that request only",
+      [(c[0], c[2]) for c in en.calls], [(["short", "short again"], {}), (["long"], {"max_len": 1024})])
+
+Q_OTHER = {"other": {"type": "noul", "instructions": "Other?"}}
+r, en, ml = batch_router(on_predict_start=lambda c: setattr(c, "questions", Q_OTHER) if c.states == ["b"] else None)
+r.predict_batch([req("a"), req("b"), req("c")])
+check("router_batch/rewritten questions are batched on their own",
+      [(c[0], c[1]) for c in en.calls], [(["a", "c"], QUESTIONS), (["b"], Q_OTHER)])
+
+
+class StrictBatchFake(BatchFake):
+    """An agent-like object whose predict_batch takes no token-budget kwargs."""
+
+    def predict_batch(self, states, questions, batch_size=None):
+        return BatchFake.predict_batch(self, states, questions, batch_size)
+
+
+r = Router(on_predict_start=lambda c: None)
+strict = StrictBatchFake()
+r.attach("english", strict)
+r.predict_batch([req("a"), req("b")], batch_size=8)
+check("router_batch/default passes no override kwargs", [c[0] for c in strict.calls], [["a", "b"]])
+
+batch_events = []
+r, en, ml = batch_router(hooks=[BatchTrace()])
+check_raises("router_batch/inference failure propagates", RuntimeError,
+             lambda: r.predict_batch([req("ok", "multilingual"), req("boom"), req("also")]))
+check("router_batch/failure pairs every started request with on_error then on_predict_end",
+      [(e[0], e[1]) for e in batch_events],
+      [("start", "ok"), ("end", "ok"), ("start", "boom"), ("start", "also"),
+       ("error", "also"), ("end", "also"), ("error", "boom"), ("end", "boom")])
+ends = {e[1]: e[2] for e in batch_events if e[0] == "end"}
+check_true("router_batch/end of a failed request sees the error",
+           all(isinstance(getattr(ends.get(s), "error", None), RuntimeError) for s in ("boom", "also")))
+check_true("router_batch/an earlier group that finished ends without an error",
+           "ok" in ends and ends["ok"].error is None)
+
+batch_events = []
+r, en, ml = batch_router(hooks=[BatchTrace()],
+                         on_predict_start=lambda c: c.skip([dict(cached_x)]) if c.states == ["cached"] else None)
+check_raises("router_batch/inference failure with a cache hit in the group propagates", RuntimeError,
+             lambda: r.predict_batch([req("cached"), req("boom")]))
+ends = {e[1]: e[2] for e in batch_events if e[0] == "end"}
+# The caller gets the exception and no result at all, so a cache hit of the failed group was not
+# delivered either: reporting it as a success would record a decision nobody received.
+check("router_batch/every request of a failed group gets on_error, a cache hit included",
+      sorted(e[1] for e in batch_events if e[0] == "error"), ["boom", "cached"])
+check_true("router_batch/a cache hit in a failed group ends with the batch's error",
+           "cached" in ends and isinstance(ends["cached"].error, RuntimeError))
+
+batch_events = []
+r, en, ml = batch_router(hooks=[BatchTrace()],
+                         on_predict_start=lambda c: setattr(c, "questions", Q_OTHER) if c.states == ["boom"] else None)
+check_raises("router_batch/a later question group's failure propagates", RuntimeError,
+             lambda: r.predict_batch([req("inferred"), req("boom")]))
+check("router_batch/the earlier question group did run", [c[0] for c in en.calls], [["inferred"], ["boom"]])
+ends = {e[1]: e[2] for e in batch_events if e[0] == "end"}
+check_true("router_batch/a request inferred before its group failed ends with the batch's error",
+           "inferred" in ends and isinstance(ends["inferred"].error, RuntimeError))
+
+batch_events = []
+bad_usage = {"model": "cached", "answers": {}, "usage": {"input_tokens": "n/a", "output_tokens": 0}}
+r, en, ml = batch_router(hooks=[BatchTrace()],
+                         on_predict_start=lambda c: c.skip([dict(bad_usage)]) if c.states == ["bad"] else None)
+check_raises("router_batch/a malformed usage block fails the batch", ValueError,
+             lambda: r.predict_batch([req("a"), req("bad"), req("c")]))
+check("router_batch/a malformed usage block still ends every started request",
+      sorted(e[1] for e in batch_events if e[0] == "end"), ["a", "bad", "c"])
+check("router_batch/a malformed usage block fails every request of its group",
+      sorted(e[1] for e in batch_events if e[0] == "error"), ["a", "bad", "c"])
+
+batch_events = []
+
+
+def fail_end_on_a(ctx):
+    if ctx.states == ["a"]:
+        raise ValueError("end hook failed")
+
+
+r, en, ml = batch_router(on_predict_end=fail_end_on_a, hooks=[BatchTrace()])
+check_raises("router_batch/end hook failure propagates", ValueError,
+             lambda: r.predict_batch([req("a"), req("b")]))
+check("router_batch/end hook failure still ends the other requests",
+      [(e[0], e[1]) for e in batch_events if e[0] == "end"], [("end", "b"), ("end", "a")])
+
+batch_events = []
+r, en, ml = batch_router(hooks=[BatchTrace()])
+check_raises("router_batch/inference failure propagates before a later group", RuntimeError,
+             lambda: r.predict_batch([req("boom"), req("later", "multilingual")]))
+check("router_batch/a later group never starts", ("start", "later") in [(e[0], e[1]) for e in batch_events], False)
+check("router_batch/a later group runs no inference", ml.calls, [])
+
+batch_events = []
+
+
+def fail_on_b(ctx):
+    if ctx.states == ["b"]:
+        raise ValueError("start hook failed")
+
+
+r, en, ml = batch_router(hooks=[BatchTrace()], on_predict_start=fail_on_b)
+check_raises("router_batch/start hook failure propagates", ValueError,
+             lambda: r.predict_batch([req("a"), req("b"), req("c")]))
+check("router_batch/start hook failure still ends every started request",
+      [(e[0], e[1]) for e in batch_events],
+      [("start", "a"), ("start", "b"), ("error", "b"), ("end", "b"), ("error", "a"), ("end", "a")])
+check("router_batch/start hook failure runs no inference", en.calls, [])
+
+# A hook that sets something in start and resets it in end (a contextvar, an OpenTelemetry
+# context attach/detach, a logging MDC) is only correct if the requests unwind in reverse: all
+# of a group's starts run before any of its ends, so ending in input order resets the wrong layer.
+_batch_cv = contextvars.ContextVar("batch_cv", default=None)
+_cv_tokens = {}
+
+
+class CvStack:
+    def on_predict_start(self, ctx):
+        _cv_tokens[ctx] = _batch_cv.set(ctx.states[0])
+
+    def on_predict_end(self, ctx):
+        _batch_cv.reset(_cv_tokens.pop(ctx))
+
+
+r, en, ml = batch_router(hooks=[CvStack()])
+r.predict_batch([req("a"), req("b"), req("c")])
+check("router_batch/set-in-start, reset-in-end hooks unwind to the caller's value", _batch_cv.get(), None)
+_cv_tokens.clear()
+r, en, ml = batch_router(hooks=[CvStack()])
+check_raises("router_batch/unwinding a failed batch propagates", RuntimeError,
+             lambda: r.predict_batch([req("a"), req("boom"), req("c")]))
+check("router_batch/a failed batch also unwinds to the caller's value", _batch_cv.get(), None)
+_cv_tokens.clear()
+
+failed_ctxs = []
+elapsed_when_first_error_ran = []
+
+
+def remember_failed_start(ctx):
+    failed_ctxs.append(ctx)
+
+
+class FirstError:
+    def on_error(self, ctx):
+        if not elapsed_when_first_error_ran:
+            elapsed_when_first_error_ran.append([c.elapsed_ms is not None for c in failed_ctxs])
+
+
+r, en, ml = batch_router(hooks=[FirstError()], on_predict_start=remember_failed_start)
+check_raises("router_batch/a failed group propagates", RuntimeError,
+             lambda: r.predict_batch([req("boom"), req("b"), req("c")]))
+check("router_batch/elapsed_ms is set for a failed group before any on_error runs",
+      elapsed_when_first_error_ran, [[True, True, True]])
+
+r, en, ml = batch_router(on_predict_end=lambda c: setattr(c, "results", [None]) if c.states == ["x"] else None)
+try:
+    got = r.predict_batch([req("x"), req("y")])
+    got = (got[0], got[1]["answers"]["seen"])
+except Exception as e:  # noqa: BLE001
+    got = repr(e)
+check("router_batch/a None result an end hook leaves is returned, as predict returns it", got, (None, "y"))
+
+
+class AliasPin:
+    """An on_route hook pinning a request with an alias, as a plain dict."""
+
+    def on_route(self, ctx):
+        if ctx.states == ["alias"]:
+            ctx.decision = {**ctx.decision, "model": "ml"}
+
+
+alias_models = []
+r, en, ml = batch_router(hooks=[AliasPin()], on_predict_start=lambda c: alias_models.append(c.model))
+r.predict_batch([req("alias"), req("full", "multilingual")])
+check("router_batch/an aliased pin shares its checkpoint's forward pass", [c[0] for c in ml.calls],
+      [["alias", "full"]])
+check("router_batch/an aliased pin reports the resolved checkpoint", alias_models,
+      ["multilingual", "multilingual"])
+
+r, en, ml = batch_router(on_predict_start=fail_on_b, hooks_raise=False)
+with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    out = r.predict_batch([req("a"), req("b")])
+check("router_batch/hooks_raise=False keeps the batch going", [o["answers"]["seen"] for o in out], ["a", "b"])
+check_true("router_batch/hooks_raise=False warns", any("start hook failed" in str(w.message) for w in caught))
+
+
+# --------------------------------------------------------------- hooks_concurrent storage
+r = Router(default="english")
+check("router/hooks_concurrent default True", r.hooks_concurrent, True)
+check_true("router/hooks_concurrent default has no lock", r._hooks_lock is None)
+r = Router(hooks_concurrent=False)
+check("router/hooks_concurrent=False stored", r.hooks_concurrent, False)
+check_true("router/hooks_concurrent=False installs a lock", r._hooks_lock is not None)
+
+
+# --------------------------------------------------------------- concurrency
+contexts = []
+
+
+def slow_start(ctx):
+    time.sleep(0.01)
+    # Keep the context itself, not id(ctx): once a call returns its context can be freed and
+    # a later call's context can reuse the address, so ids alone undercount on a busy machine.
+    contexts.append(ctx)
+
+
+f = make_fake()
+threads = [threading.Thread(target=lambda: f.predict_batch(["s0"], QUESTIONS,
+                                                           on_predict_start=slow_start))
+           for _ in range(5)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+check("concurrency/one independent context per call", len({id(c) for c in contexts}), 5)
+
+
+class ConcHook:
+    def __init__(self):
+        self.active = 0
+        self.max_active = 0
+        self._lock = threading.Lock()
+
+    def on_predict_start(self, ctx):
+        with self._lock:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+        time.sleep(0.02)
+        with self._lock:
+            self.active -= 1
+
+
+conc = ConcHook()
+f = make_fake()
+f.hooks = [conc]
+f._hooks_lock = threading.RLock()  # what hooks_concurrent=False installs
+threads = [threading.Thread(target=lambda: f.predict_batch(["s0"], QUESTIONS)) for _ in range(5)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+check("concurrency/hooks_concurrent=False serialises", conc.max_active, 1)
+
+
+# --------------------------------------------------------------- ONNXAgent parity
+from laya.onnx_agent import ONNXAgent  # noqa: E402
+
+o = ONNXAgent.__new__(ONNXAgent)
+o.model_id = "convaiinnovations/laya-onnx"
+
+
+def _fake_onnx_batch(states, questions, **kwargs):
+    # `system_one` runs through `predict_batch` -> `_infer_batch`, as `Agent.system_one` does,
+    # so the batch seam is what a hook test stubs.
+    return [{"model": "onnx", "answers": {},
+             "usage": {"input_tokens": 0, "output_tokens": 0}} for _ in states]
+
+
+o._infer_batch = _fake_onnx_batch
+onnx_seen = []
+onnx_models = []
+onnx_out = o.system_one("s", QUESTIONS,
+                        on_predict_start=lambda c: onnx_seen.append("start"),
+                        on_predict_end=lambda c: (onnx_seen.append("end"), onnx_models.append(c.model)))
+check("onnx/hooks fire", onnx_seen, ["start", "end"])
+check("onnx/returns the inference result", onnx_out["model"], "onnx")
+check("onnx/context model is the agent model_id", onnx_models, ["convaiinnovations/laya-onnx"])
+
+o = ONNXAgent.__new__(ONNXAgent)
+
+
+def _never(*args, **kwargs):
+    raise AssertionError("inference should have been skipped")
+
+
+o._infer_batch = _never
+check("onnx/skip short-circuits",
+      o.system_one("s", QUESTIONS, on_predict_start=lambda c: c.skip([{"model": "cached"}])),
+      {"model": "cached"})
+
+
+# --------------------------------------------------------------- BaseHook
+from laya import BaseHook  # noqa: E402
+
+
+class OnlyEnd(BaseHook):
+    def __init__(self, log, tag):
+        self.log = log
+        self.tag = tag
+
+    def on_predict_end(self, ctx):
+        self.log.append(self.tag)
+
+
+log = []
+f = make_fake()
+f.add_hook(OnlyEnd(log, "end"))
+f.predict_batch(["s0"], QUESTIONS)
+check("BaseHook/overridden event fires", log, ["end"])
+
+f = make_fake()
+f.add_hook(BaseHook())  # every method is a no-op
+f.predict_batch(["s0"], QUESTIONS)
+check("BaseHook/no-op instance is harmless", f._forward_calls, [2])
+
+
+# --------------------------------------------------------------- process-wide defaults
+from laya import hooks as _hooks  # noqa: E402
+
+log = []
+_hooks.set_default_hooks(on_predict_end=lambda ctx: log.append("default"))
+try:
+    f = make_fake()
+    f.add_hook(Tag(log, "installed"))
+    f.predict_batch(["s0"], QUESTIONS, on_predict_end=lambda ctx: log.append("percall"))
+    check("defaults/run before installed and per-call", log, ["default", "installed", "percall"])
+finally:
+    _hooks.clear_default_hooks()
+check("defaults/clear empties the registry", _hooks.default_hooks(), [])
+
+log = []
+_hooks.add_default_hook(Tag(log, "a"))
+_hooks.add_default_hook(Tag(log, "b"))
+try:
+    f = make_fake()
+    f.predict_batch(["s0"], QUESTIONS)
+    check("defaults/add in order", log, ["a", "b"])
+finally:
+    _hooks.clear_default_hooks()
+
+# A default hook has to reach the Router as well as the Agent: `set_default_hooks` documents
+# "every Agent, Router and ONNXAgent in the process", and `predict_batch` promises each request
+# its own PredictContext. It read `list(self.hooks)` at its dispatch site instead of composing
+# with the registry, so a process-wide hook saw the Agent-level events and none of the
+# Router-level ones -- invisible unless the hook records which level it ran at, which is why
+# the checks above never caught it.
+events = []
+
+
+class LevelTag:
+    def __init__(self, tag):
+        self.tag = tag
+
+    def on_predict_start(self, ctx):
+        events.append((self.tag, "start", "router" if getattr(ctx, "router", None) is not None
+                                         else "agent"))
+
+    def on_predict_end(self, ctx):
+        events.append((self.tag, "end", "router" if getattr(ctx, "router", None) is not None
+                                       else "agent"))
+
+
+_hooks.set_default_hooks([LevelTag("default")])
+try:
+    r, en, ml = batch_router()
+    events.clear()
+    r.predict_batch([req("a"), req("b")])
+    # `BatchFake` replaces the agent wholesale, so the only events that can come from this
+    # Router are its own. That is exactly what the defect removed.
+    check("defaults/reach the Router on predict_batch",
+          events, [("default", "start", "router"), ("default", "start", "router"),
+                   ("default", "end", "router"), ("default", "end", "router")])
+
+    # `predict` was already correct; assert the two entry points agree, which is the property
+    # that was actually violated.
+    events.clear()
+    r.predict("a", QUESTIONS, model="english")
+    via_predict = list(events)
+    events.clear()
+    r.predict_batch([req("a")])
+    check("defaults/predict and predict_batch give the same event shape",
+          events, via_predict)
+
+    # An instance hook is composed the same way and must not be affected either way.
+    events.clear()
+    r2, _, _ = batch_router(hooks=[LevelTag("instance")])
+    r2.predict_batch([req("a")])
+    check("defaults/instance hooks still fire once alongside defaults",
+          [e for e in events if e[0] == "instance"],
+          [("instance", "start", "router"), ("instance", "end", "router")])
+finally:
+    _hooks.clear_default_hooks()
+
+
+class LifeDefaults(BaseHook):
+    def __init__(self):
+        self.events = []
+
+    def on_load(self, ctx):
+        self.events.append(("load", ctx.model))
+
+    def on_evict(self, ctx):
+        self.events.append(("evict", ctx.model))
+
+
+ld = LifeDefaults()
+_hooks.set_default_hooks(hooks=[ld])
+try:
+    _agent_mod.Agent = BuiltAgent
+    r = Router(max_loaded=1)
+    r.load("english")
+    r.load("multilingual")  # evicts english
+finally:
+    _agent_mod.Agent = real_agent
+    _hooks.clear_default_hooks()
+check("defaults/cover router lifecycle", ld.events,
+      [("load", "english"), ("evict", "english"), ("load", "multilingual")])
+
+events = []
+_hooks.set_default_hooks([LevelTag("default")])
+r = Router(default="english")
+r.attach("english", make_fake())
+r.predict("a", QUESTIONS, model="english")
+r.predict_batch([req("b")])
+_hooks.clear_default_hooks()
+check("defaults/fire once per request", events, [("default", "start", "router"), ("default", "end", "router")] * 2)
+
+
+# --------------------------------------------------------------- async hooks
+import asyncio  # noqa: E402
+
+from laya import AsyncHook  # noqa: E402
+from laya.hooks import run_coroutine_sync  # noqa: E402
+
+calls = []
+
+
+class AsyncAudit:
+    async def on_predict_end(self, ctx):
+        await asyncio.sleep(0)
+        calls.append("wrapped")
+
+
+f = make_fake()
+f.add_hook(AsyncHook(AsyncAudit()))
+f.predict_batch(["s0"], QUESTIONS)
+check("async/wrapped hook awaited", calls, ["wrapped"])
+
+calls.clear()
+
+
+async def async_end(ctx):
+    await asyncio.sleep(0)
+    calls.append("plain")
+
+
+f = make_fake()
+f.predict_batch(["s0"], QUESTIONS, on_predict_end=async_end)
+check("async/plain callable awaited", calls, ["plain"])
+
+calls.clear()
+
+
+async def async_start(ctx):
+    calls.append("loop")
+
+
+f = make_fake()
+
+
+async def _in_loop():
+    f.predict_batch(["s0"], QUESTIONS, on_predict_start=async_start)
+
+
+asyncio.run(_in_loop())
+check("async/works inside a running loop", calls, ["loop"])
+
+
+async def _seven():
+    return 7
+
+
+check("async/run_coroutine_sync returns", run_coroutine_sync(_seven()), 7)
+check_raises("async/AsyncHook rejects a class", TypeError, lambda: AsyncHook(AsyncAudit))
+
+
+# --------------------------------------------------------------- hook timeout
+def slow_hook(ctx):
+    time.sleep(0.3)
+
+
+f = make_fake()
+raised = None
+try:
+    f.predict_batch(["s0"], QUESTIONS, on_predict_start=slow_hook, hooks_timeout=0.05)
+except TimeoutError as exc:
+    raised = str(exc)
+check_true("timeout/raises TimeoutError", isinstance(raised, str) and "exceeded" in raised)
+
+f = make_fake()
+with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    res = f.predict_batch(["s0"], QUESTIONS, on_predict_start=slow_hook,
+                          hooks_timeout=0.05, hooks_raise=False)
+check("timeout/hooks_raise=False continues", len(res), 1)
+check_true("timeout/hooks_raise=False warns",
+           any(issubclass(w.category, RuntimeWarning) for w in caught))
+
+f = make_fake()
+f.hooks_timeout = 0.05
+raised = None
+try:
+    f.predict_batch(["s0"], QUESTIONS, on_predict_start=slow_hook)
+except TimeoutError:
+    raised = True
+check("timeout/instance-level applies", raised, True)
+
+f = make_fake()
+f.hooks_timeout = 0.05
+res = f.predict_batch(["s0"], QUESTIONS, on_predict_start=slow_hook, hooks_timeout=5.0)
+check("timeout/per-call override wins", len(res), 1)
+
+f = make_fake()
+res = f.predict_batch(["s0"], QUESTIONS, on_predict_end=lambda ctx: None, hooks_timeout=1.0)
+check("timeout/fast hook unaffected", len(res), 1)
+
+
+# --------------------------------------------------------------- input validation and context
+import contextvars  # noqa: E402
+
+from laya.hooks import validate_timeout  # noqa: E402
+
+check_raises("timeout/zero is rejected", ValueError, lambda: validate_timeout(0))
+check_raises("timeout/negative is rejected", ValueError, lambda: validate_timeout(-0.5))
+check_raises("timeout/NaN is rejected", ValueError, lambda: validate_timeout(float("nan")))
+check_raises("timeout/infinity is rejected", ValueError, lambda: validate_timeout(float("inf")))
+check_raises("timeout/-infinity is rejected", ValueError, lambda: validate_timeout(float("-inf")))
+check_raises("timeout/True is rejected", ValueError, lambda: validate_timeout(True))
+check_raises("timeout/False is rejected", ValueError, lambda: validate_timeout(False))
+# A shape `float()` cannot read is still a bad timeout: a list/object used to leak TypeError and a
+# JSON integer too large for a float leaked OverflowError. Both must raise the same ValueError, and
+# the OverflowError case is what let a giant JSON number reach `laya/mcp/tools.py` (which catches
+# only TypeError/ValueError) and surface as `internal_error`.
+check_raises("timeout/list is rejected", ValueError, lambda: validate_timeout([10]))
+check_raises("timeout/dict is rejected", ValueError, lambda: validate_timeout({"a": 1}))
+check_raises("timeout/oversized int is rejected", ValueError, lambda: validate_timeout(10 ** 1000))
+
+
+# The refusal has to say *why*. `False` raises either way -- as a wrong type here, as a non-positive
+# number in the branch below -- so an arm that only checks the exception type cannot tell the two
+# apart, and a guard that simply fell through would pass it. `0` keeps the original wording.
+def _timeout_message(value):
+    try:
+        validate_timeout(value)
+    except ValueError as exc:
+        return str(exc)
+    return "<accepted>"
+
+
+check_true("timeout/a bool is refused as a bool", "not a bool" in _timeout_message(True),
+           _timeout_message(True))
+check_true("timeout/False is refused as a bool too", "not a bool" in _timeout_message(False),
+           _timeout_message(False))
+check_true("timeout/zero keeps the non-positive wording",
+           "not a bool" not in _timeout_message(0) and "positive finite" in _timeout_message(0),
+           _timeout_message(0))
+check("timeout/positive passes through", validate_timeout(1.5), 1.5)
+check("timeout/None means no limit", validate_timeout(None), None)
+
+f = make_fake()
+check_raises("timeout/zero per call is rejected", ValueError,
+             lambda: f.predict_batch(["s0"], QUESTIONS, hooks_timeout=0))
+check_raises("timeout/NaN per call is rejected", ValueError,
+             lambda: f.predict_batch(["s0"], QUESTIONS, hooks_timeout=float("nan")))
+check_raises("timeout/infinity per call is rejected", ValueError,
+             lambda: f.predict_batch(["s0"], QUESTIONS, hooks_timeout=float("inf")))
+
+# `float(True) == 1.0`, so `hooks_timeout=True` -- which reads like "yes, time the hooks" -- used to
+# install a one-second deadline on every hook call, and `False` was refused as a non-positive number,
+# the wrong reason for a wrong type. Both spellings now raise where they are set, per call and at
+# construction alike; an int and a numeric string are not bools and still bound the wait.
+check_raises("timeout/True per call is rejected", ValueError,
+             lambda: f.predict_batch(["s0"], QUESTIONS, hooks_timeout=True))
+check_raises("timeout/True at construction is rejected", ValueError,
+             lambda: Router(hooks_timeout=True))
+check("timeout/int still bounds", Router(hooks_timeout=1).hooks_timeout, 1.0)
+check("timeout/numeric string still bounds", Router(hooks_timeout="0.5").hooks_timeout, 0.5)
+
+not_running = asyncio.new_event_loop()
+try:
+    c = _seven()
+    check_raises("async/a non-running loop is rejected", ValueError,
+                 lambda: run_coroutine_sync(c, loop=not_running))
+    check_true("async/a non-running loop closes the coroutine",
+               inspect.getcoroutinestate(c) == "CORO_CLOSED")
+finally:
+    not_running.close()
+
+
+async def _own_loop():
+    own = asyncio.get_running_loop()
+    c = _seven()
+    try:
+        run_coroutine_sync(c, loop=own)
+    except ValueError:
+        return "closed" if inspect.getcoroutinestate(c) == "CORO_CLOSED" else "raised"
+    return "no"
+
+
+check("async/the calling thread's own loop is rejected", asyncio.run(_own_loop()), "closed")
+check_raises("async/AsyncHook rejects an object with no events", TypeError,
+             lambda: AsyncHook(object()))
+
+_cv_seen = contextvars.ContextVar("cv_seen", default=None)
+_cv_calls = []
+
+
+class CvHook:
+    def on_predict_start(self, ctx):
+        _cv_calls.append(_cv_seen.get())
+
+
+f = make_fake()
+_token = _cv_seen.set("request-1")
+try:
+    f.predict_batch(["s0"], QUESTIONS, hooks=[CvHook()], hooks_timeout=1.0)
+finally:
+    _cv_seen.reset(_token)
+check("timeout/a timed hook sees the caller's contextvars", _cv_calls, ["request-1"])
+
+
+# ------------------------------------------- per-call timeout reaches on_route through the batches
+# #277 threaded the per-call timeout through predict_batch's own dispatches, but route_batch had no
+# hooks_timeout argument and predict_batch did not forward its override into it, so an on_route hook
+# reached through either batch entry point saw the instance timeout instead of the caller's.
+class SlowRoute:
+    def on_route(self, ctx):
+        time.sleep(0.3)
+
+
+def slow_route_router(**kwargs):
+    return batch_router(hooks=[SlowRoute()], **kwargs)[0]
+
+
+# route_batch takes the per-call timeout and applies it to on_route.
+raised = None
+try:
+    slow_route_router().route_batch([req("a")], hooks_timeout=0.05)
+except TimeoutError as exc:
+    raised = str(exc)
+check_true("timeout/route_batch per-call reaches on_route",
+           isinstance(raised, str) and "exceeded" in raised)
+
+# predict_batch forwards the same override into route_batch, so on_route times out there too.
+raised = None
+try:
+    slow_route_router().predict_batch([req("a")], hooks_timeout=0.05)
+except TimeoutError as exc:
+    raised = str(exc)
+check_true("timeout/predict_batch per-call reaches on_route",
+           isinstance(raised, str) and "exceeded" in raised)
+
+# No per-call override: the instance timeout is still the fallback for the batched route path.
+raised = None
+try:
+    slow_route_router(hooks_timeout=0.05).route_batch([req("a")])
+except TimeoutError:
+    raised = True
+check("timeout/route_batch instance-level applies", raised, True)
+
+# A longer per-call value overrides a shorter instance timeout, as on the other entry points.
+decisions = slow_route_router(hooks_timeout=0.05).route_batch([req("a")], hooks_timeout=5.0)
+check("timeout/route_batch per-call override wins", [d["model"] for d in decisions], ["english"])
+
+# With no hooks at all both batched paths are unchanged.
+plain_r, plain_en, _ = batch_router()
+check("timeout/route_batch without hooks is unchanged",
+      [d["model"] for d in plain_r.route_batch([req("a")])], ["english"])
+plain_out = plain_r.predict_batch([req("a")])
+check("timeout/predict_batch without hooks is unchanged", len(plain_out), 1)
+check("timeout/predict_batch without hooks keeps routing", plain_out[0]["routing"]["model"], "english")
+check("timeout/predict_batch without hooks still batches", [c[0] for c in plain_en.calls], [["a"]])
+
+# The forwarded value is still validated by route(), exactly like a direct route() call.
+check_raises("timeout/route_batch rejects a zero per-call timeout", ValueError,
+             lambda: Router().route_batch([req("a")], hooks_timeout=0))
+
+
+# ------------------------------------------- per-call hooks on Router.predict_batch and route_batch (#909)
+per_call_events = []
+
+
+class PerCallTrace:
+    def on_predict_start(self, ctx):
+        per_call_events.append(("start", ctx.states[0]))
+
+    def on_predict_end(self, ctx):
+        per_call_events.append(("end", ctx.states[0]))
+
+    def on_route(self, ctx):
+        per_call_events.append(("route", ctx.states[0]))
+
+
+r_batch, en_batch, _ = batch_router()
+
+# 1. per-call hooks on predict_batch
+r_batch.predict_batch([req("call1"), req("call2")], hooks=[PerCallTrace()])
+check("router_batch/per-call hooks execute for all requests",
+      per_call_events,
+      [("route", "call1"), ("route", "call2"),
+       ("start", "call1"), ("start", "call2"),
+       ("end", "call2"), ("end", "call1")])
+
+per_call_events.clear()
+
+# 2. per-call convenience callables on predict_start and predict_end
+seen_starts = []
+seen_ends = []
+r_batch.predict_batch([req("cb1")],
+                      on_predict_start=lambda c: seen_starts.append(c.states[0]),
+                      on_predict_end=lambda c: seen_ends.append(c.states[0]))
+check("router_batch/per-call callables execute", (seen_starts, seen_ends), (["cb1"], ["cb1"]))
+
+# 3. per-call hooks on route_batch
+route_trace = []
+
+
+class RouteTrace:
+    def on_route(self, ctx):
+        route_trace.append(ctx.states[0])
+
+
+r_batch.route_batch([req("rb1"), req("rb2")], hooks=[RouteTrace()])
+check("router_batch/route_batch per-call hooks execute", route_trace, ["rb1", "rb2"])
+
+# 4. per-call hooks_raise policy
+class FailingStartHook:
+    def on_predict_start(self, ctx):
+        raise ValueError("failing hook")
+
+
+check_raises("router_batch/hooks_raise=True propagates exception",
+             ValueError,
+             lambda: r_batch.predict_batch([req("fail1")], hooks=[FailingStartHook()], hooks_raise=True))
+
+with warnings.catch_warnings(record=True) as _warns:
+    warnings.simplefilter("always")
+    res = r_batch.predict_batch([req("warn1")], hooks=[FailingStartHook()], hooks_raise=False)
+    check("router_batch/hooks_raise=False returns result", len(res), 1)
+    check_true("router_batch/hooks_raise=False warns", any("failing hook" in str(w.message) for w in _warns))
+
+# 5. positional and keyword-only hook controls (#909 review)
+r_pos, _, _ = batch_router()
+
+# route_batch keeps hooks_timeout positional-or-keyword
+pos_decisions = r_pos.route_batch([req("pos1")], 1.0)
+check("router_batch/route_batch positional hooks_timeout", len(pos_decisions), 1)
+
+# route_batch takes hooks as keyword-only
+kw_decisions = r_pos.route_batch([req("pos1")], 1.0, hooks=[RouteTrace()])
+check("router_batch/route_batch keyword-only hooks", len(kw_decisions), 1)
+
+# predict_batch preserves hooks_timeout positional prefix from main
+pos_results = r_pos.predict_batch([req("pos2")], 8, 1.0, hooks=[PerCallTrace()])
+check("router_batch/predict_batch positional hooks_timeout", len(pos_results), 1)
+
+# predict_batch takes per-call hooks as keyword-only
+kw_results = r_pos.predict_batch([req("pos2")], 8, hooks=[PerCallTrace()])
+check("router_batch/predict_batch keyword-only hooks", len(kw_results), 1)
+
+# keyword-only enforcement: passing hook controls positionally raises TypeError
+check_raises("router_batch/route_batch rejects positional hooks", TypeError,
+             lambda: r_pos.route_batch([req("pos1")], 1.0, [RouteTrace()]))
+check_raises("router_batch/predict_batch rejects positional hooks", TypeError,
+             lambda: r_pos.predict_batch([req("pos2")], 8, 1.0, None, False, [PerCallTrace()]))
+
+# --------------------------------------------------------------- OptionStabilityHook (issue #635)
+check_raises("stability/missing accept and escalate", TypeError, lambda: OptionStabilityHook())
+check_raises("stability/negative n_shuffles", ValueError, lambda: OptionStabilityHook(accept=0.8, escalate=0.6, n_shuffles=-1))
+check_raises("stability/bool n_shuffles", ValueError, lambda: OptionStabilityHook(accept=0.8, escalate=0.6, n_shuffles=True))
+check_raises("stability/unknown variants", ValueError, lambda: OptionStabilityHook(accept=0.8, escalate=0.6, variants="invalid"))
+check_raises("stability/empty variants", ValueError, lambda: OptionStabilityHook(accept=0.8, escalate=0.6, variants=[]))
+check_raises("stability/escalate > accept", ValueError, lambda: OptionStabilityHook(accept=0.5, escalate=0.8))
+
+stab_hook = OptionStabilityHook(accept=0.77, escalate=0.61, seed="test-seed")
+stab_q = {"choice_q": {"type": "choice", "instructions": "Pick?", "criteria": {"a": "opt 1", "b": "opt 2"}}}
+stab_ctx = PredictContext(states=["state 1"], questions=dict(stab_q))
+stab_hook.on_predict_start(stab_ctx)
+check_true("stability/injects variant questions", any(k.startswith("choice_q::rel") for k in stab_ctx.questions))
+
+sim_answers = {}
+for k, q_def in stab_ctx.questions.items():
+    crit = q_def["criteria"]
+    target = [name for name, desc in crit.items() if desc == "opt 1"][0]
+    sim_answers[k] = {
+        "type": "choice",
+        "choice": target,
+        "probabilities": {name: (0.9 if name == target else 0.1) for name in crit},
+        "answer_confidence": 0.9,
+    }
+
+stab_ctx.results = [{
+    "model": "fake",
+    "answers": sim_answers,
+    "usage": {"truncated_questions": ["choice_q::rel1"]},
+}]
+stab_hook.on_predict_end(stab_ctx)
+stab_ans = stab_ctx.results[0]["answers"]
+check_true("stability/cleans variant keys", not any("::rel" in k for k in stab_ans))
+check("stability/keeps choice", stab_ans["choice_q"]["choice"], "a")
+check_true("stability/adds reliability", "reliability" in stab_ans["choice_q"])
+check("stability/accept decision", stab_ans["choice_q"]["reliability"]["decision"], "ACCEPT")
+check("stability/stability 1.0", stab_ans["choice_q"]["reliability"]["stability"], 1.0)
+check("stability/probes list", stab_ans["choice_q"]["reliability"]["probes"], ["reorder", "rename"])
+check("stability/cleans usage", stab_ctx.results[0]["usage"]["truncated_questions"], [])
+
+
+# --------------------------------------------------------------- docs prose for plain callables
+# `docs/hooks/index.md` and the `laya/hooks.py` module docstring used to say a plain callable
+# goes to `hooks=` alongside `on_predict_start=` / `on_predict_end=`. `_coerce_hooks` has always
+# refused that -- the check at laya/hooks.py:177-182 raises TypeError before the callable is
+# installed, because `hooks=` reads for lifecycle method names. `docs/hooks/api.md`,
+# `docs/hooks/patterns.md`, and `docs/hooks/errors.md` all said the opposite; only the primer
+# and the module docstring drifted. The gate drives the real behaviour and bans the pre-fix
+# wording in both places, so the page cannot regress to the sentence that made callers type
+# `laya.load(..., hooks=[lambda ctx: None])` and hit a TypeError at construction.
+from pathlib import Path as _P  # noqa: E402
+
+_hook_index = _P(__file__).resolve().parents[1] / "docs" / "hooks" / "index.md"
+_hooks_mod = _P(__file__).resolve().parents[1] / "laya" / "hooks.py"
+_index_text = _hook_index.read_text(encoding="utf-8")
+_hooks_text = _hooks_mod.read_text(encoding="utf-8")
+
+check_true("docs_hooks/index.md drops the 'hooks=/on_predict_start=/on_predict_end=' equal-share claim",
+           "Both are passed to `hooks=` / `on_predict_start=` /" not in _index_text)
+check_true("docs_hooks/index.md scopes plain callable to on_predict_start=/on_predict_end=",
+           "Pass a plain callable as `on_predict_start=` or `on_predict_end=`" in _index_text)
+check_true("laya/hooks.py docstring drops 'a hook is either a plain callable'",
+           "A hook is either a plain callable" not in _hooks_text)
+check_true("laya/hooks.py docstring names the single-event parameters as the plain-callable path",
+           "plain callable is only accepted on the single-event" in _hooks_text)
+
+# Live driver: `normalise_hooks` on the two paths.
+check_raises("hooks= rejects a plain callable at construction",
+             TypeError, lambda: normalise_hooks(hooks=[lambda ctx: None]))
+_plain_ok = normalise_hooks(on_predict_start=lambda ctx: None)
+check_true("on_predict_start= accepts a plain callable",
+           len(_plain_ok) == 1 and hasattr(_plain_ok[0], "on_predict_start"),
+           "got %r" % (_plain_ok,))
+
+
+# --------------------------------------------------------------- report
+print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
+for f_ in FAIL:
+    print("  FAIL " + f_)
+if not FAIL:
+    print("all hook tests passed")
+sys.exit(1 if FAIL else 0)

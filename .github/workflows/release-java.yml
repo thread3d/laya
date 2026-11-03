@@ -1,0 +1,176 @@
+name: Release Java (laya-java)
+
+# Tag a commit laya-java-v0.1.0 and push it; this runs the model-free tests, verifies the version
+# matches the tag, builds the jars and publishes them to Maven Central.
+#
+# SET UP ONCE, and only the project owner can do it -- none of this is in the repository:
+#   1. Verify the `com.convaiinnovations` namespace at https://central.sonatype.com. Maven Central
+#      will not accept a groupId whose domain or GitHub org has not been proven.
+#   2. Create a Central portal user token and add it as MAVEN_CENTRAL_USERNAME and
+#      MAVEN_CENTRAL_PASSWORD in the repository secrets.
+#   3. Create a PGP key, publish the public half to a keyserver, and add the ASCII-armoured
+#      private half as LAYA_SIGNING_KEY with its passphrase as LAYA_SIGNING_PASSWORD. Central
+#      rejects unsigned artifacts.
+#
+# Until those exist this workflow cannot run, and `build.gradle.kts` is written so that nothing
+# else is affected: signing activates only when a key is present, so `./gradlew build` and
+# `publishToMavenLocal` work for anyone.
+
+on:
+  push:
+    tags: ["laya-java-v*"]
+  workflow_dispatch:
+#
+# SUPPLY CHAIN: `laya-java/gradle/wrapper/gradle-wrapper.jar` is a binary that executes at build
+# time, which makes it the one file here a reviewer cannot read. Every job below that runs
+# `./gradlew` validates it against Gradle's published checksums first -- not just the first job,
+# because each job checks out the tree again and runs the jar again, so validating one of them
+# leaves the others executing an unverified binary. The jar in the tree today is the genuine
+# 8.10.2 wrapper (sha256 2db75c40...8046, verified locally against Gradle's published value).
+# The distribution the wrapper then downloads is pinned by `distributionSha256Sum` in
+# `gradle-wrapper.properties`.
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build & verify artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: laya-java
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Validate the wrapper jar BEFORE anything can execute it. See this file's
+      # header for why every job that runs ./gradlew needs this, not just one.
+      - uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Version matches tag
+        if: startsWith(github.ref, 'refs/tags/laya-java-v')
+        run: |
+          tag="${GITHUB_REF_NAME#laya-java-v}"
+          echo "tag=$tag"
+          # The build takes its version from a Gradle property, so the tag IS the version and
+          # there is no second copy to drift from it.
+          echo "layaJavaVersion=$tag" >> gradle.properties
+          grep layaJavaVersion gradle.properties
+
+      # The model-free suite only: a release runner has no checkpoint, so the parity factories
+      # abort. They are the Java lane's job, on every commit, and a release is cut from a commit
+      # that lane already covered.
+      - name: Model-free tests
+        run: ./gradlew --no-daemon test
+      # 1007 of the 1025 registered tests run without a checkpoint. This floor has been raised
+      # as the model-free suite grew -- 440 left 191 of slack, 625 left 60 -- because a floor
+      # that does not bind is not a gate: under 625 the whole confidence-gate family of 26
+      # tests could have vanished from this lane with the gate still green.
+      #
+      # These lines sit ABOVE `run:`, not inside it. A `>` block folds to one line and `#` is
+      # not a comment inside a YAML scalar, so a comment written in there reaches the shell and
+      # silences the rest of the folded line: it took `--min-tests 625 --allow-aborted` off this
+      # command, dropping the floor to the script's default of 1 instead of raising it to 625,
+      # and losing `--allow-aborted` on a runner whose parity factories abort. A `|` block keeps
+      # the newlines so the `#` really is a shell comment there, which is why the broken and the
+      # correct form look identical in a diff. `scripts/check_workflow_folding.py` now fails the
+      # build on it rather than relying on a reader spotting it.
+      - name: The suite was not vacuous
+        run: >
+          python3 scripts/check_test_results.py laya-java/build/test-results/test
+          --min-tests 1007 --allow-aborted
+
+      - name: Build the jars
+        run: ./gradlew --no-daemon build -x test
+
+      - name: Install to the local repository, and show what a consumer would get
+        run: |
+          ./gradlew --no-daemon publishToMavenLocal
+          find ~/.m2/repository/com/convaiinnovations -type f | sort
+          cat ~/.m2/repository/com/convaiinnovations/laya-java/*/laya-java-*.pom
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: laya-java-artifacts
+          path: |
+            laya-java/laya-java/build/libs/*.jar
+            laya-java/laya-java-client/build/libs/*.jar
+
+  central:
+    name: Publish to Maven Central
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # A manual gate, as the npm lane has: the one irreversible step in the pipeline, since a
+    # version published to Central can never be replaced.
+    environment: maven-central
+    defaults:
+      run:
+        working-directory: laya-java
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Validate the wrapper jar BEFORE anything can execute it. See this file's
+      # header for why every job that runs ./gradlew needs this, not just one.
+      - uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+      - name: Refuse to publish anything but a tag
+        run: |
+          # Central is append-only: a version published once can never be replaced. On a
+          # workflow_dispatch from a branch, GITHUB_REF_NAME is the BRANCH, so the version became
+          # the branch name -- `:main` -- and the snapshot guard did not match it. The build job's
+          # version check is guarded by this same condition and was simply skipped, so the two
+          # jobs disagreed about what was being released.
+          case "$GITHUB_REF" in
+            refs/tags/laya-java-v*) : ;;
+            *)
+              echo "::error::refusing to publish from $GITHUB_REF; tag the release as" \
+                   "laya-java-vX.Y.Z and run this on the tag"
+              exit 1
+              ;;
+          esac
+      - name: Version from the tag
+        run: |
+          tag="${GITHUB_REF_NAME#laya-java-v}"
+          echo "layaJavaVersion=$tag" >> gradle.properties
+      - name: Refuse to publish a snapshot to Central
+        run: |
+          tag="${GITHUB_REF_NAME#laya-java-v}"
+          case "$tag" in
+            *-SNAPSHOT) echo "::error::$tag is a snapshot; Central takes releases only"; exit 1 ;;
+          esac
+      - name: Publish
+        env:
+          LAYA_SIGNING_KEY: ${{ secrets.LAYA_SIGNING_KEY }}
+          LAYA_SIGNING_PASSWORD: ${{ secrets.LAYA_SIGNING_PASSWORD }}
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+        run: |
+          # All four, not two. Without the passphrase the build calls useInMemoryPgpKeys(key,
+          # null) and uploads UNSIGNED artifacts, which Central rejects only after the upload --
+          # a much worse place to find out.
+          #
+          # A loop rather than four `test -n` lines. Written out, the four were 111 to 161 columns
+          # and no longer read as the parallel checks they are, and each one exited on the FIRST
+          # thing it found -- so a release missing two secrets cost two tagged runs to discover.
+          # This names all of them at once.
+          missing=""
+          for secret in LAYA_SIGNING_KEY LAYA_SIGNING_PASSWORD \
+                        MAVEN_CENTRAL_USERNAME MAVEN_CENTRAL_PASSWORD; do
+            [ -n "${!secret:-}" ] || missing="$missing $secret"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::unset secret(s):$missing -- see this workflow's header for how each" \
+                 "one is produced. Note the signing passphrase in particular: without it the" \
+                 "bundle is built UNSIGNED and Central rejects it only after the upload."
+            exit 1
+          fi
+          ./gradlew --no-daemon publishAllPublicationsToCentralRepository
