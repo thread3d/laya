@@ -6,6 +6,12 @@ wired to any MCP client (OpenClaw, Claude Desktop, cursor, ...):
     laya-mcp-server
     python -m laya.mcp.server
 
+It writes exactly one line to standard error before it starts serving -- which Laya is answering
+and whether the first call builds checkpoints. Standard error and never standard output: stdout is
+the JSON-RPC channel, so a banner there would be read as a protocol message. Clients that inherit
+the child's stderr (dsh does, through the MCP SDK's ``StdioClientTransport`` default) show the line
+where the client was started.
+
 Environment (same meaning as laya.serve where it exists):
   LAYA_DEVICE   the device the checkpoints are asked to build on. Not the value verbatim:
                 laya.mcp.device.env_device strips and lower-cases it (`CUDA:0` -> `cuda:0`)
@@ -630,6 +636,32 @@ def laya_predict_long_tool(state: dict, questions: dict, model: str = "auto",
                  window=window, stride=stride, task=task, lang=lang, router=router)
 
 
+def _startup_banner() -> str:
+    """The one line `main()` puts on stderr before serving: which Laya answers, and how.
+
+    It stays clear of the router on purpose. Asking the device through `resolve_device` would
+    import torch, and `LAYA_PRELOAD=0` exists to keep startup cheap, so what is reported is the
+    `LAYA_DEVICE` *preference* as written -- not, as `laya_status` reports once a checkpoint is
+    resident, the device an agent actually computes on (a GPU falls back to CPU silently).
+    Remote mode names neither: no checkpoint is built in this process at all.
+    """
+    parts = ["[laya-mcp] ready \u2014 Laya %s" % (_LAYA_VERSION or "unknown")]
+    base_url = _remote_base_url()
+    if base_url:
+        parts.append("remote mode: answering from laya-serve at %s" % base_url)
+    elif _env_bool("LAYA_PRELOAD", True):
+        # LAYA_MODELS is only part of the story: typed-decisions is never in the MCP preload list,
+        # so say that the rest is still to come rather than implying this is every checkpoint.
+        parts.append("preloading %s; any other checkpoint loads on first call"
+                     % ", ".join(_models_from_env()))
+    else:
+        parts.append("checkpoints load on first call (LAYA_PRELOAD=0)")
+    preference = os.environ.get("LAYA_DEVICE", "").strip()
+    if preference and not base_url:
+        parts.append("device preference: %s" % preference)
+    return "; ".join(parts)
+
+
 def main() -> None:
     # Windows without Developer Mode cannot create HF cache symlinks (WinError
     # 1314). On POSIX the cache uses symlinks by default and disabling them
@@ -637,11 +669,11 @@ def main() -> None:
     if os.name == "nt":
         os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
         os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
-    if _remote_base_url():
-        # Nothing to preload: the server at LAYA_BASE_URL owns the checkpoints. Say so once, so a
-        # reader of the client's stderr knows which process is answering.
-        print(f"[laya-mcp] remote mode: answering from laya-serve at {_remote_base_url()}", file=sys.stderr)
-    elif _env_bool("LAYA_PRELOAD", True):
+    # Before the preload, not after it, so the line is already there while the pause it
+    # describes is still going on.
+    print(_startup_banner(), file=sys.stderr)
+    # Remote mode has nothing to preload: the server at LAYA_BASE_URL owns the checkpoints.
+    if not _remote_base_url() and _env_bool("LAYA_PRELOAD", True):
         try:
             _ensure_router()
         except Exception as exc:

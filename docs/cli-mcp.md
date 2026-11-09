@@ -155,6 +155,20 @@ If the client configuration supports a Python executable and arguments, use
 `python -m laya.mcp.server` as the equivalent launch form. The client owns the server process;
 Laya does not open a network port.
 
+On startup the server writes one line to **stderr**:
+
+```text
+[laya-mcp] ready — Laya <version>; checkpoints load on first call (LAYA_PRELOAD=0); device preference: cuda
+```
+
+The line says which Laya is answering and whether a first call will build checkpoints: a preload
+list (`preloading english, multilingual; any other checkpoint loads on first call`), lazy loading
+(`checkpoints load on first call`), or `remote mode` with the `laya-serve` origin it answers from.
+`device preference` appears only for a local server with `LAYA_DEVICE` set, and reports the value as
+written rather than what a loaded checkpoint computes on. It is on stderr and never on stdout,
+because stdout carries the MCP protocol; dsh inherits the child's stderr, so the line shows on the
+terminal the client was started from.
+
 ### Available tools
 
 | Tool | What it does | Main inputs |
