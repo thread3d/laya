@@ -32,6 +32,57 @@ to the English checkpoint, and detected non-Latin scripts route to multilingual.
 `new Router({ default: "english" })` to restore the earlier fallback; explicit `model` and `lang`
 options still take precedence.
 
+## Local routing diagnostics
+
+Use `explain: true` on `analyse`, `Router.route`, or `Router.routeBatch` to inspect the
+detector's decisive branch without loading a checkpoint:
+
+```ts
+import { analyse, Router } from "laya-ts";
+
+const ticket = {
+  note: "This is an English note about the order. ".repeat(140),
+  customer: "status\nIch kann mich nicht anmelden und brauche Hilfe",
+};
+const router = new Router();
+const decision = router.route(ticket, {}, { explain: true });
+console.log(decision.detection?.diagnostic);
+// { stage: "value", reason: "named_value",
+//   source: { leafIndex: 1, path: ["customer"], line: 2 } }
+analyse(ticket, { explain: true });
+router.routeBatch([{ state: ticket, questions: {} }], { explain: true });
+```
+
+Omitting `explain` or setting it to `false` leaves the existing result shape unchanged;
+other supplied values throw `TypeError`, even for an empty batch or an explicit model.
+The option adds `diagnostic` to the analysis, or to a route's `detection`. It does not
+change detector thresholds, checkpoint selection, or the existing analysis fields.
+Explicit model/task choices, enabled typed workflows and decisive language hints still
+bypass detection (`detection: null`). `onRoute` sees the diagnostic and may replace the
+decision, including removing its detection. Prediction options are unchanged.
+
+`stage` is `whole_state`, `segment`, or `value`; `reason` identifies the branch that
+decided that verdict, not a confidence score or a full trace. Whole-state reasons cover
+missing letters, non-Latin scripts, insufficient words, language evidence, caps guards
+and non-English markers. Segment selection reports `named_segment`; the value fallback
+reports `named_value`, `non_latin_value`, or `diacritic_value`. The exported
+`LanguageDiagnosticReason` union lists the exact labels.
+
+Whole-state analysis has `source: null`. Otherwise, `source.leafIndex` is zero-based
+among decoded string leaves in the decisive traversal. `path` uses object keys as strings
+and ordinary array indices as numbers; a root string has `[]`. A key longer than 128
+Unicode code points or a custom array iterator makes the entire path `null`, retaining
+the leaf index. Paths describe ordinary objects and arrays as traversed; they are not
+a promise that a later read of a mutable object, getter or proxy returns the same value.
+
+Segment and value `line` numbers are one-based and count blank lines. The value fallback
+selects an eligible line with the most letters, retaining the first on a tie, and caps each
+line independently at 4000 Unicode code points. Diagnostics record the existing detector
+semantics without changing them. They add no input **value** excerpts,
+but paths contain field names, and legacy `mixedSegment` / route `reason` may still contain
+text. This is not a redaction facility. `AnalyseOptions`, `LanguageDiagnostic` and
+`RouteBatchOptions` are available from the package root.
+
 ## Browser (WebGPU → WASM fallback)
 
 ```ts
@@ -140,7 +191,9 @@ await router.withHooks([auditHook], () => router.predict(state, questions)); // 
 
 // a start hook may rewrite ctx.states / ctx.questions, or serve a cached result:
 const cache = { onPredictStart(ctx) { const hit = lookup(ctx.states[0]); if (hit) ctx.skip([hit]); } };
-// an onRoute hook may replace ctx.decision (e.g. pin a checkpoint)
+// an onRoute hook may replace ctx.decision (e.g. pin a checkpoint). `predictBatch` groups by the
+// resolved checkpoint, so a pin that spells it as an alias ("ml") shares that checkpoint's batch:
+const pin = { onRoute(ctx) { if (isTicket(ctx.states[0])) ctx.decision = { ...ctx.decision, model: "ml" }; } };
 
 // subclass BaseHook to override only the events you need:
 class MetricsHook extends BaseHook {
@@ -309,6 +362,10 @@ const routed = await router.predictBatch(requests, 32); // == router.predictMany
 const budgeted = await router.predictBatch([
   { state: "ticket", questions, maxLen: 64, headMaxLen: 16 },
 ]);
+// Abstention is the same opt-in knob predict takes (`minConfidence`, or Python's
+// `min_confidence`): answers below it come back marked `low_confidence: true`, before each
+// request's onPredictEnd runs, so an audit hook sees what the caller sees. Unset writes nothing.
+const gated = await router.predictBatch(requests, null, { minConfidence: 0.8 });
 // Per-call hooks are composed like predict: installed hooks first, then this list,
 // then onPredictStart / onPredictEnd. null and [] add nothing. hooksRaise overrides
 // the Router's policy for this call. The list runs once per request, including onRoute.
