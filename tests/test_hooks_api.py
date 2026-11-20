@@ -27,6 +27,7 @@ from laya import Agent, AsyncHook, BaseHook, OptionStabilityHook, PredictContext
 from laya.hooks import HOOK_EVENTS, Hook, calibrate_reliability, decide_reliability  # noqa: E402
 from laya.onnx_agent import ONNXAgent  # noqa: E402
 from laya.router import _question_schema  # noqa: E402
+from laya.vega import VegaAgent  # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -72,6 +73,11 @@ HOOK_KEYS = {
 # --------------------------------------------------------------- constructors
 check("HTTP SDK stays outside core exports", "LayaClient" in laya.__all__, False)
 check("HTTP batch response stays outside core exports", "BatchPrediction" in laya.__all__, False)
+# TS HTTP batch declarations live in sdk/typescript; its public consumer tests pin their shape.
+check("HTTP batch options stay outside core exports", "BatchPredictOptions" in laya.__all__, False)
+check("HTTP aggregate usage stays outside core exports", "BatchUsage" in laya.__all__, False)
+check("HTTP route snapshot stays outside core exports", "RouteSnapshot" in laya.__all__, False)
+check("HTTP route options stay outside core exports", "RouteOptions" in laya.__all__, False)
 check("core does not import the HTTP SDK", "laya_client" in sys.modules, False)
 
 for label, fn in (("Agent.__init__", Agent.__init__), ("load", load),
@@ -226,7 +232,8 @@ for label, fn in (("Agent.predict_batch", Agent.predict_batch),
                   ("Router.predict_batch", Router.predict_batch),
                   ("Router.predict_long", Router.predict_long),
                   ("ONNXAgent.system_one", ONNXAgent.system_one),
-                  ("ONNXAgent.predict_long", ONNXAgent.predict_long)):
+                  ("ONNXAgent.predict_long", ONNXAgent.predict_long),
+                  ("VegaAgent.system_one", VegaAgent.system_one)):
     check_param(label, fn, "hooks", None)
     check_param(label, fn, "on_predict_start", None)
     check_param(label, fn, "on_predict_end", None)
@@ -299,6 +306,44 @@ _explained_analysis = analyse("Turn lights off", explain=True)
 check("analyse opts into one extra key", set(_explained_analysis) - set(_plain_analysis), {"diagnostic"})
 check("analyse diagnostic fields", set(_explained_analysis.pop("diagnostic")), {"stage", "reason", "source"})
 check("analyse retains original fields", _explained_analysis, _plain_analysis)
+
+# Shared source-location contract for TS local diagnostics (lang-diagnostics.test.ts).
+# Both segment and value fallbacks select individual lines. This does not imply
+# detector-wide language parity.
+_diagnostic_state = {
+    "note": "This is an English note about the order. " * 20,
+    "payload": {"messages": [None, 42, "status\n\nIch kann mich nicht anmelden und brauche Hilfe"]},
+}
+_segment_diagnostic = {
+    "stage": "segment", "reason": "named_segment",
+    "source": {"leaf_index": 1, "path": ["payload", "messages", 2], "line": 3},
+}
+check("diagnostic nested segment source", analyse(_diagnostic_state, explain=True)["diagnostic"],
+      _segment_diagnostic)
+_value_diagnostic_state = {
+    "note": "This is an English note about the order. " * 140,
+    "body": "This is an English note about the order. " * 140 + "\n\nIch kann mich nicht anmelden und brauche Hilfe",
+}
+check("diagnostic value source beyond the segment budget", analyse(_value_diagnostic_state, explain=True)["diagnostic"],
+      {"stage": "value", "reason": "named_value", "source": {"leaf_index": 1, "path": ["body"], "line": 3}})
+_diagnostic_router = Router()
+check("route carries detector diagnostic", _diagnostic_router.route(_diagnostic_state, {}, explain=True)
+      ["detection"]["diagnostic"], _segment_diagnostic)
+_diagnostic_batch = _diagnostic_router.route_batch([
+    {"state": _diagnostic_state, "questions": {}},
+    {"state": _diagnostic_state, "questions": {}, "model": "english"},
+], explain=True)
+check("route batch carries diagnostic in order", _diagnostic_batch[0]["detection"]["diagnostic"],
+      _segment_diagnostic)
+check("override bypass has no detector diagnostic", _diagnostic_batch[1]["detection"], None)
+for _key_size in (128, 129):
+    _key = "😀" * _key_size
+    _key_diagnostic = analyse({
+        "note": "This is an English note about the order. " * 20,
+        _key: "Ich kann mich nicht anmelden und brauche Hilfe",
+    }, explain=True)["diagnostic"]
+    check(f"diagnostic key bound {_key_size} code points", _key_diagnostic["source"]["path"],
+          [_key] if _key_size == 128 else None)
 
 # route() and route_batch() take per-call hooks so a hook can pin a checkpoint for one call
 for label, fn in (("Router.route", Router.route),
@@ -432,6 +477,10 @@ from laya.integrations.langchain import (  # noqa: E402
     LayaRouter,
     LayaTriage,
 )
+
+check_param("LayaRouter", LayaRouter.__init__, "decision_policy", "confidence", inspect.Parameter.KEYWORD_ONLY)
+check_param("LayaRouter", LayaRouter.__init__, "confidence_threshold", 0.0, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+check_param("LayaRouter", LayaRouter.__init__, "fallback", None, inspect.Parameter.POSITIONAL_OR_KEYWORD)
 
 for label, cls in (("LayaRouter", LayaRouter), ("LayaGuardrail", LayaGuardrail),
                    ("LayaTriage", LayaTriage), ("LayaEvaluator", LayaEvaluator)):

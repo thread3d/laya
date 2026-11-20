@@ -11,6 +11,7 @@ security workflow runs this file on a bare Python with neither torch nor laya, s
 guarded and skips there.
 """
 
+import functools
 import importlib.util
 import inspect
 import io
@@ -279,6 +280,10 @@ else:
     # is what a caller downgrading for a specific runtime passes).
     calls = []
 
+    # `default_opset_version()` probes the *installed* `torch.onnx.export` signature at call time,
+    # so the stand-in has to keep that signature: a bare `**kwargs` stub hides `dynamic_shapes`
+    # and the exporter reads the default as 17 even on a torch that supports 18.
+    @functools.wraps(torch.onnx.export)
     def _capture(model, args, path, **kwargs):
         calls.append(kwargs)
         return path

@@ -35,6 +35,7 @@ from .common import (
     collate_items,
     answer_confidence,
     confidence_from_probs,
+    check_batch_size,
     _resolve_noul_labels,
     _reuse_question_tokens,
     _disable_question_token_reuse,
@@ -498,7 +499,54 @@ def _option_logits(logits, items, offset):
     return [logits[offset + j, : len(item["markers"])] for j, item in enumerate(items)]
 
 
-class Agent(HookRegistry):
+
+#: Options that only mean something for the classic encoder checkpoints. Passing any of them keeps
+#: `laya.Agent()` / `laya.load()` on the classic model rather than vega.
+_CLASSIC_ONLY = ("subfolder", "fast", "compile", "backend", "expected_sha256", "lang_temperatures",
+                 "compile_warmup", "compile_cache", "compile_mode", "onnx_path")
+_warned_no_vegaml = []
+
+
+def wants_vega(args=(), kwargs=None) -> bool:
+    """Whether a `laya.Agent(...)` / `laya.load(...)` call gets vega. vega is the default since 0.5.0;
+    the classic encoder when the call names a checkpoint, says `vegaml=False` or passes a classic-only
+    option. With vegaml not importable the default falls back to the classic encoder, with one
+    warning."""
+    kwargs = kwargs or {}
+    choice = kwargs.get("vegaml")
+    if choice is False:
+        return False
+    if choice is not None:
+        return True
+    if (args and args[0] is not None) or kwargs.get("model_id_or_path") is not None:
+        return False
+    if any(k in kwargs for k in _CLASSIC_ONLY):
+        return False
+    import importlib.util
+
+    if importlib.util.find_spec("vegaml") is None:
+        if not _warned_no_vegaml:
+            _warned_no_vegaml.append(True)
+            import warnings
+
+            warnings.warn("vegaml is not installed, so laya.Agent() loads the classic encoder; "
+                          "pip install -U laya brings vega, the default since 0.5.0", stacklevel=3)
+        return False
+    return True
+
+class _AgentMeta(type):
+    """Since 0.5.0 `laya.Agent(...)` with no checkpoint named loads the new engine (VegaAgent). Decided
+    at the call rather than in __new__, so `Agent.__new__(Agent)` keeps making a bare classic agent."""
+
+    def __call__(cls, *args, **kwargs):
+        if cls is Agent and "vegaml" not in kwargs and wants_vega(args, kwargs):
+            from .vega import VegaAgent
+
+            return VegaAgent(*args, **kwargs)
+        return super().__call__(*args, **kwargs)
+
+
+class Agent(HookRegistry, metaclass=_AgentMeta):
     """System 1 decision model runtime: fast, non-autoregressive, calibrated decisions.
 
     `dtype` is the autocast target, not the precision of every call. On MPS a call
@@ -533,6 +581,19 @@ class Agent(HookRegistry):
     _reduce_overhead = False
     _gate = _InferenceGate()
 
+    def __new__(cls, *args, **kwargs):
+        # `laya.Agent(vegaml=True)` builds a VegaAgent: vegaml's engine behind laya's surface.
+        # The dispatch is here rather than in a factory so that the one argument is the whole
+        # change for a caller, and `isinstance(agent, laya.Agent)` stays true either way.
+        # VegaAgent overrides __new__ itself, so there is no recursion through this branch.
+        # The 0.5.0 default (no checkpoint named: the new engine) is decided in _AgentMeta.__call__,
+        # so `Agent.__new__(Agent)` still makes a bare classic agent.
+        vegaml = kwargs.get("vegaml")
+        if vegaml is not None and vegaml is not False and cls is Agent:
+            from .vega import VegaAgent
+            return VegaAgent.__new__(VegaAgent)
+        return object.__new__(cls)
+
     def __init__(
         self,
         model_id_or_path: str = "convaiinnovations/laya",
@@ -555,8 +616,13 @@ class Agent(HookRegistry):
         compile_warmup: bool = True,
         compile_cache: bool = False,
         compile_mode: str = "default",
+        vegaml: Union[bool, str, None] = None,
     ):
         """Load a Laya checkpoint.
+
+        `vegaml=True` (or a size, Hub id or directory) loads vegaml's engine instead and returns
+        a :class:`laya.vega.VegaAgent`; see that module. On this path the argument is accepted
+        so that `vegaml=False`/`None` are legal and mean the ordinary checkpoint.
 
         `backend` selects "eager", "auto", "compile" or "tilelang"; see `laya.backends`.
         It takes precedence over `fast` and `compile`. Omit it to keep those legacy flags.
@@ -1489,7 +1555,9 @@ class Agent(HookRegistry):
                     The same `questions` are evaluated against every state.
             questions: Question definitions, exactly as accepted by `system_one`.
             batch_size: Optional cap on states per forward pass. `None` sends them all in one pass;
-                        set it to bound peak memory when batching many or long states.
+                        set it to bound peak memory when batching many or long states. A `float`,
+                        a `str` or a `bool` is refused by name -- the count is spent as a `range()`
+                        step, and `0` or a negative integer means the same "no cap" as `None`.
             hooks (HookArg): Per-call hooks, appended after any installed on the Agent.
                     See `laya.hooks`.
             on_predict_start (PredictHookArg): A per-call start hook. It may rewrite the
@@ -1512,6 +1580,7 @@ class Agent(HookRegistry):
             aligned with `states` by index.
         """
         mc = check_min_confidence(min_confidence) if min_confidence is not None else None
+        batch_size = check_batch_size(batch_size)
         active = compose_hooks(self.hooks, hooks, on_predict_start, on_predict_end)
         raise_errors = self.hooks_raise if hooks_raise is None else bool(hooks_raise)
         timeout = self.hooks_timeout if hooks_timeout is None else validate_timeout(hooks_timeout)
@@ -2162,9 +2231,10 @@ def _is_local_checkpoint_arg(model_id_or_path: str) -> bool:
 
 if TYPE_CHECKING:  # pragma: no cover - the annotation below is the only use
     from .onnx_agent import ONNXAgent
+    from .vega import VegaAgent
 
 
-def load(model_id_or_path: str = "convaiinnovations/laya", device: Optional[str] = None,
+def load(model_id_or_path: Optional[str] = None, device: Optional[str] = None,
          token: Optional[str] = None, subfolder: Optional[str] = None, fast: bool = False,
          compile: bool = False,
          revision: Optional[str] = None, expected_sha256: Optional[Dict[str, str]] = None,
@@ -2174,8 +2244,13 @@ def load(model_id_or_path: str = "convaiinnovations/laya", device: Optional[str]
          hooks_timeout: Optional[float] = None,
          calibration: Optional[str] = None, backend: Optional[str] = None,
          onnx_path: Optional[str] = None, compile_warmup: bool = True,
-         compile_cache: bool = False, compile_mode: str = "default") -> Union[Agent, "ONNXAgent"]:
+         compile_cache: bool = False, compile_mode: str = "default",
+         vegaml: Union[bool, str, None] = None) -> Union[Agent, "ONNXAgent", "VegaAgent"]:
     """Load a Laya agent.
+
+        laya.load()                                                   # vega, the default since 0.5.0
+        laya.load(vegaml=True)                                        # the same, said explicitly
+        laya.load(vegaml="4b")                                        # a larger reader
 
     `subfolder` picks one checkpoint out of a repo that bundles several:
 
@@ -2200,6 +2275,24 @@ def load(model_id_or_path: str = "convaiinnovations/laya", device: Optional[str]
     `hooks` / `on_predict_start` / `on_predict_end` observe or shape every prediction; see
     `laya.hooks`. `calibration` is the same optional JSON path accepted by `Agent`.
     """
+    # vega is the default since 0.5.0: no checkpoint named and no classic-only option. Name one
+    # ("laya", "multilingual", "typed-decisions", a repo or a directory), or vegaml=False, for the
+    # classic encoder.
+    classic_opts = {k: v for k, v in (("subfolder", subfolder), ("fast", fast), ("compile", compile),
+                                      ("backend", backend), ("onnx_path", onnx_path),
+                                      ("expected_sha256", expected_sha256),
+                                      ("lang_temperatures", lang_temperatures)) if v}
+    if wants_vega((model_id_or_path,), dict(classic_opts, vegaml=vegaml)):
+        vegaml = vegaml or True
+    if model_id_or_path is None:
+        model_id_or_path = "convaiinnovations/laya"
+    if vegaml is not None and vegaml is not False:
+        # vegaml's engine behind laya's surface; everything laya-specific below (registry names,
+        # ONNX, TileLang, torch.compile) is about ModernBERT checkpoints and does not apply.
+        from .vega import VegaAgent
+        return VegaAgent(model_id_or_path if model_id_or_path != "convaiinnovations/laya" else None,
+                         device=device, token=token, vegaml=vegaml, revision=revision, hooks=hooks,
+                         on_predict_start=on_predict_start, on_predict_end=on_predict_end)
     # A registry name or alias resolves to the same (repo, subfolder) the Router would
     # pick, instead of being handed to the Hub as a repo id. A caller who spelled out a
     # subfolder is loading that subfolder of whatever repo they named, so the name is only

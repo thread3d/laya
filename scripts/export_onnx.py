@@ -180,9 +180,9 @@ def default_opset_version() -> int:
     """The highest opset the installed `torch.onnx.export` implements: 18, or 17 on torch 2.2.
 
     `dynamic_axes` is the declaration every torch this package supports accepts, so the shape
-    spelling no longer varies with the version -- but the *opset ceiling* still does. Upstream
-    defaults `export_module` to 18, which is right on the torch its CI runs; the TorchScript
-    exporter that torch 2.2 ships caps at `ONNX_TORCHSCRIPT_EXPORTER_MAX_OPSET = 17`.
+    spelling no longer varies with the version -- but the *opset ceiling* still does. The current
+    default of 18 is right on the torch CI runs; the TorchScript exporter that torch 2.2 ships
+    caps at `ONNX_TORCHSCRIPT_EXPORTER_MAX_OPSET = 17`.
 
     What the mismatch costs is quieter than a crash, which is why it is worth pinning rather than
     leaving to chance. `torch.onnx.export` does **not** raise: it emits an `OnnxExporterWarning`
@@ -194,7 +194,7 @@ def default_opset_version() -> int:
     the exporter actually implements is the honest artifact.
 
     Upstream declares `torch>=2.0.0`, so this is not only this machine's pin: any torch whose
-    TorchScript exporter stops at 17 hits it, and this fork runs torch 2.2 on macOS/Intel
+    TorchScript exporter stops at 17 hits it, and the macOS/Intel setup runs torch 2.2
     (LOCAL_SETUP.md, the last PyTorch with an x86_64 macOS wheel).
 
     Probe the installed signature rather than `torch.__version__`, matching how `_amp_context` in

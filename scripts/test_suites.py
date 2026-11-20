@@ -54,6 +54,8 @@ SCRIPT_SUITES = [
     "tests/test_verify_checkpoints.py",
     "tests/test_shortlist.py",
     "tests/test_decision_model.py",
+    "tests/test_cpu_selective_head.py",
+    "tests/test_cpu_window_attention.py",
     "tests/test_head_checkpointing.py",
     "tests/test_truncation.py",
     "tests/test_packaging.py",
@@ -95,6 +97,7 @@ SCRIPT_SUITES = [
     "tests/test_mcp_device.py",
     "tests/test_mcp_startup_banner.py",
     "tests/test_langchain.py",
+    "tests/test_langchain_native_policy.py",
     "tests/test_agno.py",
     "tests/test_portability.py",
     "tests/test_guard_document_781.py",
@@ -130,6 +133,9 @@ PYTEST_SUITES = [
     "tests/test_truncation_direction.py",
     "tests/test_compile.py",
     "tests/test_finetune_entrypoints.py",
+    "tests/test_vega.py",
+    "tests/test_router_vega.py",
+    "tests/test_policy.py",
 ]
 
 
